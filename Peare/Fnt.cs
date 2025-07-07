@@ -43,7 +43,6 @@ namespace Peare
 
             Debug.WriteLine($"headerSize: {headerSize}");
             Debug.WriteLine($"dfVersion: {dfVersion}");
-            Debug.WriteLine($"byte resData: {BitConverter.ToString(resData, 0, headerSize)}");
             uint dfBitsOffset = header.dfBitsOffset;
 
             uint totalSize = header.dfSize;
@@ -73,25 +72,35 @@ namespace Peare
 
             if (!isDataInFile)
             {
-                Debug.WriteLine("I dati bitmap non sono contenuti nel file, gestione non supportata.");
+                Debug.WriteLine("Bitmap data is not contained in the file, handling not supported.");
             }
             Debug.WriteLine($"dfType: 0x{dfType:X4}");
 
             if (isMonospace)
             {
+                // raster monospace
+                int offset = 0;
                 int monoWidth = dfPixWidth;
-                if (monoWidth == 0) monoWidth = 8;
-
+                if (monoWidth == 0) 
+                    monoWidth = 8;
                 int bytesPerGlyph = ((monoWidth + 7) / 8) * dfPixHeight;
                 for (int i = 0; i < charCount; i++)
                 {
                     glyphWidths[i] = monoWidth;
-                    glyphOffsets[i] = (int)header.dfBitsOffset + i * bytesPerGlyph;
+                    if (dfVersion > 0x0100)
+                    {
+                        glyphOffsets[i] = (int)header.dfBitsOffset + i * bytesPerGlyph;
+                    }
+                    else 
+                    {
+                        // ver 1.x raster monospace
+                        glyphOffsets[i] = (int)header.dfBitsOffset * 8 + offset; // bit
+                        offset += monoWidth;
+                    }
                 }
             }
             else
             {
-                int charTableOffset = headerSize;
                 uint charTableLength = dfBitsOffset - (uint)headerSize;
 
                 int entrySize;
@@ -101,17 +110,17 @@ namespace Peare
                 // https://ffenc.blogspot.com/2008/04/fnt-font-file-format.html
                 if (dfVersion == 0x0100)  // Windows 1.x font version
                 {
+                    // Special thanks to OS2Museum (https://www.os2museum.com/files/docs/win10sdk/windows-1.03-sdk-prgref-1986.pdf)
+                    // for providing the reference SDK manual describing how to read the ver. 1 vectorial and raster FNT format
                     if (isVectorFont)
                     {
                         glyphEntryFormat = "Windows 1.x dfCharTable[] (offset + width)";
                         entrySize = 4;
 
-                        int tableStart = headerSize;
-
                         for (int i = 0; i < charCount; i++)
                         {
-                            int entryOffset = tableStart + i * 4;
-                            if (entryOffset + 4 > resData.Length)
+                            int entryOffset = headerSize + i * entrySize;
+                            if (entryOffset + entrySize > resData.Length)
                             {
                                 Console.WriteLine($"Truncated glyph at {i}");
                                 break;
@@ -128,9 +137,31 @@ namespace Peare
                     }
                     else
                     {
-                        // We expect to have only the offset in raster fonts ver. 1
-                        glyphEntryFormat = "Windows 1.x dfCharTable[] (offset)";
+                        // We expect to have only the offset and no width in raster fonts ver. 1
+                        glyphEntryFormat = "Windows 1.x dfCharOffset[] (offset only)";
                         entrySize = 2;
+
+                        int totalEntries = charCount + 1;
+
+                        ushort[] offsets = new ushort[totalEntries];
+
+                        for (int i = 0; i < totalEntries; i++)
+                        {
+                            int entryOffset = headerSize + i * entrySize;
+                            if (entryOffset + entrySize > resData.Length)
+                            {
+                                Console.WriteLine($"Truncated offset table at {i}");
+                                break;
+                            }
+                            offsets[i] = BitConverter.ToUInt16(resData, entryOffset);
+                        }
+
+                        for (int i = 0; i < charCount; i++)
+                        {
+                            glyphWidths[i] = offsets[i + 1] - offsets[i];
+                            glyphOffsets[i] = (int)(dfBitsOffset * 8) + offsets[i];
+                            Console.WriteLine($"Char {(char)(i + dfFirstChar)} (code {i + dfFirstChar}): Offset = {glyphOffsets[i]}, Width (bit) = {glyphWidths[i]}");
+                        }
                     }
                 }
                 else if (dfVersion <= 0x0200) // Windows 2.x font version
@@ -140,7 +171,7 @@ namespace Peare
 
                     for (int i = 0; i < charCount; i++)
                     {
-                        int pos = charTableOffset + i * 4;
+                        int pos = headerSize + i * entrySize;
                         ushort width = BitConverter.ToUInt16(resData, pos);
                         ushort offset = BitConverter.ToUInt16(resData, pos + 2);
                         glyphWidths[i] = width;
@@ -210,11 +241,11 @@ namespace Peare
             }
 
             // Special thanks to OS2Museum (https://www.os2museum.com/files/docs/win10sdk/windows-1.03-sdk-prgref-1986.pdf)
-            // for providing the reference SDK manual describing how to read the ver. 1 vectorial FNT format
-            // The manual was transformed to code with the help of ChatGPT and DeepSeek, that were able to correct each other mistakes, after I provided them my base code.
-            // some fonts in this format are roman.fon, script.fon, modern.fon
+            // for providing the reference SDK manual describing how to read the ver. 1 vectorial and raster FNT format
             if (dfVersion == 0x0100 && isVectorFont)
             {
+                // The manual was transformed to code with the help of ChatGPT and DeepSeek, that were able to correct each other mistakes, after I provided them my base code.
+                // some fonts in this format are roman.fon, script.fon, modern.fon
                 bool coords2Byte = (dfPixHeight > 128 || dfMaxWidth > 128);
                 Bitmap[] glyphBitmaps = new Bitmap[charCount];
 
@@ -246,9 +277,7 @@ namespace Peare
                         int strokeDataStart = (int)dfBitsOffset + offsetStroke;
                         int strokeLength = offsetStrokeNext - offsetStroke;
 
-                        ushort charWidth = (ushort)glyphWidth;
-
-                        Debug.WriteLine($"Char {i + dfFirstChar}: offset={offsetStroke}, len={strokeLength}, width={charWidth}");
+                        Debug.WriteLine($"Char {i + dfFirstChar}: offset={offsetStroke}, len={strokeLength}, width={(ushort)glyphWidth}");
 
                         if (strokeLength <= 0 || strokeDataStart < 0 || strokeDataStart + strokeLength > resData.Length)
                         {
@@ -340,6 +369,56 @@ namespace Peare
                     for (int i = 0; i < charCount; i++)
                     {
                         g.DrawImageUnscaled(glyphBitmaps[i], 0, i * (dfPixHeight + header.dfAscent));
+                        glyphBitmaps[i].Dispose();
+                    }
+                }
+                return bmp;
+            }
+            else if (dfVersion == 0x0100 && !isVectorFont)
+            {
+                // Special thanks again to RubyTuesday from BetaArchive for better explaining than the docs how the pixels are stored in v1 raster:
+                // https://www.betaarchive.com/forum/viewtopic.php?t=33486
+                int totalWidthInBits = header.dfWidthBytes * 8; // The sum of all the widths is not the same to this number, we must use this one. 
+                Bitmap[] glyphBitmaps = new Bitmap[charCount];
+                for (int i = 0; i < charCount; i++)
+                {
+                    int glyphWidth = glyphWidths[i];          // glyph width in bit
+                    int glyphOffset = glyphOffsets[i];        // absolute offset in bit
+
+                    Bitmap bmpChar = new Bitmap(glyphWidth, dfPixHeight);
+                    for (int y = 0; y < dfPixHeight; y++)
+                    {
+                        for (int x = 0; x < glyphWidth; x++)
+                        {
+                            // calculate absolute bit offset of current bit in buffer:
+                            int bitPos = glyphOffset + y * totalWidthInBits + x;
+
+                            // calculate internal byte and bit
+                            int bytePos = bitPos / 8;
+                            int bitInByte = 7 - (bitPos % 8);
+
+                            if (bytePos >= 0 && bytePos < resData.Length)
+                            {
+                                bool bitSet = (resData[bytePos] & (1 << bitInByte)) != 0;
+                                bmpChar.SetPixel(x, y, bitSet ? Color.Black : Color.Transparent);
+                            }
+                            else
+                            {
+                                bmpChar.SetPixel(x, y, Color.Transparent);
+                            }
+                        }
+                    }
+                    glyphBitmaps[i] = bmpChar;
+                }
+
+                // vertical merge all the bitmaps
+                using (Graphics g = Graphics.FromImage(bmp))
+                {
+                    g.Clear(Color.Transparent);
+
+                    for (int i = 0; i < charCount; i++)
+                    {
+                        g.DrawImageUnscaled(glyphBitmaps[i], 0, i * dfPixHeight);
                         glyphBitmaps[i].Dispose();
                     }
                 }

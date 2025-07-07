@@ -16,6 +16,8 @@ What is currently (at least partially) implemented right now:
 - Fallback to bytes and text (NE)
 
 Fnt support is handcrafted, this is what is supported:
+- Fnt ver. 1 monospace raster fonts
+- Fnt ver. 1 variable width raster fonts
 - Fnt ver. 1 vectors fonts
 - Fnt ver. 2 monospace raster fonts
 - Fnt ver. 2 variable width raster fonts
