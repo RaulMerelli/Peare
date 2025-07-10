@@ -48,18 +48,29 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="BitmapNE.cs" />
-    <Compile Include="Fnt.cs" />
-    <Compile Include="FONTINFO16.cs" />
+    <Compile Include="NE\RT_BITMAP\BitmapNE.cs" />
+    <Compile Include="NE\RT_FONTDIR\FONTDIRENTRY.cs" />
+    <Compile Include="NE\RT_FONTDIR\FontDirNE.cs" />
+    <Compile Include="NE\RT_MESSAGE\MessageNE.cs" />
+    <Compile Include="NE\RT_FONT\Fnt.cs" />
+    <Compile Include="NE\RT_FONT\FONTINFO16.cs" />
+    <Compile Include="LE\IMAGE_LE_HEADER.cs" />
+    <Compile Include="LE\LeResources.cs" />
+    <Compile Include="LE\LE_OBJECT_FLAGS.cs" />
+    <Compile Include="LE\LE_OBJECT_TABLE_ENTRY.cs" />
+    <Compile Include="LX\LxResources.cs" />
     <Compile Include="MainForm.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="MainForm.Designer.cs">
       <DependentUpon>MainForm.cs</DependentUpon>
     </Compile>
-    <Compile Include="FormatMessageFlags.cs" />
-    <Compile Include="IconNE.cs" />
-    <Compile Include="LoadLibraryFlags.cs" />
+    <Compile Include="NE\RT_STRING\StringNE.cs" />
+    <Compile Include="PE\FormatMessageFlags.cs" />
+    <Compile Include="NE\RT_ICON\IconNE.cs" />
+    <Compile Include="PE\LoadLibraryFlags.cs" />
+    <Compile Include="NE\NeResources.cs" />
+    <Compile Include="PE\PeResources.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <EmbeddedResource Include="MainForm.resx">
@@ -88,5 +99,6 @@
   <ItemGroup>
     <None Include="App.config" />
   </ItemGroup>
+  <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

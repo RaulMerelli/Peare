@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Diagnostics;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -217,7 +218,7 @@ namespace Peare
                         glyphWidths[i] = 8;
                 }
 
-                Console.WriteLine($"Formato GlyphEntry: {glyphEntryFormat} (entry size: {entrySize} bytes)");
+                Console.WriteLine($"GlyphEntry Format: {glyphEntryFormat} (entry size: {entrySize} bytes)");
             }
 
             int maxWidth = 0;
@@ -378,7 +379,7 @@ namespace Peare
             {
                 // Special thanks again to RubyTuesday from BetaArchive for better explaining than the docs how the pixels are stored in v1 raster:
                 // https://www.betaarchive.com/forum/viewtopic.php?t=33486
-                int totalWidthInBits = header.dfWidthBytes * 8; // The sum of all the widths is not the same to this number, we must use this one. 
+                int totalWidthInBits = header.dfWidthBytes * 8; // The sum of all the widths is not the same to this number and leads to errors, we must use this one. 
                 Bitmap[] glyphBitmaps = new Bitmap[charCount];
                 for (int i = 0; i < charCount; i++)
                 {
