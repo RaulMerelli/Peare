@@ -48,10 +48,13 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="NE\RT_BITMAP\BitmapNE.cs" />
+    <Compile Include="LX\IMAGE_LX_HEADER.cs" />
+    <Compile Include="LX\LX_OBJECT_TABLE_ENTRY.cs" />
+    <Compile Include="LX\LX_OBJECT_FLAGS.cs" />
+    <Compile Include="Resources\RT_BITMAP\RT_BITMAP.cs" />
     <Compile Include="NE\RT_FONTDIR\FONTDIRENTRY.cs" />
     <Compile Include="NE\RT_FONTDIR\FontDirNE.cs" />
-    <Compile Include="NE\RT_MESSAGE\MessageNE.cs" />
+    <Compile Include="Resources\RT_MESSAGE\RT_MESSAGE.cs" />
     <Compile Include="NE\RT_FONT\Fnt.cs" />
     <Compile Include="NE\RT_FONT\FONTINFO16.cs" />
     <Compile Include="LE\IMAGE_LE_HEADER.cs" />
@@ -65,7 +68,7 @@
     <Compile Include="MainForm.Designer.cs">
       <DependentUpon>MainForm.cs</DependentUpon>
     </Compile>
-    <Compile Include="NE\RT_STRING\StringNE.cs" />
+    <Compile Include="Resources\RT_STRING\RT_STRING.cs" />
     <Compile Include="PE\FormatMessageFlags.cs" />
     <Compile Include="NE\RT_ICON\IconNE.cs" />
     <Compile Include="PE\LoadLibraryFlags.cs" />

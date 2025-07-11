@@ -1,0 +1,27 @@
+﻿using System;
+
+namespace Peare
+{
+    // Those are just LE flags copied.
+    // Must check for specific LX flags in the docs and place them here...
+    [Flags]
+    public enum LX_OBJECT_FLAGS : uint
+    {
+        LX_OBJECT_FLAG_READABLE = 1,
+        LX_OBJECT_FLAG_WRITABLE = 2,
+        LX_OBJECT_FLAG_EXECUTABLE = 4,
+        LX_OBJECT_FLAG_RESOURCE = 8,
+        LX_OBJECT_FLAG_DISCARABLE = 16,
+        LX_OBJECT_FLAG_SHARED = 32,
+        LX_OBJECT_FLAG_CONTAINS_PRELOAD_PAGES = 64,
+        LX_OBJECT_FLAG_CONTAINS_INVALID_PAGES = 128,
+        LX_OBJECT_FLAG_CONTAINS_ZEROFILL_PAGES = 256,
+        LX_OBJECT_FLAG_RESIDENT = 512,
+        LX_OBJECT_FLAG_RESIDENT_AND_CONTIGUOUS = 768,
+        LX_OBJECT_FLAG_RESIDENT_AND_LONG_LOCKABLE = 1024,
+        LX_OBJECT_FLAG_16_16_ALIAS_REQUIRED = 4096,
+        LX_OBJECT_FLAG_BIG_DEFAULT_BIT_SETTING = 8192,
+        LX_OBJECT_FLAG_CONFORMING_FOR_CODE = 16384,
+        LX_OBJECT_FLAG_IO_PRIVILEGE_LEVEL = 32768
+    }
+}

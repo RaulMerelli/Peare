@@ -24,6 +24,11 @@ What is currently (at least partially) implemented right now:
 		- RT_BITMAP
 		- RT_STRING
 
+	- LX (OS/2)
+		- RT_MESSAGE
+		- RT_STRING
+		- RT_BITMAP
+
 	- NE (Windows)
 		- RT_MESSAGETABLE (theoretically, I can't find any Windows NE contining a RT_MESSAGETABLE resource)
 		- RT_FONTDIR
@@ -35,7 +40,7 @@ What is currently (at least partially) implemented right now:
 	- PE (Windows)
 		- RT_BITMAP
 
-	- Fallback to ASCII text and raw bytes (NE for Windows and OS/2)
+	- Fallback to ASCII text and raw bytes (NE for Windows and OS/2, LX)
 
 
 

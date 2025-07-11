@@ -27,6 +27,7 @@ namespace Peare
         {
             try
             {
+                Program.isOS2 = false;
                 using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read))
                 using (var br = new BinaryReader(fs))
                 {
@@ -67,6 +68,7 @@ namespace Peare
                                 version = " for unkwown OS";
                                 break;
                             case 0x01:
+                                Program.isOS2 = true;
                                 version = " for OS/2";
                                 break;
                             case 0x02:
@@ -121,6 +123,7 @@ namespace Peare
         private void mnu_Open_Click(object sender, EventArgs e)
         {
             OpenFileDialog ofd = new OpenFileDialog();
+            // This function needs to be updated to include LE and LX
 
             // Separeted extensions list
             string[] peExtArray = new string[] { "exe", "dll", "sys", "ocx", "cpl", "scr", "drv", "ax", "efi", "mui", "tlb", "acm", "spl", "sct", "wll", "xll", "fll", "pyd", "bpl", "msstyles" };
@@ -260,34 +263,9 @@ namespace Peare
                 byte[] resData = LxResources.OpenResourceLX(typeName, targetResourceName, out message, out found);
                 if (found)
                 {
-                    if (typeName == "RT_BITMAP")
+                    if (typeName == "RT_MESSAGE")
                     {
-                        flowLayoutPanel1.Controls.Add(new PictureBox
-                        {
-                            Image = BitmapNE.Get(resData),
-                            SizeMode = PictureBoxSizeMode.AutoSize
-                        });
-                    }
-                    else if (typeName == "RT_ICON")
-                    {
-                        flowLayoutPanel1.Controls.Add(new PictureBox
-                        {
-                            Image = IconNE.Get(resData),
-                            SizeMode = PictureBoxSizeMode.AutoSize
-                        });
-                    }
-                    else if (typeName == "RT_FONT")
-                    {
-                        flowLayoutPanel1.Controls.Add(new PictureBox
-                        {
-                            Image = Fnt.Get(resData),
-                            SizeMode = PictureBoxSizeMode.AutoSize
-                        });
-                    }
-                    else
-                    {
-                        // text + hex
-                        string val = Encoding.ASCII.GetString(resData).Replace('\0', ' ') + "\r\n" + BitConverter.ToString(resData);
+                        string val = RT_MESSAGE.Get(resData);
                         flowLayoutPanel1.Controls.Add(new TextBox
                         {
                             AcceptsReturn = true,
@@ -297,6 +275,50 @@ namespace Peare
                             Width = flowLayoutPanel1.ClientSize.Width - flowLayoutPanel1.Padding.Horizontal - 50,
                             Height = flowLayoutPanel1.ClientSize.Height - flowLayoutPanel1.Padding.Vertical - 50,
                             ScrollBars = ScrollBars.Both,
+                            Multiline = true,
+                            Text = val,
+                        });
+                    }
+                    else if(typeName == "RT_STRING")
+                    {
+                        string val = RT_STRING.Get(resData);
+                        flowLayoutPanel1.Controls.Add(new TextBox
+                        {
+                            AcceptsReturn = true,
+                            AcceptsTab = true,
+                            Visible = true,
+                            Enabled = true,
+                            Width = flowLayoutPanel1.ClientSize.Width - flowLayoutPanel1.Padding.Horizontal - 50,
+                            Height = flowLayoutPanel1.ClientSize.Height - flowLayoutPanel1.Padding.Vertical - 50,
+                            ScrollBars = ScrollBars.Both,
+                            Multiline = true,
+                            Text = val,
+                        });
+                    }
+                    else if (typeName == "RT_BITMAP")
+                    {
+                        foreach (Bitmap bmp in RT_BITMAP.Get(resData))
+                        {
+                            flowLayoutPanel1.Controls.Add(new PictureBox
+                            {
+                                Image = bmp,
+                                SizeMode = PictureBoxSizeMode.AutoSize
+                            });
+                        }
+                    }
+                    else
+                    {
+                        string val = Program.DumpRaw(resData);
+                        flowLayoutPanel1.Controls.Add(new TextBox
+                        {
+                            AcceptsReturn = true,
+                            AcceptsTab = true,
+                            Visible = true,
+                            Enabled = true,
+                            Width = flowLayoutPanel1.ClientSize.Width - flowLayoutPanel1.Padding.Horizontal - 50,
+                            Height = flowLayoutPanel1.ClientSize.Height - flowLayoutPanel1.Padding.Vertical - 50,
+                            ScrollBars = ScrollBars.Both,
+                            Font = new Font(new FontFamily("Consolas"), 10, FontStyle.Regular, GraphicsUnit.Point),
                             Multiline = true,
                             Text = val,
                         });
@@ -326,7 +348,7 @@ namespace Peare
                     }
                     else if (typeName == "RT_MESSAGE" || typeName == "RT_MESSAGETABLE")
                     {
-                        string val = MessageNE.Get(resData);
+                        string val = RT_MESSAGE.Get(resData);
                         flowLayoutPanel1.Controls.Add(new TextBox
                         {
                             AcceptsReturn = true,
@@ -342,7 +364,7 @@ namespace Peare
                     }
                     else if (typeName == "RT_STRING")
                     {
-                        string val = StringNE.Get(resData);
+                        string val = RT_STRING.Get(resData);
                         // I was trying to simulate the behaviour of BCC Workshop...
                         //if (isNumericResource)
                         //{
@@ -367,11 +389,14 @@ namespace Peare
                     }
                     else if (typeName == "RT_BITMAP")
                     {
-                        flowLayoutPanel1.Controls.Add(new PictureBox
+                        foreach (Bitmap bmp in RT_BITMAP.Get(resData))
                         {
-                            Image = BitmapNE.Get(resData),
-                            SizeMode = PictureBoxSizeMode.AutoSize
-                        });
+                            flowLayoutPanel1.Controls.Add(new PictureBox
+                            {
+                                Image = bmp,
+                                SizeMode = PictureBoxSizeMode.AutoSize
+                            });
+                        }
                     }
                     else if (typeName == "RT_ICON")
                     {

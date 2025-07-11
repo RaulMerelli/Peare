@@ -8,16 +8,6 @@ namespace Peare
 {
     public static class FontDirNE
     {
-        public static T Deserialize<T>(byte[] array) where T : struct
-        {
-            var size = Marshal.SizeOf(typeof(T));
-            var ptr = Marshal.AllocHGlobal(size);
-            Marshal.Copy(array, 0, ptr, size);
-            var s = (T)Marshal.PtrToStructure(ptr, typeof(T));
-            Marshal.FreeHGlobal(ptr);
-            return s;
-        }
-
         public static unsafe string Get(byte[] data)
         {
             if (data == null || data.Length < 2)
@@ -54,7 +44,7 @@ namespace Peare
                 Array.Copy(data, offset, structBytes, 0, structSize);
                 offset += structSize;
 
-                FONTDIRENTRY entry = Deserialize<FONTDIRENTRY>(structBytes);
+                FONTDIRENTRY entry = Program.Deserialize<FONTDIRENTRY>(structBytes);
 
                 // Convert copyright from byte[] to ASCII string
                 string copyright = Encoding.ASCII.GetString(entry.dfCopyright)

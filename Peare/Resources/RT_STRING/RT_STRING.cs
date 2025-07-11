@@ -3,7 +3,7 @@ using System.Text;
 
 namespace Peare
 {
-    public static class StringNE
+    public static class RT_STRING
     {
         public static string Get(byte[] data, int baseId = 100)
         {
@@ -15,8 +15,10 @@ namespace Peare
             sb.AppendLine("{");
 
             int offset = 0;
-            if (data.Length >= 2 && data[0] == 0xB5 && data[1] == 0x01)
+            if (Program.isOS2)
             {
+                // I found out the for NE OS/2 and LX there are two bytes unknown for me. Just skipping them seems to be fine.
+                // So far I found B501h for NE OS/2 and 5203h for LX
                 offset = 2;  // skip the first two bytes for OS/2
             }
 

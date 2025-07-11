@@ -6,16 +6,18 @@ using System.Threading.Tasks;
 
 namespace Peare
 {
-    public static class MessageNE
+    public static class RT_MESSAGE
     {
         public static string Get(byte[] data)
         {
             //Program.DumpRaw(data);
 
             int offset = 0;
-            if (data.Length >= 2 && data[0] == 0xB5 && data[1] == 0x01)
+            if (Program.isOS2)
             {
-                offset = 2;  // Skip first two bytes for OS/2
+                // I found out the for NE OS/2 and LX there are two bytes unknown for me. Just skipping them seems to be fine.
+                // So far I found B501h for NE OS/2 and 5203h for LX
+                offset = 2;  // skip the first two bytes for OS/2
             }
             StringBuilder output = new StringBuilder();
             output.AppendLine("MESSAGETABLE");
