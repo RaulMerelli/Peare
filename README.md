@@ -4,10 +4,10 @@ Plugin-Extendable Avdanced Resource Editor
 
 Inspired by Resource Hacker and BCC Workshop, wrote in C#.
 
-The the goal is to open, edit, save the resources inside an executable or an application package, and expand the resources type support via plugins made for this software. 
+The goal is to open, edit, save the resources inside an executable or an application package, and expand the resources type support via plugins made for this software. 
 Current focus is on Windows 16/32/64bit and OS/2 16/32bit.
 
-In future I would also like to support other application packages, like jar, apk, appx, xap, msi, msix... Everithing containing something deserves to be opened and understood.
+In future I would also like to support other application packages, like jar, apk, appx, xap, msi, msix... Everything containing something deserves to be opened and understood.
 
 What is currently (at least partially) implemented right now:
 
@@ -36,6 +36,7 @@ What is currently (at least partially) implemented right now:
 		- RT_ICON
 		- RT_BITMAP
 		- RT_STRING
+		- RT_VERSION
 
 	- PE (Windows)
 		- RT_BITMAP

@@ -238,13 +238,7 @@ namespace Peare
                 if (Program.currentModuleHandle == IntPtr.Zero) return;
 
                 message = $"Resource {typeName} {targetResourceName} selected.";
-                if (typeName == "RT_STRING")
-                {
-                    // Wrong
-                    var strings = PeResources.LoadStrings(Program.currentModuleHandle, targetResourceName, typeName);
-                    textBox1.Lines = strings;
-                }
-                else if (typeName == "RT_BITMAP")
+                if (typeName == "RT_BITMAP")
                 {
                     flowLayoutPanel1.Controls.Add(new PictureBox
                     {
@@ -266,62 +260,24 @@ namespace Peare
                     if (typeName == "RT_MESSAGE")
                     {
                         string val = RT_MESSAGE.Get(resData);
-                        flowLayoutPanel1.Controls.Add(new TextBox
-                        {
-                            AcceptsReturn = true,
-                            AcceptsTab = true,
-                            Visible = true,
-                            Enabled = true,
-                            Width = flowLayoutPanel1.ClientSize.Width - flowLayoutPanel1.Padding.Horizontal - 50,
-                            Height = flowLayoutPanel1.ClientSize.Height - flowLayoutPanel1.Padding.Vertical - 50,
-                            ScrollBars = ScrollBars.Both,
-                            Multiline = true,
-                            Text = val,
-                        });
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
                     else if(typeName == "RT_STRING")
                     {
                         string val = RT_STRING.Get(resData);
-                        flowLayoutPanel1.Controls.Add(new TextBox
-                        {
-                            AcceptsReturn = true,
-                            AcceptsTab = true,
-                            Visible = true,
-                            Enabled = true,
-                            Width = flowLayoutPanel1.ClientSize.Width - flowLayoutPanel1.Padding.Horizontal - 50,
-                            Height = flowLayoutPanel1.ClientSize.Height - flowLayoutPanel1.Padding.Vertical - 50,
-                            ScrollBars = ScrollBars.Both,
-                            Multiline = true,
-                            Text = val,
-                        });
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
                     else if (typeName == "RT_BITMAP")
                     {
                         foreach (Bitmap bmp in RT_BITMAP.Get(resData))
                         {
-                            flowLayoutPanel1.Controls.Add(new PictureBox
-                            {
-                                Image = bmp,
-                                SizeMode = PictureBoxSizeMode.AutoSize
-                            });
+                            flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
                         }
                     }
                     else
                     {
                         string val = Program.DumpRaw(resData);
-                        flowLayoutPanel1.Controls.Add(new TextBox
-                        {
-                            AcceptsReturn = true,
-                            AcceptsTab = true,
-                            Visible = true,
-                            Enabled = true,
-                            Width = flowLayoutPanel1.ClientSize.Width - flowLayoutPanel1.Padding.Horizontal - 50,
-                            Height = flowLayoutPanel1.ClientSize.Height - flowLayoutPanel1.Padding.Vertical - 50,
-                            ScrollBars = ScrollBars.Both,
-                            Font = new Font(new FontFamily("Consolas"), 10, FontStyle.Regular, GraphicsUnit.Point),
-                            Multiline = true,
-                            Text = val,
-                        });
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
                 }
             }
@@ -333,34 +289,17 @@ namespace Peare
                     if (typeName == "RT_FONTDIR")
                     {
                         string val = FontDirNE.Get(resData);
-                        flowLayoutPanel1.Controls.Add(new TextBox
-                        {
-                            AcceptsReturn = true,
-                            AcceptsTab = true,
-                            Visible = true,
-                            Enabled = true,
-                            Width = flowLayoutPanel1.ClientSize.Width - flowLayoutPanel1.Padding.Horizontal - 50,
-                            Height = flowLayoutPanel1.ClientSize.Height - flowLayoutPanel1.Padding.Vertical - 50,
-                            ScrollBars = ScrollBars.Both,
-                            Multiline = true,
-                            Text = val,
-                        });
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
+                    else if (typeName == "RT_VERSION")
+                    {
+                        string val = RT_VERSION.Get(resData)+"\r\n"+Program.DumpRaw(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
                     else if (typeName == "RT_MESSAGE" || typeName == "RT_MESSAGETABLE")
                     {
                         string val = RT_MESSAGE.Get(resData);
-                        flowLayoutPanel1.Controls.Add(new TextBox
-                        {
-                            AcceptsReturn = true,
-                            AcceptsTab = true,
-                            Visible = true,
-                            Enabled = true,
-                            Width = flowLayoutPanel1.ClientSize.Width - flowLayoutPanel1.Padding.Horizontal - 50,
-                            Height = flowLayoutPanel1.ClientSize.Height - flowLayoutPanel1.Padding.Vertical - 50,
-                            ScrollBars = ScrollBars.Both,
-                            Multiline = true,
-                            Text = val,
-                        });
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
                     else if (typeName == "RT_STRING")
                     {
@@ -374,66 +313,57 @@ namespace Peare
                         //{
                         //    val = StringNE.Get(resData);
                         //}
-                        flowLayoutPanel1.Controls.Add(new TextBox
-                        {
-                            AcceptsReturn = true,
-                            AcceptsTab = true,
-                            Visible = true,
-                            Enabled = true,
-                            Width = flowLayoutPanel1.ClientSize.Width - flowLayoutPanel1.Padding.Horizontal - 50,
-                            Height = flowLayoutPanel1.ClientSize.Height - flowLayoutPanel1.Padding.Vertical - 50,
-                            ScrollBars = ScrollBars.Both,
-                            Multiline = true,
-                            Text = val,
-                        });
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
                     else if (typeName == "RT_BITMAP")
                     {
                         foreach (Bitmap bmp in RT_BITMAP.Get(resData))
                         {
-                            flowLayoutPanel1.Controls.Add(new PictureBox
-                            {
-                                Image = bmp,
-                                SizeMode = PictureBoxSizeMode.AutoSize
-                            });
+                            flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
                         }
                     }
                     else if (typeName == "RT_ICON")
                     {
-                        flowLayoutPanel1.Controls.Add(new PictureBox
-                        {
-                            Image = IconNE.Get(resData),
-                            SizeMode = PictureBoxSizeMode.AutoSize
-                        });
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(IconNE.Get(resData)));
                     }
                     else if (typeName == "RT_FONT")
                     {
-                        flowLayoutPanel1.Controls.Add(new PictureBox
-                        {
-                            Image = Fnt.Get(resData),
-                            SizeMode = PictureBoxSizeMode.AutoSize
-                        });
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(Fnt.Get(resData)));
                     }
                     else
                     {
-                        string val = System.Text.Encoding.ASCII.GetString(resData, 0, resData.Length).Replace('\0', ' ') + "\r\n" + BitConverter.ToString(resData);
-                        flowLayoutPanel1.Controls.Add(new TextBox
-                        {
-                            AcceptsReturn = true,
-                            AcceptsTab = true,
-                            Visible = true,
-                            Enabled = true,
-                            Width = flowLayoutPanel1.ClientSize.Width - flowLayoutPanel1.Padding.Horizontal - 50,
-                            Height = flowLayoutPanel1.ClientSize.Height - flowLayoutPanel1.Padding.Vertical - 50,
-                            ScrollBars = ScrollBars.Both,
-                            Multiline = true,
-                            Text = val,
-                        });
+                        string val = Program.DumpRaw(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
-
                 }
             }
             textBox1.Text = message;
+        }
+
+        PictureBox GetPictureBox(Bitmap bitmap)
+        {
+            return new PictureBox
+            {
+                Image = bitmap,
+                SizeMode = PictureBoxSizeMode.AutoSize
+            };
+        }
+
+        TextBox GetTextbox(string val)
+        {
+            return new TextBox
+            {
+                AcceptsReturn = true,
+                AcceptsTab = true,
+                Visible = true,
+                Enabled = true,
+                Width = flowLayoutPanel1.ClientSize.Width - flowLayoutPanel1.Padding.Horizontal - 50,
+                Height = flowLayoutPanel1.ClientSize.Height - flowLayoutPanel1.Padding.Vertical - 50,
+                ScrollBars = ScrollBars.Both,
+                Font = new Font(new FontFamily("Consolas"), 10, FontStyle.Regular, GraphicsUnit.Point),
+                Multiline = true,
+                Text = val,
+            };
         }
     }
 }

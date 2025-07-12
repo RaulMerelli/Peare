@@ -346,6 +346,7 @@ namespace Peare
                 return output.ToArray();
             }
         }
+
         public static byte[] OpenResourceLX(string typeName, string targetResourceName, out string message, out bool found)
         {
             message = "";

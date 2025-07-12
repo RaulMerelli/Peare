@@ -1,11 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
-using System.Windows.Forms; // Anche se non usata direttamente nel parsing, la mantengo se necessaria per altri scopi del progetto
 
 namespace Peare
 {
@@ -418,8 +415,8 @@ namespace Peare
 
                         ushort ssector = BitConverter.ToUInt16(fileBytes, segEntryOffset);
                         ushort cb = BitConverter.ToUInt16(fileBytes, segEntryOffset + 2);
-                        // ushort sflags = BitConverter.ToUInt16(fileBytes, segEntryOffset + 4); // opzionale
-                        // ushort smin   = BitConverter.ToUInt16(fileBytes, segEntryOffset + 6); // opzionale
+                        // ushort sflags = BitConverter.ToUInt16(fileBytes, segEntryOffset + 4); 
+                        // ushort smin   = BitConverter.ToUInt16(fileBytes, segEntryOffset + 6);
 
                         int dataOffset = ssector << alignShift;
 

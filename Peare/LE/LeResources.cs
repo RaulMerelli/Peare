@@ -76,7 +76,7 @@ namespace Peare
                 if (p + 2 > buf.Length) break;
 
                 ushort typeID = BitConverter.ToUInt16(buf, p);
-                if (typeID == 0) break; // fine risorse
+                if (typeID == 0) break; // resources end
 
                 bool isNamed = (typeID & 0x8000) == 0;
                 ushort type = (ushort)(typeID & 0x7FFF);
