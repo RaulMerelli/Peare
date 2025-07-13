@@ -262,6 +262,11 @@ namespace Peare
                         string val = RT_MESSAGE.Get(resData);
                         flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
+                    else if (typeName == "RT_DISPLAYINFO")
+                    {
+                        string val = RT_DISPLAYINFO.Get(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
                     else if(typeName == "RT_STRING")
                     {
                         string val = RT_STRING.Get(resData);
@@ -291,9 +296,19 @@ namespace Peare
                         string val = FontDirNE.Get(resData);
                         flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
+                    else if (typeName == "RT_DISPLAYINFO")
+                    {
+                        string val = RT_DISPLAYINFO.Get(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
+                    else if (typeName == "RT_GROUP_ICON")
+                    {
+                        string val = RT_GROUP_ICON.Get(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
                     else if (typeName == "RT_VERSION")
                     {
-                        string val = RT_VERSION.Get(resData)+"\r\n"+Program.DumpRaw(resData);
+                        string val = RT_VERSION.Get(resData);
                         flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
                     else if (typeName == "RT_MESSAGE" || typeName == "RT_MESSAGETABLE")

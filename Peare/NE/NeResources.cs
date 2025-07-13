@@ -9,6 +9,9 @@ namespace Peare
     public static class NeResources
     {
         // Windows resource types
+        // Based on Win1 and Win2 prgref and WINMOD.C for Win3 by Matt Pietrek, 1992
+        // Win1: https://www.os2museum.com/files/docs/win10sdk/windows-1.03-sdk-prgref-1986.pdf
+        // Win2: https://www.os2museum.com/files/docs/win20sdk/windows-2.0-sdk-prgref-1987.pdf
         public static Dictionary<int, string> WindowsNeResourceTypes = new Dictionary<int, string>
         {
             { 0x01, "RT_CURSOR" },
@@ -17,24 +20,17 @@ namespace Peare
             { 0x04, "RT_MENU" },
             { 0x05, "RT_DIALOG" },
             { 0x06, "RT_STRING" },
-            { 0x07, "RT_FONTDIR" },
+            { 0x07, "RT_FONTDIR" }, // FONTDIR do not exist in Win1 prgref, but it works?! Was it undocumented?
             { 0x08, "RT_FONT" },
             { 0x09, "RT_ACCELERATOR" },
             { 0x0A, "RT_RCDATA" },
-            { 0x0B, "RT_MESSAGETABLE" },
+            { 0x0B, "RT_MESSAGETABLE" }, // In WinMod by Matt Pietrek, 1992, File: WINMOD.C this is ErrorTable
             { 0x0C, "RT_GROUP_CURSOR" },
-            { 0x0D, "RT_GROUP_ICON" },
-            { 0x0E, "RT_UNKNOWN(14)" },
-            { 0x0F, "RT_UNKNOWN(15)" },
+            { 0x0D, "RT_UNKNOWN(13)" }, 
+            { 0x0E, "RT_GROUP_ICON" },
+            { 0x0F, "RT_NAMETABLE" },
             { 0x10, "RT_VERSION" },
-            { 0x11, "RT_DLGINCLUDE" },
-            { 0x12, "RT_UNKNOWN(18)" },
-            { 0x13, "RT_PLUGPLAY" },
-            { 0x14, "RT_VXD" },
-            { 0x15, "RT_ANICURSOR" },
-            { 0x16, "RT_ANIICON" },
-            { 0x17, "RT_HTML" },
-            { 0x18, "RT_MANIFEST" }
+            { 257, "RT_DRV_RAW"} // Not found in any docs, this is an addition by me, as 257 is always found only in drv files
         };
 
         // OS/2 resource types

@@ -23,16 +23,19 @@ What is currently (at least partially) implemented right now:
 		- RT_MESSAGE
 		- RT_BITMAP
 		- RT_STRING
+		- RT_DISPLAYINFO
 
 	- LX (OS/2)
 		- RT_MESSAGE
 		- RT_STRING
 		- RT_BITMAP
+		- RT_DISPLAYINFO (theoretically, I can't find any Windows LX contining a RT_DISPLAYINFO resource)
 
 	- NE (Windows)
 		- RT_MESSAGETABLE (theoretically, I can't find any Windows NE contining a RT_MESSAGETABLE resource)
 		- RT_FONTDIR
 		- RT_FONT
+		- RT_GROUP_ICON
 		- RT_ICON
 		- RT_BITMAP
 		- RT_STRING

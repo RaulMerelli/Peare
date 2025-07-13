@@ -45,7 +45,7 @@ namespace Peare
                 if (currentId == -1)
                     currentId = baseId;  // first non-empty ID
 
-                sb.AppendLine($" {currentId}, \"{Escape(value)}\"");
+                sb.AppendLine($"\t{currentId}, \"{Escape(value)}\"");
 
                 currentId++;
             }

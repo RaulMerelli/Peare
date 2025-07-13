@@ -54,6 +54,8 @@
     <Compile Include="Resources\RT_BITMAP\RT_BITMAP.cs" />
     <Compile Include="NE\RT_FONTDIR\FONTDIRENTRY.cs" />
     <Compile Include="NE\RT_FONTDIR\FontDirNE.cs" />
+    <Compile Include="Resources\RT_DISPLAYINFO\RT_DISPLAYINFO.cs" />
+    <Compile Include="Resources\RT_ICON_GROUP\RT_GROUP_ICON.cs" />
     <Compile Include="Resources\RT_MESSAGE\RT_MESSAGE.cs" />
     <Compile Include="NE\RT_FONT\Fnt.cs" />
     <Compile Include="NE\RT_FONT\FONTINFO16.cs" />
