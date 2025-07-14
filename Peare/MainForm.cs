@@ -250,6 +250,10 @@ namespace Peare
                     {
                         flowLayoutPanel1.Controls.Add(GetPictureBox(RT_ICON.Get(resData)));
                     }
+                    else if (typeName == "RT_CURSOR")
+                    {
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(RT_CURSOR.Get(resData)));
+                    }
                     else if (typeName == "RT_BITMAP")
                     {
                         bool result = false;
@@ -268,6 +272,13 @@ namespace Peare
                     {
                         string val = RT_GROUP_ICON.Get(resData);
                         flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
+                    else if (typeName == "RT_GROUP_CURSOR")
+                    {
+                        string val = RT_GROUP_CURSOR.Get(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                        string dump = Program.DumpRaw(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(dump));
                     }
                     else if (typeName == "RT_VERSION")
                     {
@@ -356,6 +367,13 @@ namespace Peare
                         string val = RT_GROUP_ICON.Get(resData);
                         flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
+                    else if (typeName == "RT_GROUP_CURSOR")
+                    {
+                        string val = RT_GROUP_CURSOR.Get(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                        string dump = Program.DumpRaw(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(dump));
+                    }
                     else if (typeName == "RT_VERSION")
                     {
                         string val = RT_VERSION.Get(resData);
@@ -397,6 +415,10 @@ namespace Peare
                     else if (typeName == "RT_ICON")
                     {
                         flowLayoutPanel1.Controls.Add(GetPictureBox(RT_ICON.Get(resData)));
+                    }
+                    else if (typeName == "RT_CURSOR")
+                    {
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(RT_CURSOR.Get(resData)));
                     }
                     else if (typeName == "RT_FONT")
                     {

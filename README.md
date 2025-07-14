@@ -31,8 +31,8 @@ What is currently (at least partially) implemented right now:
 	- LX (OS/2)
 		- RT_POINTER (BA, BM, IC, CI, CP, PT)
 		- RT_MESSAGE
-		- RT_STRING
 		- RT_BITMAP (BA, BM, IC, CI, CP, PT)
+		- RT_STRING
 		- RT_DISPLAYINFO (theoretically, I can't find any OS/2 LX contining a RT_DISPLAYINFO resource)
 
 	- NE (Windows)
@@ -44,12 +44,16 @@ What is currently (at least partially) implemented right now:
 		- RT_BITMAP
 		- RT_STRING
 		- RT_VERSION
+		- RT_GROUP_CURSOR
+		- RT_CURSOR
 
 	- PE (Windows)
 		- RT_BITMAP
 		- RT_GROUP_ICON
 		- RT_ICON
 		- RT_VERSION
+		- RT_GROUP_CURSOR
+		- RT_CURSOR
 
 	- Fallback to ASCII text and raw bytes (All the formats)
 
