@@ -2,6 +2,8 @@
 
 *Plugin-Extendable Avdanced Resource Editor*
 
+<img width="472" height="442" alt="Peare icon" src="https://github.com/user-attachments/assets/bab6314a-0ae0-4c13-a3a4-d46ee26b5ab8" />
+
 Inspired by Resource Hacker and BCC Workshop, wrote in C#.
 
 The goal is to open, edit, save the resources inside an executable or an application package, and expand the resources type support via plugins made for this software. 
@@ -13,7 +15,7 @@ What is currently (at least partially) implemented right now:
 
 - Open file and list types and resources
 	- NE New Executable (Windows 16bit)
-	- NE New Executable(OS/2 16bit)
+	- NE New Executable (OS/2 16bit)
 	- PE Portable Executable (Windows 32/64bit)
 	- LX Linear Executable Extended (OS/2 32bit)
 
@@ -31,7 +33,7 @@ What is currently (at least partially) implemented right now:
 		- RT_MESSAGE
 		- RT_STRING
 		- RT_BITMAP (BA, BM, IC, CI)
-		- RT_DISPLAYINFO (theoretically, I can't find any Windows LX contining a RT_DISPLAYINFO resource)
+		- RT_DISPLAYINFO (theoretically, I can't find any OS/2 LX contining a RT_DISPLAYINFO resource)
 
 	- NE (Windows)
 		- RT_MESSAGETABLE (theoretically, I can't find any Windows NE contining a RT_MESSAGETABLE resource)
