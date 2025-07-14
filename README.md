@@ -47,8 +47,11 @@ What is currently (at least partially) implemented right now:
 
 	- PE (Windows)
 		- RT_BITMAP
+		- RT_GROUP_ICON
+		- RT_ICON
+		- RT_VERSION
 
-	- Fallback to ASCII text and raw bytes (NE for Windows and OS/2, LX)
+	- Fallback to ASCII text and raw bytes (All the formats)
 
 
 

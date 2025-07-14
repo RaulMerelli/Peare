@@ -235,21 +235,64 @@ namespace Peare
             bool found = false;
             if (Program.currentHeaderType.StartsWith("PE"))
             {
-                if (Program.currentModuleHandle == IntPtr.Zero) return;
-
-                message = $"Resource {typeName} {targetResourceName} selected.";
-                if (typeName == "RT_BITMAP")
+                byte[] resData = PeResources.OpenResourcePE(typeName, targetResourceName, out message, out found);
+                if (found)
                 {
-                    flowLayoutPanel1.Controls.Add(new PictureBox
+                    //if (typeName == "RT_BITMAP")
+                    //{
+                    //    flowLayoutPanel1.Controls.Add(new PictureBox
+                    //    {
+                    //        Image = PeResources.AddBitmapToFlow(Program.currentModuleHandle, targetResourceName),
+                    //        SizeMode = PictureBoxSizeMode.AutoSize
+                    //    });
+                    //}
+                    if (typeName == "RT_ICON")
                     {
-                        Image = PeResources.AddBitmapToFlow(Program.currentModuleHandle, targetResourceName),
-                        SizeMode = PictureBoxSizeMode.AutoSize
-                    });
-                }
-                else
-                {
-                    var strings = PeResources.LoadStrings(Program.currentModuleHandle, targetResourceName, typeName);
-                    textBox1.Lines = strings;
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(RT_ICON.Get(resData)));
+                    }
+                    else if (typeName == "RT_BITMAP")
+                    {
+                        bool result = false;
+                        foreach (Bitmap bmp in RT_BITMAP.Get(resData))
+                        {
+                            result = true;
+                            flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
+                        }
+                        if (!result)
+                        {
+                            string val = Program.DumpRaw(resData);
+                            flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                        }
+                    }
+                    else if (typeName == "RT_GROUP_ICON")
+                    {
+                        string val = RT_GROUP_ICON.Get(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
+                    else if (typeName == "RT_VERSION")
+                    {
+                        string val = RT_VERSION.Get(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
+                    else if (typeName == "RT_MESSAGETABLE")
+                    {
+                        string val = RT_MESSAGE.Get(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                        string dump = Program.DumpRaw(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(dump));
+                    }
+                    else if (typeName == "RT_STRING")
+                    {
+                        string val = RT_STRING.Get(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                        string dump = Program.DumpRaw(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(dump));
+                    }
+                    else
+                    {
+                        string val = Program.DumpRaw(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
                 }
             }
             else if (Program.currentHeaderType.StartsWith("LX"))

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -38,6 +39,15 @@ namespace Peare
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         public static extern IntPtr FindResource(IntPtr hModule, string lpName, string lpType);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr FindResource(IntPtr hModule, string lpName, IntPtr lpType);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern IntPtr FindResource(IntPtr hModule, IntPtr lpName, string lpType);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr FindResource(IntPtr hModule, IntPtr lpName, IntPtr lpType);
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         public static extern IntPtr LoadResource(IntPtr hModule, IntPtr hResInfo);
@@ -93,8 +103,8 @@ namespace Peare
             { 0x0A, "RT_RCDATA" },
             { 0x0B, "RT_MESSAGETABLE" },
             { 0x0C, "RT_GROUP_CURSOR" },
-            { 0x0D, "RT_GROUP_ICON" },
-            { 0x0E, "RT_UNKNOWN(14)" },
+            { 0x0D, "RT_UNKNOWN(13)" },
+            { 0x0E, "RT_GROUP_ICON" },
             { 0x0F, "RT_UNKNOWN(15)" },
             { 0x10, "RT_VERSION" },
             { 0x11, "RT_DLGINCLUDE" },
@@ -151,42 +161,77 @@ namespace Peare
             return ((ulong)ptr.ToInt64() & 0xFFFF0000) == 0;
         }
 
-        public static string[] LoadStrings(IntPtr hDll, string lpName, string lpType)
+        public static byte[] OpenResourcePE(string lpType, string lpName, out string message, out bool found)
         {
-            List<string> retList = new List<string>();
+            found = false;
+            message = "";
+
+            if (Program.currentModuleHandle == IntPtr.Zero) 
+                return new byte[0];
+
+            IntPtr hDll = Program.currentModuleHandle;
             // Find and load the resource
-            IntPtr hResource = FindResource(hDll, lpName, lpType);
+            IntPtr hResource = IntPtr.Zero;
+
+            var numericType = PeResourceTypes.Where(x => x.Value == lpType).Select(x => (int?)x.Key).FirstOrDefault();
+            int numericName = IsDigitsOnly(lpName) ? int.Parse(lpName) : -1;
+
+            // FindResource has 4 different signatures
+            if (numericType.HasValue)
+            {
+                if (numericName == -1)
+                {
+                    hResource = FindResource(hDll, lpName, new IntPtr(numericType.Value));
+                }
+                else
+                {
+                    hResource = FindResource(hDll, new IntPtr(numericName), new IntPtr(numericType.Value));
+                }
+            }
+            else
+            {
+                if (numericName == -1)
+                {
+                    hResource = FindResource(hDll, lpName, lpType);
+                }
+                else
+                {
+                    hResource = FindResource(hDll, new IntPtr(numericName), lpType);
+                }
+            }
+            if (hResource != IntPtr.Zero) 
+                found = true;
+
+            if (!found)
+                return new byte[0];
+
             IntPtr hResourceData = LoadResource(hDll, hResource);
 
-            // Access the text
-            IntPtr pText = LockResource(hResourceData);
+            // Access the data
+            IntPtr pRes = LockResource(hResourceData);
             uint size = SizeofResource(hDll, hResource);
             byte[] bytes = new byte[size];
 
-            string text = "";
-
-            if (pText != IntPtr.Zero)
+            message = $"Windows PE Resource {lpType} {lpName} found.\nLength: {bytes.Length} byte.";
+            if (pRes != IntPtr.Zero)
             {
                 for (int i = 0; i < bytes.Length; i++)
                 {
-                    bytes[i] = Marshal.ReadByte(pText, i);
-                }
-                foreach (char c in Encoding.Unicode.GetChars(bytes))
-                {
-                    if (c == '\0') //NUL
-                    {
-                        retList.Add(text);
-                        text = "";
-                    }
-                    else
-                    {
-                        text += c;
-                    }
+                    bytes[i] = Marshal.ReadByte(pRes, i);
                 }
             }
-            retList.Add(text);
+            return bytes;
+        }
 
-            return retList.ToArray();
+        private static bool IsDigitsOnly(string str)
+        {
+            foreach (char c in str)
+            {
+                if (c < '0' || c > '9')
+                    return false;
+            }
+
+            return true;
         }
 
         public static Bitmap AddBitmapToFlow(IntPtr hDll, string lpBitmapName)
