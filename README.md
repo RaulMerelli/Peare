@@ -22,17 +22,17 @@ What is currently (at least partially) implemented right now:
 - Open resources from the list:
 
 	- NE (OS/2)
-		- RT_POINTER (BA, BM, IC, CI)
+		- RT_POINTER (BA, BM, IC, CI, CP, PT)
 		- RT_MESSAGE
-		- RT_BITMAP (BA, BM, IC, CI)
+		- RT_BITMAP (BA, BM, IC, CI, CP, PT)
 		- RT_STRING
 		- RT_DISPLAYINFO
 
 	- LX (OS/2)
-		- RT_POINTER (BA, BM, IC, CI)
+		- RT_POINTER (BA, BM, IC, CI, CP, PT)
 		- RT_MESSAGE
 		- RT_STRING
-		- RT_BITMAP (BA, BM, IC, CI)
+		- RT_BITMAP (BA, BM, IC, CI, CP, PT)
 		- RT_DISPLAYINFO (theoretically, I can't find any OS/2 LX contining a RT_DISPLAYINFO resource)
 
 	- NE (Windows)

@@ -274,12 +274,17 @@ namespace Peare
                     }
                     else if (typeName == "RT_BITMAP" || typeName == "RT_POINTER")
                     {
+                        bool result = false;
                         foreach (Bitmap bmp in RT_BITMAP.Get(resData))
                         {
+                            result = true;
                             flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
                         }
-                        string val = Program.DumpRaw(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                        if (!result)
+                        {
+                            string val = Program.DumpRaw(resData);
+                            flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                        }
                     }
                     else
                     {
@@ -334,12 +339,17 @@ namespace Peare
                     }
                     else if (typeName == "RT_BITMAP" || typeName == "RT_POINTER")
                     {
+                        bool result = false;
                         foreach (Bitmap bmp in RT_BITMAP.Get(resData))
                         {
+                            result = true;
                             flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
                         }
-                        string val = Program.DumpRaw(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                        if (!result)
+                        {
+                            string val = Program.DumpRaw(resData);
+                            flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                        }
                     }
                     else if (typeName == "RT_ICON")
                     {
