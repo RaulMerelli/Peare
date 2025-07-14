@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.IO;
 
 namespace Peare
 {
@@ -8,6 +9,16 @@ namespace Peare
     {
         public static Bitmap Get(byte[] resData)
         {
+            if (resData.Length > 4 &&
+                resData[0] == 0x89 && resData[1] == 0x50 &&
+                resData[2] == 0x4E && resData[3] == 0x47)
+            {
+                using (var ms = new MemoryStream(resData))
+                {
+                    return new Bitmap(ms); // load directly the PNG and skip the old format
+                }
+            }
+
             int biSize = BitConverter.ToInt32(resData, 0);
             int width = BitConverter.ToInt32(resData, 4);
             int fullHeight = BitConverter.ToInt32(resData, 8);
@@ -26,7 +37,7 @@ namespace Peare
             int maskStride = ((width + 31) / 32) * 4;
             int maskDataOffset = pixelDataOffset + colorStride * height;
 
-            // Estrai palette
+            // Extract palette
             Color[] palette = null;
             if (bitCount <= 8)
             {
@@ -43,7 +54,7 @@ namespace Peare
                 }
             }
 
-            // Passa solo le sezioni già "offsettate"
+            // Only pass the sections that are already "offsetted"
             byte[] pixelData = new byte[colorStride * height];
             byte[] maskData = new byte[maskStride * height];
             Buffer.BlockCopy(resData, pixelDataOffset, pixelData, 0, pixelData.Length);

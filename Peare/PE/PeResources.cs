@@ -157,7 +157,7 @@ namespace Peare
 
         public static bool IsIntResource(IntPtr ptr)
         {
-            // if the value is <= 0xFFFF allora è intero, altrimenti è puntatore a stringa
+            // if the value is <= 0xFFFF it is int, else it points to a string
             return ((ulong)ptr.ToInt64() & 0xFFFF0000) == 0;
         }
 
@@ -203,7 +203,10 @@ namespace Peare
                 found = true;
 
             if (!found)
+            {
+                message = $"Windows PE Resource {lpType} {lpName} not found.";
                 return new byte[0];
+            }
 
             IntPtr hResourceData = LoadResource(hDll, hResource);
 
@@ -234,13 +237,13 @@ namespace Peare
             return true;
         }
 
-        public static Bitmap AddBitmapToFlow(IntPtr hDll, string lpBitmapName)
-        {
-            IntPtr myimage = LoadBitmap(hDll, lpBitmapName);
-            Bitmap bitmap = Bitmap.FromHbitmap(myimage);
-            // Remember to free the HBITMAP when you're done with it
-            DeleteObject(myimage);
-            return bitmap;
-        }
+        //public static Bitmap AddBitmapToFlow(IntPtr hDll, string lpBitmapName)
+        //{
+        //    IntPtr myimage = LoadBitmap(hDll, lpBitmapName);
+        //    Bitmap bitmap = Bitmap.FromHbitmap(myimage);
+        //    // Remember to free the HBITMAP when you're done with it
+        //    DeleteObject(myimage);
+        //    return bitmap;
+        //}
     }
 }
