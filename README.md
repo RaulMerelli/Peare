@@ -1,6 +1,6 @@
 # Peare
 
-Plugin-Extendable Avdanced Resource Editor
+*Plugin-Extendable Avdanced Resource Editor*
 
 Inspired by Resource Hacker and BCC Workshop, wrote in C#.
 
@@ -20,15 +20,17 @@ What is currently (at least partially) implemented right now:
 - Open resources from the list:
 
 	- NE (OS/2)
+		- RT_POINTER (BA, BM, IC, CI)
 		- RT_MESSAGE
-		- RT_BITMAP
+		- RT_BITMAP (BA, BM, IC, CI)
 		- RT_STRING
 		- RT_DISPLAYINFO
 
 	- LX (OS/2)
+		- RT_POINTER (BA, BM, IC, CI)
 		- RT_MESSAGE
 		- RT_STRING
-		- RT_BITMAP
+		- RT_BITMAP (BA, BM, IC, CI)
 		- RT_DISPLAYINFO (theoretically, I can't find any Windows LX contining a RT_DISPLAYINFO resource)
 
 	- NE (Windows)
@@ -50,9 +52,12 @@ What is currently (at least partially) implemented right now:
 
 RT_FONT support for NE Windows is handcrafted, this is what is supported:
 
-- Fnt ver. 1 monospace raster fonts
-- Fnt ver. 1 variable width raster fonts
-- Fnt ver. 1 vectors fonts
-- Fnt ver. 2 monospace raster fonts
-- Fnt ver. 2 variable width raster fonts
-- Fnt ver. 3 monospace raster fonts
+- Fnt ver. 1
+	- monospace raster fonts
+	- variable width raster fonts
+	- vectors fonts
+- Fnt ver. 2
+	- monospace raster fonts
+	- Fvariable width raster fonts
+- Fnt ver. 3
+	- monospace raster fonts

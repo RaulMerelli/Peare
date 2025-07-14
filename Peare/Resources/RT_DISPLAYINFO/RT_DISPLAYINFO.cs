@@ -1,8 +1,10 @@
-﻿using System;
-using System.Text;
+﻿using System.Text;
 
 namespace Peare
 {
+    // Special thanks to bitsavers.trailing-edge.com rfor proving some IBM docs containig useful info
+    // https://bitsavers.trailing-edge.com/pdf/ibm/pc/os2/OS2_2.x/IBM_OS2_2.0_Technical_Library_1992/S10G-6267-00_OS2_2.0_Presentation_Driver_Reference_199203.pdf
+    // page 244
     public class RT_DISPLAYINFO
     {
         public static string Get(byte[] data)

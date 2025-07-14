@@ -6,7 +6,7 @@ using System.Text;
 
 namespace Peare
 {
-    public static class FontDirNE
+    public static class RT_FONTDIR
     {
         public static unsafe string Get(byte[] data)
         {

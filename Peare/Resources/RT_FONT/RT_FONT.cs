@@ -9,7 +9,7 @@ using System.Text;
 
 namespace Peare
 {
-    public static class Fnt
+    public static class RT_FONT
     {
         public static T Deserialize<T>(byte[] array) where T : struct
         {

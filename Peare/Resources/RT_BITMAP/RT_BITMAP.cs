@@ -5,11 +5,13 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement.ProgressBar;
 
 namespace Peare
 {
     public static class RT_BITMAP
     {
+        // This is an entrypoint also for RT_POINTER. A bitmap array can be the base for both the types.
         public static List<Bitmap> Get(byte[] resData)
         {
             var result = new List<Bitmap>();
@@ -47,15 +49,13 @@ namespace Peare
 
                         byte[] bmpData = resData.Skip(bmpOffset).Take(nextBmpSize).ToArray();
 
-                        var bmp = TryParseSingle(bmpData);
+                        var bmp = TryParseBMP(bmpData);
                         if (bmp != null)
-                        {
                             result.Add(bmp);
-                        }
-                        else
-                        {
-                            Console.WriteLine($"[DEBUG] Failed to parse bitmap at offset {offset}");
-                        }
+
+                        bmp = TryParseCI(bmpData, resData);
+                        if (bmp != null)
+                            result.Add(bmp);
 
                         if (nextOffset <= offset || nextOffset >= resData.Length)
                         {
@@ -69,7 +69,11 @@ namespace Peare
                 }
                 else
                 {
-                    Bitmap bmp = TryParseSingle(resData);
+                    Bitmap bmp = TryParseBMP(resData);
+                    if (bmp != null)
+                        result.Add(bmp);
+
+                    bmp = TryParseCI(resData, resData);
                     if (bmp != null)
                         result.Add(bmp);
                     return result;
@@ -81,7 +85,8 @@ namespace Peare
                 return result;
             }
         }
-        private static Bitmap TryParseSingle(byte[] resData)
+
+        private static Bitmap TryParseBMP(byte[] resData)
         {
             try
             {
@@ -160,6 +165,119 @@ namespace Peare
             }
         }
 
+        private static Bitmap TryParseCI(byte[] CIresData, byte[] bitmapArray)
+        {
+            using (var ms = new MemoryStream(CIresData))
+            using (var reader = new BinaryReader(ms))
+            {
+                // === First CI block (monochrome mask) ===
+                ushort header = reader.ReadUInt16();
+                if (header != 0x4943 && header != 0x4349) return null; // "CI" or "IC"
+                _ = reader.ReadUInt32(); // fileSize
+                ushort xHotspotMask = reader.ReadUInt16(); // xHotspot
+                ushort yHotspotMask = reader.ReadUInt16(); // yHotspot
+                uint bitmapOffsetMask = reader.ReadUInt32();
+
+                if (reader.ReadUInt32() != 12) return null; // BitmapCoreHeader size
+                ushort widthMask = reader.ReadUInt16();
+                ushort heightMask = reader.ReadUInt16(); // This is double the height of the bitmap!
+                ushort planesMask = reader.ReadUInt16(); // planes
+                ushort bppMask = reader.ReadUInt16(); // bpp (should be 1)
+
+                if (planesMask != 1 || (bppMask != 1 && bppMask != 4 && bppMask != 8))
+                    return null;
+
+                int numColorsMask = 1 << bppMask;
+
+                // --- COLOR PALETTE ---
+                var paletteMask = new Color[numColorsMask];
+                for (int i = 0; i < numColorsMask; i++)
+                {
+                    byte blue = reader.ReadByte();
+                    byte green = reader.ReadByte();
+                    byte red = reader.ReadByte();
+                    paletteMask[i] = Color.FromArgb(red, green, blue);
+                }
+
+                // === Second CI block (color image) ===
+                if (reader.BaseStream.Position + 2 <= reader.BaseStream.Length && reader.ReadUInt16() == 0x4943)
+                {
+                    // Second "CI" block found!
+                    _ = reader.ReadUInt32(); // fileSize
+                    ushort xHotspot = reader.ReadUInt16();
+                    ushort yHotspot = reader.ReadUInt16();
+                    uint bitmapOffset = reader.ReadUInt32();
+
+                    if (reader.ReadUInt32() != 12) return null;
+                    ushort width = reader.ReadUInt16();
+                    ushort height = reader.ReadUInt16();
+                    ushort planes = reader.ReadUInt16();
+                    ushort bpp = reader.ReadUInt16();
+
+                    if (planes != 1 || (bpp != 1 && bpp != 4 && bpp != 8))
+                        return null;
+
+                    int numColors = 1 << bpp;
+                    var palette = new Color[numColors];
+                    for (int i = 0; i < numColors; i++)
+                    {
+                        byte blue = reader.ReadByte();
+                        byte green = reader.ReadByte();
+                        byte red = reader.ReadByte();
+                        palette[i] = Color.FromArgb(red, green, blue);
+                    }
+
+                    // === Calcola dimensioni ===
+                    int stride = ((width * bpp + 31) / 32) * 4;
+                    int strideMask = ((widthMask * bppMask + 31) / 32) * 4;
+
+                    // We use the real weight, already given by the bitmap, not from the mask.
+                    // From the mask it would be heightMask / 2
+                    int bitmapSize = stride * height;
+                    int maskSize = strideMask * height;
+
+                    // === Legge i dati dal bitmapArray ===
+                    if (bitmapOffset + bitmapSize > bitmapArray.Length ||
+                        bitmapOffsetMask + maskSize > bitmapArray.Length)
+                        return null;
+
+                    byte[] colorData = new byte[bitmapSize];
+                    byte[] maskData = new byte[maskSize];
+
+                    Array.Copy(bitmapArray, bitmapOffset, colorData, 0, bitmapSize);
+                    Array.Copy(bitmapArray, bitmapOffsetMask + maskSize, maskData, 0, maskSize); // We skip the first half that we don't care about
+
+                    return GenerateBitmapFromData(colorData, maskData, width, height, bpp, palette);
+                }
+                else
+                {
+                    // Second "CI" block not found.
+                    // Fallback
+                    // I think we might find a case where we have a single CI block, handled as monochrome only, where the first half of the mask is also the bitmap
+                    // This fallback is also compatible with IC file, that apparently is the same to the CI with a single block.
+                    // I found the IC format being used in OS/2 1.1 for example.
+
+                    int stride = ((widthMask * bppMask + 31) / 32) * 4;
+                    int maskStride = ((widthMask + 31) / 32) * 4; // 1bpp mask
+
+                    int realHeight = heightMask / 2;
+                    int bitmapSize = stride * realHeight;
+                    int maskSize = maskStride * realHeight;
+
+                    if (bitmapOffsetMask + bitmapSize + maskSize > bitmapArray.Length)
+                        return null;
+
+                    byte[] raw = new byte[bitmapSize];
+                    byte[] rawmask = new byte[maskSize];
+
+                    Array.Copy(bitmapArray, bitmapOffsetMask, raw, 0, bitmapSize);
+                    Array.Copy(bitmapArray, bitmapOffsetMask + bitmapSize, rawmask, 0, maskSize);
+
+                    return GenerateBitmapFromData(raw, rawmask, widthMask, realHeight, bppMask, paletteMask);
+                }
+            }
+        }
+
         private static Bitmap TryParseOS2V1(byte[] data)
         {
             try
@@ -214,46 +332,11 @@ namespace Peare
                     return null;
                 }
 
-                Bitmap bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+                // Estraggo solo la porzione bitmap "pulita" da passare
+                byte[] bitmapData = new byte[totalPixelBytes];
+                Array.Copy(data, pixelOffset, bitmapData, 0, totalPixelBytes);
 
-                for (int y = 0; y < height; y++)
-                {
-                    int rowOffset = pixelOffset + (height - 1 - y) * stride;
-
-                    for (int x = 0; x < width; x++)
-                    {
-                        int paletteIndex = 0;
-
-                        switch (bitCount)
-                        {
-                            case 8:
-                                paletteIndex = data[rowOffset + x];
-                                break;
-
-                            case 4:
-                                {
-                                    int byteIndex = rowOffset + (x / 2);
-                                    byte b = data[byteIndex];
-                                    paletteIndex = (x % 2 == 0) ? (b >> 4) : (b & 0x0F);
-                                }
-                                break;
-
-                            case 1:
-                                {
-                                    int byteIndex = rowOffset + (x / 8);
-                                    byte b = data[byteIndex];
-                                    int bit = 7 - (x % 8);
-                                    paletteIndex = (b >> bit) & 0x01;
-                                }
-                                break;
-                        }
-
-                        if (paletteIndex >= 0 && paletteIndex < palette.Length)
-                            bmp.SetPixel(x, y, palette[paletteIndex]);
-                    }
-                }
-
-                return bmp;
+                return CreateBitmapFromData(bitmapData, width, height, bitCount, palette);
             }
             catch (Exception ex)
             {
@@ -261,6 +344,158 @@ namespace Peare
                 return null;
             }
         }
+
+        public static Bitmap GenerateBitmapFromData(byte[] pixelData, byte[] maskData, int width, int height, int bitCount, Color[] palette)
+        {
+            int colorStride = ((width * bitCount + 31) / 32) * 4;
+            int maskStride = ((width + 31) / 32) * 4;
+
+            Bitmap bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+            BitmapData bmpData = bmp.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+
+            unsafe
+            {
+                byte* ptr = (byte*)bmpData.Scan0;
+
+                for (int y = 0; y < height; y++)
+                {
+                    int invY = height - 1 - y;
+
+                    for (int x = 0; x < width; x++)
+                    {
+                        Color color = Color.Magenta;
+
+                        int pixelOffset = invY * colorStride;
+                        if (bitCount == 32)
+                        {
+                            int off = pixelOffset + x * 4;
+                            if (off + 3 < pixelData.Length)
+                            {
+                                byte b = pixelData[off];
+                                byte g = pixelData[off + 1];
+                                byte r = pixelData[off + 2];
+                                byte a = pixelData[off + 3];
+                                color = Color.FromArgb(a, r, g, b);
+                            }
+                        }
+                        else if (bitCount == 24)
+                        {
+                            int off = pixelOffset + x * 3;
+                            if (off + 2 < pixelData.Length)
+                            {
+                                byte b = pixelData[off];
+                                byte g = pixelData[off + 1];
+                                byte r = pixelData[off + 2];
+                                color = Color.FromArgb(255, r, g, b);
+                            }
+                        }
+                        else if (bitCount == 8 && palette != null)
+                        {
+                            int off = pixelOffset + x;
+                            if (off < pixelData.Length)
+                            {
+                                int idx = pixelData[off];
+                                if (idx < palette.Length)
+                                    color = palette[idx];
+                            }
+                        }
+                        else if (bitCount == 4 && palette != null)
+                        {
+                            int off = pixelOffset + (x / 2);
+                            if (off < pixelData.Length)
+                            {
+                                byte val = pixelData[off];
+                                int idx = (x % 2 == 0) ? (val >> 4) : (val & 0x0F);
+                                if (idx < palette.Length)
+                                    color = palette[idx];
+                            }
+                        }
+                        else if (bitCount == 1 && palette != null)
+                        {
+                            int off = pixelOffset + (x / 8);
+                            if (off < pixelData.Length)
+                            {
+                                byte val = pixelData[off];
+                                int idx = (val >> (7 - (x % 8))) & 1;
+                                if (idx < palette.Length)
+                                    color = palette[idx];
+                            }
+                        }
+
+                        // AND mask
+                        int maskByteIndex = invY * maskStride + (x / 8);
+                        int maskBit = 7 - (x % 8);
+                        bool isTransparent = false;
+                        if (maskByteIndex < maskData.Length)
+                        {
+                            isTransparent = (maskData[maskByteIndex] & (1 << maskBit)) != 0;
+                        }
+
+                        if (isTransparent)
+                        {
+                            color = Color.FromArgb(0, color.R, color.G, color.B);
+                        }
+
+                        byte* pixelPtr = ptr + y * bmpData.Stride + x * 4;
+                        pixelPtr[0] = color.B;
+                        pixelPtr[1] = color.G;
+                        pixelPtr[2] = color.R;
+                        pixelPtr[3] = color.A;
+                    }
+                }
+            }
+
+            bmp.UnlockBits(bmpData);
+            return bmp;
+        }
+
+        private static Bitmap CreateBitmapFromData(byte[] bitmapData, int width, int height, ushort bitCount, Color[] palette)
+        {
+            Bitmap bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+
+            int bitsPerLine = width * bitCount;
+            int stride = ((bitsPerLine + 31) / 32) * 4;
+
+            for (int y = 0; y < height; y++)
+            {
+                int rowOffset = (height - 1 - y) * stride;
+
+                for (int x = 0; x < width; x++)
+                {
+                    int paletteIndex = 0;
+
+                    switch (bitCount)
+                    {
+                        case 8:
+                            paletteIndex = bitmapData[rowOffset + x];
+                            break;
+
+                        case 4:
+                            {
+                                int byteIndex = rowOffset + (x / 2);
+                                byte b = bitmapData[byteIndex];
+                                paletteIndex = (x % 2 == 0) ? (b >> 4) : (b & 0x0F);
+                            }
+                            break;
+
+                        case 1:
+                            {
+                                int byteIndex = rowOffset + (x / 8);
+                                byte b = bitmapData[byteIndex];
+                                int bit = 7 - (x % 8);
+                                paletteIndex = (b >> bit) & 0x01;
+                            }
+                            break;
+                    }
+
+                    if (paletteIndex >= 0 && paletteIndex < palette.Length)
+                        bmp.SetPixel(x, y, palette[paletteIndex]);
+                }
+            }
+
+            return bmp;
+        }
+
 
     }
 }

@@ -52,13 +52,13 @@
     <Compile Include="LX\LX_OBJECT_TABLE_ENTRY.cs" />
     <Compile Include="LX\LX_OBJECT_FLAGS.cs" />
     <Compile Include="Resources\RT_BITMAP\RT_BITMAP.cs" />
-    <Compile Include="NE\RT_FONTDIR\FONTDIRENTRY.cs" />
-    <Compile Include="NE\RT_FONTDIR\FontDirNE.cs" />
+    <Compile Include="Resources\RT_FONTDIR\FONTDIRENTRY.cs" />
+    <Compile Include="Resources\RT_FONTDIR\RT_FONTDIR.cs" />
     <Compile Include="Resources\RT_DISPLAYINFO\RT_DISPLAYINFO.cs" />
     <Compile Include="Resources\RT_ICON_GROUP\RT_GROUP_ICON.cs" />
     <Compile Include="Resources\RT_MESSAGE\RT_MESSAGE.cs" />
-    <Compile Include="NE\RT_FONT\Fnt.cs" />
-    <Compile Include="NE\RT_FONT\FONTINFO16.cs" />
+    <Compile Include="Resources\RT_FONT\RT_FONT.cs" />
+    <Compile Include="Resources\RT_FONT\FONTINFO16.cs" />
     <Compile Include="LE\IMAGE_LE_HEADER.cs" />
     <Compile Include="LE\LeResources.cs" />
     <Compile Include="LE\LE_OBJECT_FLAGS.cs" />
@@ -72,7 +72,7 @@
     </Compile>
     <Compile Include="Resources\RT_STRING\RT_STRING.cs" />
     <Compile Include="PE\FormatMessageFlags.cs" />
-    <Compile Include="NE\RT_ICON\IconNE.cs" />
+    <Compile Include="Resources\RT_ICON\RT_ICON.cs" />
     <Compile Include="PE\LoadLibraryFlags.cs" />
     <Compile Include="NE\NeResources.cs" />
     <Compile Include="PE\PeResources.cs" />

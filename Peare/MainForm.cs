@@ -272,12 +272,14 @@ namespace Peare
                         string val = RT_STRING.Get(resData);
                         flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
-                    else if (typeName == "RT_BITMAP")
+                    else if (typeName == "RT_BITMAP" || typeName == "RT_POINTER")
                     {
                         foreach (Bitmap bmp in RT_BITMAP.Get(resData))
                         {
                             flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
                         }
+                        string val = Program.DumpRaw(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
                     else
                     {
@@ -293,7 +295,7 @@ namespace Peare
                 {
                     if (typeName == "RT_FONTDIR")
                     {
-                        string val = FontDirNE.Get(resData);
+                        string val = RT_FONTDIR.Get(resData);
                         flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
                     else if (typeName == "RT_DISPLAYINFO")
@@ -330,20 +332,22 @@ namespace Peare
                         //}
                         flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
-                    else if (typeName == "RT_BITMAP")
+                    else if (typeName == "RT_BITMAP" || typeName == "RT_POINTER")
                     {
                         foreach (Bitmap bmp in RT_BITMAP.Get(resData))
                         {
                             flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
                         }
+                        string val = Program.DumpRaw(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
                     else if (typeName == "RT_ICON")
                     {
-                        flowLayoutPanel1.Controls.Add(GetPictureBox(IconNE.Get(resData)));
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(RT_ICON.Get(resData)));
                     }
                     else if (typeName == "RT_FONT")
                     {
-                        flowLayoutPanel1.Controls.Add(GetPictureBox(Fnt.Get(resData)));
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(RT_FONT.Get(resData)));
                     }
                     else
                     {
