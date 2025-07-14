@@ -94,7 +94,7 @@ namespace Peare
                         case 0x454C: return $"LE (Linear Executable{version})";
                     }
 
-                    // 4. Cerca firme tipiche di packer
+                    // 4. Search for typical packer signatures
                     fs.Seek(0, SeekOrigin.Begin);
                     byte[] fullData = br.ReadBytes((int)Math.Min(fs.Length, 4096)); // max 4 KB 
 
@@ -233,202 +233,93 @@ namespace Peare
             string targetResourceName = isNumericResource ? resourceLabel.Substring(1) : resourceLabel;
             string message = "";
             bool found = false;
+            byte[] resData = null;
             if (Program.currentHeaderType.StartsWith("PE"))
             {
-                byte[] resData = PeResources.OpenResourcePE(typeName, targetResourceName, out message, out found);
-                if (found)
-                {
-                    //if (typeName == "RT_BITMAP")
-                    //{
-                    //    flowLayoutPanel1.Controls.Add(new PictureBox
-                    //    {
-                    //        Image = PeResources.AddBitmapToFlow(Program.currentModuleHandle, targetResourceName),
-                    //        SizeMode = PictureBoxSizeMode.AutoSize
-                    //    });
-                    //}
-                    if (typeName == "RT_ICON")
-                    {
-                        flowLayoutPanel1.Controls.Add(GetPictureBox(RT_ICON.Get(resData)));
-                    }
-                    else if (typeName == "RT_CURSOR")
-                    {
-                        flowLayoutPanel1.Controls.Add(GetPictureBox(RT_CURSOR.Get(resData)));
-                    }
-                    else if (typeName == "RT_BITMAP")
-                    {
-                        bool result = false;
-                        foreach (Bitmap bmp in RT_BITMAP.Get(resData))
-                        {
-                            result = true;
-                            flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
-                        }
-                        if (!result)
-                        {
-                            string val = Program.DumpRaw(resData);
-                            flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                        }
-                    }
-                    else if (typeName == "RT_GROUP_ICON")
-                    {
-                        string val = RT_GROUP_ICON.Get(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    }
-                    else if (typeName == "RT_GROUP_CURSOR")
-                    {
-                        string val = RT_GROUP_CURSOR.Get(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                        string dump = Program.DumpRaw(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(dump));
-                    }
-                    else if (typeName == "RT_VERSION")
-                    {
-                        string val = RT_VERSION.Get(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    }
-                    else if (typeName == "RT_MESSAGETABLE")
-                    {
-                        string val = RT_MESSAGE.Get(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                        string dump = Program.DumpRaw(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(dump));
-                    }
-                    else if (typeName == "RT_STRING")
-                    {
-                        string val = RT_STRING.Get(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                        string dump = Program.DumpRaw(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(dump));
-                    }
-                    else
-                    {
-                        string val = Program.DumpRaw(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    }
-                }
+                resData = PeResources.OpenResourcePE(typeName, targetResourceName, out message, out found);
             }
             else if (Program.currentHeaderType.StartsWith("LX"))
             {
-                byte[] resData = LxResources.OpenResourceLX(typeName, targetResourceName, out message, out found);
-                if (found)
+                resData = LxResources.OpenResourceLX(typeName, targetResourceName, out message, out found);
+            }
+            else if (Program.currentHeaderType.StartsWith("NE"))
+            {
+                resData = NeResources.OpenResourceNE(typeName, targetResourceName, out message, out found);
+            }
+
+            if (found)
+            {
+                if (typeName == "RT_FONTDIR")
                 {
-                    if (typeName == "RT_MESSAGE")
+                    string val = RT_FONTDIR.Get(resData);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                }
+                else if (typeName == "RT_FONT")
+                {
+                    flowLayoutPanel1.Controls.Add(GetPictureBox(RT_FONT.Get(resData)));
+                }
+                else if (typeName == "RT_ICON")
+                {
+                    flowLayoutPanel1.Controls.Add(GetPictureBox(RT_ICON.Get(resData)));
+                }
+                else if (typeName == "RT_CURSOR")
+                {
+                    flowLayoutPanel1.Controls.Add(GetPictureBox(RT_CURSOR.Get(resData)));
+                }
+                else if (typeName == "RT_DISPLAYINFO")
+                {
+                    string val = RT_DISPLAYINFO.Get(resData);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                }
+                else if (typeName == "RT_BITMAP" || typeName == "RT_POINTER")
+                {
+                    bool result = false;
+                    foreach (Bitmap bmp in RT_BITMAP.Get(resData))
                     {
-                        string val = RT_MESSAGE.Get(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                        result = true;
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
                     }
-                    else if (typeName == "RT_DISPLAYINFO")
-                    {
-                        string val = RT_DISPLAYINFO.Get(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    }
-                    else if(typeName == "RT_STRING")
-                    {
-                        string val = RT_STRING.Get(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    }
-                    else if (typeName == "RT_BITMAP" || typeName == "RT_POINTER")
-                    {
-                        bool result = false;
-                        foreach (Bitmap bmp in RT_BITMAP.Get(resData))
-                        {
-                            result = true;
-                            flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
-                        }
-                        if (!result)
-                        {
-                            string val = Program.DumpRaw(resData);
-                            flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                        }
-                    }
-                    else
+                    if (!result)
                     {
                         string val = Program.DumpRaw(resData);
                         flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
                 }
-            }
-            else if (Program.currentHeaderType.StartsWith("NE"))
-            {
-                byte[] resData = NeResources.OpenResourceNE(typeName, targetResourceName, out message, out found);
-                if (found)
+                else if (typeName == "RT_GROUP_ICON")
                 {
-                    if (typeName == "RT_FONTDIR")
-                    {
-                        string val = RT_FONTDIR.Get(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    }
-                    else if (typeName == "RT_DISPLAYINFO")
-                    {
-                        string val = RT_DISPLAYINFO.Get(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    }
-                    else if (typeName == "RT_GROUP_ICON")
-                    {
-                        string val = RT_GROUP_ICON.Get(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    }
-                    else if (typeName == "RT_GROUP_CURSOR")
-                    {
-                        string val = RT_GROUP_CURSOR.Get(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                        string dump = Program.DumpRaw(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(dump));
-                    }
-                    else if (typeName == "RT_VERSION")
-                    {
-                        string val = RT_VERSION.Get(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    }
-                    else if (typeName == "RT_MESSAGE" || typeName == "RT_MESSAGETABLE")
-                    {
-                        string val = RT_MESSAGE.Get(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    }
-                    else if (typeName == "RT_STRING")
-                    {
-                        string val = RT_STRING.Get(resData);
-                        // I was trying to simulate the behaviour of BCC Workshop...
-                        //if (isNumericResource)
-                        //{
-                        //    val = StringNE.Get(resData, int.Parse(targetResourceName));
-                        //}
-                        //else
-                        //{
-                        //    val = StringNE.Get(resData);
-                        //}
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    }
-                    else if (typeName == "RT_BITMAP" || typeName == "RT_POINTER")
-                    {
-                        bool result = false;
-                        foreach (Bitmap bmp in RT_BITMAP.Get(resData))
-                        {
-                            result = true;
-                            flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
-                        }
-                        if (!result)
-                        {
-                            string val = Program.DumpRaw(resData);
-                            flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                        }
-                    }
-                    else if (typeName == "RT_ICON")
-                    {
-                        flowLayoutPanel1.Controls.Add(GetPictureBox(RT_ICON.Get(resData)));
-                    }
-                    else if (typeName == "RT_CURSOR")
-                    {
-                        flowLayoutPanel1.Controls.Add(GetPictureBox(RT_CURSOR.Get(resData)));
-                    }
-                    else if (typeName == "RT_FONT")
-                    {
-                        flowLayoutPanel1.Controls.Add(GetPictureBox(RT_FONT.Get(resData)));
-                    }
-                    else
-                    {
-                        string val = Program.DumpRaw(resData);
-                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    }
+                    string val = RT_GROUP_ICON.Get(resData);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                }
+                else if (typeName == "RT_GROUP_CURSOR")
+                {
+                    string val = RT_GROUP_CURSOR.Get(resData);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    string dump = Program.DumpRaw(resData);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(dump));
+                }
+                else if (typeName == "RT_VERSION")
+                {
+                    string val = RT_VERSION.Get(resData);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                }
+                else if (typeName == "RT_MESSAGE" || typeName == "RT_MESSAGETABLE")
+                {
+                    string val = RT_MESSAGE.Get(resData);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    string dump = Program.DumpRaw(resData);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(dump));
+                }
+                else if (typeName == "RT_STRING")
+                {
+                    string val = RT_STRING.Get(resData);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    string dump = Program.DumpRaw(resData);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(dump));
+                }
+                else
+                {
+                    string val = Program.DumpRaw(resData);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
                 }
             }
             textBox1.Text = message;
