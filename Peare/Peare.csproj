@@ -51,6 +51,12 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="About.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="About.Designer.cs">
+      <DependentUpon>About.cs</DependentUpon>
+    </Compile>
     <Compile Include="LX\IMAGE_LX_HEADER.cs" />
     <Compile Include="LX\LX_OBJECT_TABLE_ENTRY.cs" />
     <Compile Include="LX\LX_OBJECT_FLAGS.cs" />
@@ -61,6 +67,7 @@
     <Compile Include="Resources\RT_DISPLAYINFO\RT_DISPLAYINFO.cs" />
     <Compile Include="Resources\RT_GROUP_CURSOR\RT_GROUP_CURSOR.cs" />
     <Compile Include="Resources\RT_GROUP_ICON\RT_GROUP_ICON.cs" />
+    <Compile Include="Resources\RT_MENU\RT_MENU.cs" />
     <Compile Include="Resources\RT_MESSAGE\RT_MESSAGE.cs" />
     <Compile Include="Resources\RT_FONT\RT_FONT.cs" />
     <Compile Include="Resources\RT_FONT\FONTINFO16.cs" />
@@ -75,6 +82,7 @@
     <Compile Include="MainForm.Designer.cs">
       <DependentUpon>MainForm.cs</DependentUpon>
     </Compile>
+    <Compile Include="Resources\RT_POINTER\RT_POINTER.cs" />
     <Compile Include="Resources\RT_STRING\RT_STRING.cs" />
     <Compile Include="PE\FormatMessageFlags.cs" />
     <Compile Include="Resources\RT_ICON\RT_ICON.cs" />
@@ -84,6 +92,9 @@
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Resources\RT_VERSION\RT_VERSION.cs" />
+    <EmbeddedResource Include="About.resx">
+      <DependentUpon>About.cs</DependentUpon>
+    </EmbeddedResource>
     <EmbeddedResource Include="MainForm.resx">
       <DependentUpon>MainForm.cs</DependentUpon>
     </EmbeddedResource>

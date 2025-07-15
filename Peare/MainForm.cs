@@ -120,7 +120,7 @@ namespace Peare
         }
 
 
-        private void mnu_Open_Click(object sender, EventArgs e)
+        private void Open()
         {
             OpenFileDialog ofd = new OpenFileDialog();
             // This function needs to be updated to include LE and LX
@@ -152,7 +152,7 @@ namespace Peare
 
                 // Clean previous visualization
                 flowLayoutPanel1.Controls.Clear();
-                textBox1.Clear();
+                lbMessage.Text = "";
 
                 Text = Program.currentHeaderType + " file open: " + Program.currentFilePath;
                 if (Program.currentHeaderType.StartsWith("PE"))
@@ -214,11 +214,31 @@ namespace Peare
             }
         }
 
+        byte[] GetData(string headerType, string typeName, string targetResourceName, out string message, out bool found)
+        {
+            message = "";
+            found = false;
+            byte[] resData = null;
+            if (headerType.StartsWith("PE"))
+            {
+                resData = PeResources.OpenResourcePE(typeName, targetResourceName, out message, out found);
+            }
+            else if (headerType.StartsWith("LX"))
+            {
+                resData = LxResources.OpenResourceLX(typeName, targetResourceName, out message, out found);
+            }
+            else if (headerType.StartsWith("NE"))
+            {
+                resData = NeResources.OpenResourceNE(typeName, targetResourceName, out message, out found);
+            }
+            return resData;
+        }
+
         private void treeView1_AfterSelect(object sender, TreeViewEventArgs e)
         {
             // Clean previous visualization
             flowLayoutPanel1.Controls.Clear();
-            textBox1.Clear();
+            lbMessage.Text = "";
 
             if (e.Node.Parent == null)
             {
@@ -233,25 +253,19 @@ namespace Peare
             string targetResourceName = isNumericResource ? resourceLabel.Substring(1) : resourceLabel;
             string message = "";
             bool found = false;
-            byte[] resData = null;
-            if (Program.currentHeaderType.StartsWith("PE"))
-            {
-                resData = PeResources.OpenResourcePE(typeName, targetResourceName, out message, out found);
-            }
-            else if (Program.currentHeaderType.StartsWith("LX"))
-            {
-                resData = LxResources.OpenResourceLX(typeName, targetResourceName, out message, out found);
-            }
-            else if (Program.currentHeaderType.StartsWith("NE"))
-            {
-                resData = NeResources.OpenResourceNE(typeName, targetResourceName, out message, out found);
-            }
+
+            byte[] resData = GetData(Program.currentHeaderType.Substring(0, 2), typeName, targetResourceName, out message, out found);
 
             if (found)
             {
                 if (typeName == "RT_FONTDIR")
                 {
                     string val = RT_FONTDIR.Get(resData);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                }
+                else if (typeName == "RT_MENU")
+                {
+                    string val = RT_MENU.Get(resData);
                     flowLayoutPanel1.Controls.Add(GetTextbox(val));
                 }
                 else if (typeName == "RT_FONT")
@@ -271,7 +285,21 @@ namespace Peare
                     string val = RT_DISPLAYINFO.Get(resData);
                     flowLayoutPanel1.Controls.Add(GetTextbox(val));
                 }
-                else if (typeName == "RT_BITMAP" || typeName == "RT_POINTER")
+                else if (typeName == "RT_POINTER")
+                {
+                    bool result = false;
+                    foreach (Bitmap bmp in RT_POINTER.Get(resData))
+                    {
+                        result = true;
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
+                    }
+                    if (!result)
+                    {
+                        string val = Program.DumpRaw(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
+                }
+                else if (typeName == "RT_BITMAP")
                 {
                     bool result = false;
                     foreach (Bitmap bmp in RT_BITMAP.Get(resData))
@@ -322,7 +350,8 @@ namespace Peare
                     flowLayoutPanel1.Controls.Add(GetTextbox(val));
                 }
             }
-            textBox1.Text = message;
+
+            lbMessage.Text = message.Replace("\n", " ");
         }
 
         PictureBox GetPictureBox(Bitmap bitmap)
@@ -349,6 +378,46 @@ namespace Peare
                 Multiline = true,
                 Text = val,
             };
+        }
+
+        void OpenIssue()
+        {
+            Process.Start("https://github.com/RaulMerelli/Peare/issues");
+        }
+
+        void OpenAbout()
+        {
+            new About().ShowDialog();
+        }
+
+        private void menuClick(object sender, EventArgs e)
+        {
+            switch (sender)
+            {
+                case var _ when sender == mnu_ExpandTreeview:
+                    treeView1.ExpandAll();
+                    break;
+
+                case var _ when sender == mnu_CollapseTreeview:
+                    treeView1.CollapseAll();
+                    break;
+
+                case var _ when sender == mnu_Open:
+                    Open();
+                    break;
+
+                case var _ when sender == mnu_Exit:
+                    Close();
+                    break;
+
+                case var _ when sender == mnu_OpenIssue:
+                    OpenIssue();
+                    break;
+
+                case var _ when sender == mnu_About:
+                    OpenAbout();
+                    break;
+            }
         }
     }
 }

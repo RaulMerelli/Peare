@@ -54,6 +54,7 @@ What is currently (at least partially) implemented right now:
 		- RT_VERSION
 		- RT_GROUP_CURSOR
 		- RT_CURSOR
+		- RT_MENU
 
 	- Fallback to ASCII text and raw bytes (All the formats)
 

@@ -5,14 +5,13 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
-using static System.Net.WebRequestMethods;
-using static System.Windows.Forms.VisualStyles.VisualStyleElement.ProgressBar;
 
 namespace Peare
 {
     public static class RT_BITMAP
     {
         // This is an entrypoint also for RT_POINTER. A bitmap array can be the base for both the types.
+        // This return as list of Bitmap for compatibility with OS/2 Bitmap Array
         public static List<Bitmap> Get(byte[] resData)
         {
             var result = new List<Bitmap>();
@@ -51,14 +50,14 @@ namespace Peare
 
                         byte[] bmpData = resData.Skip(bmpOffset).Take(nextBmpSize).ToArray();
 
-                        var bmp = TryParseBMP(bmpData);
+                        var bmp = Decode_BITMAP(bmpData);
                         if (bmp != null)
                         {
                             imageDecoded = true;
                             result.Add(bmp);
                         }
 
-                        bmp = TryParse_CI_IC_CP_PT(bmpData, resData);
+                        bmp = Decode_RT_POINTER(bmpData, resData);
                         if (bmp != null)
                         {
                             imageDecoded = true;
@@ -81,14 +80,14 @@ namespace Peare
                 else
                 {
                     bool imageDecoded = false;
-                    Bitmap bmp = TryParseBMP(resData);
+                    Bitmap bmp = Decode_BITMAP(resData);
                     if (bmp != null)
                     {
                         imageDecoded = true;
                         result.Add(bmp);
                     }
 
-                    bmp = TryParse_CI_IC_CP_PT(resData, resData);
+                    bmp = Decode_RT_POINTER(resData, resData);
                     if (bmp != null)
                     {
                         imageDecoded = true;
@@ -108,14 +107,14 @@ namespace Peare
             }
         }
 
-        private static Bitmap TryParseBMP(byte[] resData)
+        private static Bitmap Decode_BITMAP(byte[] resData)
         {
             try
             {
                 Console.Write("\r\n\r\nData found:\r\n");
                 Program.DumpRaw(resData);
 
-                var bmpOS2 = TryParseOS2V1(resData);
+                var bmpOS2 = Decode_BITMAP_OS2_V1(resData);
                 if (bmpOS2 != null)
                     return bmpOS2;
 
@@ -148,7 +147,7 @@ namespace Peare
                 }
 
                 // Try again after removing the BMP signature
-                bmpOS2 = TryParseOS2V1(resData);
+                bmpOS2 = Decode_BITMAP_OS2_V1(resData);
                 if (bmpOS2 != null)
                     return bmpOS2;
 
@@ -185,7 +184,7 @@ namespace Peare
             }
         }
 
-        private static Bitmap TryParse_CI_IC_CP_PT(byte[] CIresData, byte[] bitmapArray)
+        private static Bitmap Decode_RT_POINTER(byte[] CIresData, byte[] bitmapArray)
         {
             using (var ms = new MemoryStream(CIresData))
             using (var reader = new BinaryReader(ms))
@@ -193,7 +192,8 @@ namespace Peare
                 // === First block (mask) ===
                 ushort header = reader.ReadUInt16();
                 // "CI", "IC", "CP", "PT" are basically the same format, for a different use.
-                // The main difference is separate bitmap data might be missing and there is only the mask that contains the bitmap data in one block.
+                // The main difference is that the bitmap data block might be missing and
+                // there is only the first block (mask) that contains also the bitmap data.
                 // IC icon (OS/2 1.x)
                 // CI icon (OS/2 2.x+)
                 // PT pointer
@@ -315,7 +315,7 @@ namespace Peare
             }
         }
 
-        private static Bitmap TryParseOS2V1(byte[] data)
+        private static Bitmap Decode_BITMAP_OS2_V1(byte[] data)
         {
             try
             {
@@ -385,7 +385,7 @@ namespace Peare
         public static Bitmap GenerateBitmapFromData(byte[] pixelData, byte[] maskData, int width, int height, int bitCount, Color[] palette)
         {
             // Unified function to decode the bitmap given the data.
-            // It is made to work with everything, Windows Bitmaps, Icons and OS/2 Bitmaps, Icons, Pointers etc.
+            // It is made to work with everything, Windows Bitmaps, Icons, Cursors and OS/2 Bitmaps, Icons, Pointers etc.
             int colorStride = ((width * bitCount + 31) / 32) * 4;
             int maskStride = ((width + 31) / 32) * 4;
 
