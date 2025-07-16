@@ -360,13 +360,13 @@ namespace Peare
             return relations;
         }
 
-        public static byte[] OpenResourceNE(string typeName, string targetResourceName, out string message, out bool found)
+        public static byte[] OpenResourceNE(string currentFilePath,string typeName, string targetResourceName, out string message, out bool found)
         {
             List<byte> result = new List<byte>();
             message = "";
             found = false;
 
-            byte[] fileBytes = File.ReadAllBytes(Program.currentFilePath);
+            byte[] fileBytes = File.ReadAllBytes(currentFilePath);
             int neHeaderOffset = BitConverter.ToInt32(fileBytes, 0x3C);
             byte neExeType = fileBytes[neHeaderOffset + 0x36]; // 0x36 = ne_exetyp
 

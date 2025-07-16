@@ -34,10 +34,19 @@ namespace Peare
                 if (paletteEntries == 0) paletteEntries = 1 << bitCount;
             }
 
-            int pixelDataOffset = hotspotOffset + biSize + paletteEntries * 4;
-            int colorStride = ((width * bitCount + 31) / 32) * 4;
-            int maskStride = ((width + 31) / 32) * 4;
-            int maskDataOffset = pixelDataOffset + colorStride * height;
+            if (width <= 0 || height <= 0 || bitCount == 0)
+            {
+                Console.WriteLine("Invalid bitmap dimensions or bit count.");
+                return new Bitmap(1, 1);
+            }
+
+            long pixelDataOffset = hotspotOffset + biSize + paletteEntries * 4;
+            long colorStride = ((width * bitCount + 31) / 32) * 4;
+            long maskStride = ((width + 31) / 32) * 4;
+            long maskDataOffset = pixelDataOffset + colorStride * height;
+
+            long pixelDataLength = colorStride * height;
+            long maskDataLength = maskStride * height;
 
             // Palette
             Color[] palette = null;
@@ -59,8 +68,8 @@ namespace Peare
             // Bitmap data
             byte[] pixelData = new byte[colorStride * height];
             byte[] maskData = new byte[maskStride * height];
-            Buffer.BlockCopy(resData, pixelDataOffset, pixelData, 0, pixelData.Length);
-            Buffer.BlockCopy(resData, maskDataOffset, maskData, 0, maskData.Length);
+            RT_BITMAP.CopyLarge(resData, pixelDataOffset, pixelData, 0, pixelDataLength);
+            RT_BITMAP.CopyLarge(resData, maskDataOffset, maskData, 0, maskDataLength);
 
             return RT_BITMAP.GenerateBitmapFromData(pixelData, maskData, width, height, bitCount, palette);
         }

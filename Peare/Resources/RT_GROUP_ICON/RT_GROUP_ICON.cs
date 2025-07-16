@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Drawing;
 using System.Text;
 
 namespace Peare
@@ -7,6 +9,14 @@ namespace Peare
     {
         public static string Get(byte[] data)
         {
+            // This function only reads the single RT_GROUP_ICON resource without accessing the single RT_ICON resources.
+            return Get(data, "", out _);
+        }
+
+        public static string Get(byte[] data, string filepath, out List<Bitmap> bitmaps)
+        {
+            bitmaps = new List<Bitmap>();
+
             if (data == null || data.Length < 6)
                 return "Invalid data";
 
@@ -50,7 +60,22 @@ namespace Peare
                 sb.AppendLine($"\t\tBitCount: {wBitCount}");
                 sb.AppendLine($"\t\tBytes in Resource: {dwBytesInRes}");
                 sb.AppendLine("\t}");
-
+                try
+                {
+                    if (!string.IsNullOrEmpty(filepath))
+                    {
+                        bitmaps.Add(RT_ICON.Get(
+                            PeResources.OpenResourcePE(filepath,
+                            "RT_ICON",
+                            nID.ToString(),
+                            out _,
+                            out _)));
+                    }
+                }
+                catch (Exception err)
+                {
+                    Console.WriteLine(err.ToString());
+                }
                 offset += 14;
             }
 

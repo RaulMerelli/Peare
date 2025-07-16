@@ -490,5 +490,23 @@ namespace Peare
             bmp.UnlockBits(bmpData);
             return bmp;
         }
+
+        public static void CopyLarge(byte[] source, long sourceOffset, byte[] destination, int destOffset, long count)
+        {
+            const int chunkSize = 1024 * 1024; // 1MB chunks
+
+            while (count > 0)
+            {
+                int thisChunk = (int)Math.Min(count, chunkSize);
+
+                if (sourceOffset > int.MaxValue)
+                    throw new OverflowException("Source offset exceeds supported range.");
+
+                Buffer.BlockCopy(source, (int)sourceOffset, destination, destOffset, thisChunk);
+                sourceOffset += thisChunk;
+                destOffset += thisChunk;
+                count -= thisChunk;
+            }
+        }
     }
 }

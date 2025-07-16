@@ -347,13 +347,13 @@ namespace Peare
             }
         }
 
-        public static byte[] OpenResourceLX(string typeName, string targetResourceName, out string message, out bool found)
+        public static byte[] OpenResourceLX(string currentFilePath, string typeName, string targetResourceName, out string message, out bool found)
         {
             message = "";
             found = false;
             List<byte> result = new List<byte>();
             byte[] headerBytes = new byte[172];
-            byte[] fileBytes = File.ReadAllBytes(Program.currentFilePath);
+            byte[] fileBytes = File.ReadAllBytes(currentFilePath);
             int lxHeaderOffset = BitConverter.ToInt32(fileBytes, 0x3C);
 
             Console.WriteLine($"Attempting to open resource Type: {typeName}, Name: {targetResourceName}");

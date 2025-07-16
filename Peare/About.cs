@@ -25,20 +25,20 @@ namespace Peare
 
         private void About_Load(object sender, EventArgs e)
         {
-            IntPtr backupPointer = Program.currentModuleHandle;
             try
             {
-                // handle to current exe
-                Program.currentModuleHandle = PeResources.LoadLibraryEx(System.Reflection.Assembly.GetEntryAssembly().Location, IntPtr.Zero, LoadLibraryFlags.LOAD_LIBRARY_AS_DATAFILE);
-                // load the image from the our executable using our functions!
-                pictureBox1.Image = RT_ICON.Get(PeResources.OpenResourcePE("RT_ICON", "2", out _, out _));
+                // load the image from the our executable using our function!
+                pictureBox1.Image = RT_ICON.Get(
+                    PeResources.OpenResourcePE(System.Reflection.Assembly.GetEntryAssembly().Location, 
+                    "RT_ICON", 
+                    "2", 
+                    out _, 
+                    out _));
             }
             catch 
             {
 
             }
-
-            Program.currentModuleHandle = backupPointer;
         }
     }
 }

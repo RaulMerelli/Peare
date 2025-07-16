@@ -45,16 +45,23 @@
             this.menuItem4 = new System.Windows.Forms.MenuItem();
             this.mnu_About = new System.Windows.Forms.MenuItem();
             this.lbMessage = new System.Windows.Forms.Label();
+            this.imageList1 = new System.Windows.Forms.ImageList(this.components);
             this.SuspendLayout();
             // 
             // treeView1
             // 
             this.treeView1.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
             | System.Windows.Forms.AnchorStyles.Left)));
+            this.treeView1.ImageIndex = 0;
+            this.treeView1.ImageList = this.imageList1;
+            this.treeView1.ItemHeight = 18;
             this.treeView1.Location = new System.Drawing.Point(0, 1);
             this.treeView1.Name = "treeView1";
+            this.treeView1.SelectedImageIndex = 0;
             this.treeView1.Size = new System.Drawing.Size(341, 497);
             this.treeView1.TabIndex = 6;
+            this.treeView1.BeforeCollapse += new System.Windows.Forms.TreeViewCancelEventHandler(this.treeView1_BeforeExpandCollapse);
+            this.treeView1.BeforeExpand += new System.Windows.Forms.TreeViewCancelEventHandler(this.treeView1_BeforeExpandCollapse);
             this.treeView1.AfterSelect += new System.Windows.Forms.TreeViewEventHandler(this.treeView1_AfterSelect);
             // 
             // flowLayoutPanel1
@@ -158,6 +165,12 @@
             this.lbMessage.TabIndex = 7;
             this.lbMessage.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             // 
+            // imageList1
+            // 
+            this.imageList1.ColorDepth = System.Windows.Forms.ColorDepth.Depth32Bit;
+            this.imageList1.ImageSize = new System.Drawing.Size(16, 16);
+            this.imageList1.TransparentColor = System.Drawing.Color.Transparent;
+            // 
             // MainForm
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
@@ -170,6 +183,7 @@
             this.Menu = this.mainMenu1;
             this.Name = "MainForm";
             this.Text = "Peare";
+            this.Load += new System.EventHandler(this.MainForm_Load);
             this.ResumeLayout(false);
 
         }
@@ -191,6 +205,7 @@
         private System.Windows.Forms.MenuItem menuItem4;
         private System.Windows.Forms.MenuItem mnu_About;
         private System.Windows.Forms.Label lbMessage;
+        private System.Windows.Forms.ImageList imageList1;
     }
 }
 

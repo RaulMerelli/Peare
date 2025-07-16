@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Drawing;
-using System.Drawing.Imaging;
 using System.IO;
 
 namespace Peare
@@ -15,7 +14,7 @@ namespace Peare
             {
                 using (var ms = new MemoryStream(resData))
                 {
-                    return new Bitmap(ms); // load directly the PNG and skip the old format
+                    return new Bitmap(ms); // PNG format
                 }
             }
 
@@ -25,6 +24,12 @@ namespace Peare
             int height = fullHeight / 2;
             ushort bitCount = BitConverter.ToUInt16(resData, 14);
 
+            if (width <= 0 || height <= 0 || bitCount == 0)
+            {
+                Console.WriteLine("Invalid bitmap dimensions or bit count.");
+                return new Bitmap(1, 1);
+            }
+
             int paletteEntries = 0;
             if (bitCount <= 8)
             {
@@ -32,10 +37,20 @@ namespace Peare
                 if (paletteEntries == 0) paletteEntries = 1 << bitCount;
             }
 
-            int pixelDataOffset = biSize + paletteEntries * 4;
-            int colorStride = ((width * bitCount + 31) / 32) * 4;
-            int maskStride = ((width + 31) / 32) * 4;
-            int maskDataOffset = pixelDataOffset + colorStride * height;
+            long pixelDataOffset = (long)biSize + (long)paletteEntries * 4;
+            long colorStride = (((long)width * bitCount + 31) / 32) * 4;
+            long maskStride = (((long)width + 31) / 32) * 4;
+            long maskDataOffset = pixelDataOffset + colorStride * height;
+
+            long pixelDataLength = colorStride * height;
+            long maskDataLength = maskStride * height;
+
+            if (pixelDataOffset + pixelDataLength > resData.LongLength ||
+                maskDataOffset + maskDataLength > resData.LongLength)
+            {
+                Console.WriteLine("Data does not contain enough bytes for pixel or mask data.");
+                return new Bitmap(1, 1);
+            }
 
             // Extract palette
             Color[] palette = null;
@@ -45,20 +60,22 @@ namespace Peare
                 int paletteStart = biSize;
                 for (int j = 0; j < paletteEntries; j++)
                 {
-                    if (paletteStart + j * 4 + 3 >= resData.Length)
-                        break;
-                    byte b = resData[paletteStart + j * 4];
-                    byte g = resData[paletteStart + j * 4 + 1];
-                    byte r = resData[paletteStart + j * 4 + 2];
+                    int entryOffset = paletteStart + j * 4;
+                    if (entryOffset + 3 >= resData.Length) break;
+
+                    byte b = resData[entryOffset];
+                    byte g = resData[entryOffset + 1];
+                    byte r = resData[entryOffset + 2];
                     palette[j] = Color.FromArgb(255, r, g, b);
                 }
             }
 
-            // Only pass the sections that are already "offsetted"
-            byte[] pixelData = new byte[colorStride * height];
-            byte[] maskData = new byte[maskStride * height];
-            Buffer.BlockCopy(resData, pixelDataOffset, pixelData, 0, pixelData.Length);
-            Buffer.BlockCopy(resData, maskDataOffset, maskData, 0, maskData.Length);
+            // Allocate and copy large image buffers
+            byte[] pixelData = new byte[pixelDataLength];
+            byte[] maskData = new byte[maskDataLength];
+
+            RT_BITMAP.CopyLarge(resData, pixelDataOffset, pixelData, 0, pixelDataLength);
+            RT_BITMAP.CopyLarge(resData, maskDataOffset, maskData, 0, maskDataLength);
 
             return RT_BITMAP.GenerateBitmapFromData(pixelData, maskData, width, height, bitCount, palette);
         }

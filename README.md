@@ -27,6 +27,7 @@ What is currently (at least partially) implemented right now:
 		- RT_BITMAP (BA, BM, IC, CI, CP, PT)
 		- RT_STRING
 		- RT_DISPLAYINFO
+		- RT_MENU
 
 	- LX (OS/2)
 		- RT_POINTER (BA, BM, IC, CI, CP, PT)
@@ -34,6 +35,7 @@ What is currently (at least partially) implemented right now:
 		- RT_BITMAP (BA, BM, IC, CI, CP, PT)
 		- RT_STRING
 		- RT_DISPLAYINFO (theoretically, I can't find any OS/2 LX contining a RT_DISPLAYINFO resource)
+		- RT_MENU
 
 	- NE (Windows)
 		- RT_MESSAGETABLE (theoretically, I can't find any Windows NE contining a RT_MESSAGETABLE resource)
@@ -46,8 +48,11 @@ What is currently (at least partially) implemented right now:
 		- RT_VERSION
 		- RT_GROUP_CURSOR
 		- RT_CURSOR
+		- RT_MENU
 
 	- PE (Windows)
+		- RT_MESSAGETABLE
+		- RT_STRING
 		- RT_BITMAP
 		- RT_GROUP_ICON
 		- RT_ICON

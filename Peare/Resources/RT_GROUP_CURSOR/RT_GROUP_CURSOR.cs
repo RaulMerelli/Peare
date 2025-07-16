@@ -1,13 +1,23 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Drawing;
 using System.Security.Cryptography;
 using System.Text;
 
 namespace Peare
 {
     public class RT_GROUP_CURSOR
-    { 
+    {
         public static string Get(byte[] data)
         {
+            // This function only reads the single RT_GROUP_CURSOR resource without accessing the single RT_ICON resources.
+            return Get(data, "", out _);
+        }
+
+        public static string Get(byte[] data, string filepath, out List<Bitmap> bitmaps)
+        {
+            bitmaps = new List<Bitmap>();
+
             if (data == null || data.Length < 6)
                 return "Invalid data";
 
@@ -41,9 +51,9 @@ namespace Peare
                 ushort hotspotX = BitConverter.ToUInt16(data, offset + 4);
                 ushort hotspotY = BitConverter.ToUInt16(data, offset + 6);
                 uint bytesInRes = BitConverter.ToUInt32(data, offset + 8);
-                ushort id = BitConverter.ToUInt16(data, offset + 12);
+                ushort nID = BitConverter.ToUInt16(data, offset + 12);
 
-                sb.AppendLine($"\tRT_CURSOR #{id}");
+                sb.AppendLine($"\tRT_CURSOR #{nID}");
                 sb.AppendLine("\t{");
                 sb.AppendLine($"\t\tWidth: {size}");
                 sb.AppendLine($"\t\tHeight: {size}");
@@ -54,7 +64,22 @@ namespace Peare
                 sb.AppendLine($"\t\tHotspotY: {hotspotY}");
                 sb.AppendLine($"\t\tBytesInRes: {bytesInRes}");
                 sb.AppendLine("\t}");
-
+                try
+                {
+                    if (!string.IsNullOrEmpty(filepath))
+                    {
+                        bitmaps.Add(RT_CURSOR.Get(
+                            PeResources.OpenResourcePE(filepath,
+                            "RT_CURSOR",
+                            nID.ToString(),
+                            out _,
+                            out _)));
+                    }
+                }
+                catch (Exception err)
+                {
+                    Console.WriteLine(err.ToString());
+                }
                 offset += 14;
             }
 

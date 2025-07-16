@@ -10,7 +10,7 @@ namespace Peare
         public static string currentFilePath;
         public static string currentHeaderType;
         public static bool isOS2;
-        public static IntPtr currentModuleHandle; // For PE
+        public static bool isUnicode;
 
         [STAThread]
         static void Main()
@@ -32,10 +32,10 @@ namespace Peare
 
         public static string DumpRaw(byte[] data)
         {
-            if (data == null || data.Length < 8)
+            if (data == null || data.Length == 0)
             {
-                Console.WriteLine("Data too short.");
-                return "Data too short.";
+                Console.WriteLine("No data.");
+                return "No data.";
             }
 
             int offset = 0;
@@ -52,7 +52,7 @@ namespace Peare
                     hex.AppendFormat("{0:X2} ", data[lineOffset + j]);
                 }
 
-                hex.Append(' ', (16 - lineLength) * 3);
+                hex.Append(' ', (16 - lineLength) * 3); // pad hex column
 
                 StringBuilder ascii = new StringBuilder();
                 for (int j = 0; j < lineLength; j++)
@@ -71,6 +71,7 @@ namespace Peare
 
             return result.ToString();
         }
+
 
     }
 }

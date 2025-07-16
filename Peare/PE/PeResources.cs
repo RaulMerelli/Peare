@@ -120,13 +120,10 @@ namespace Peare
         public static List<string[]> OpenPE(string filePath)
         {
             List<string[]> relations = new List<string[]>();
-            if (Program.currentModuleHandle != IntPtr.Zero)
-            {
-                FreeLibrary(Program.currentModuleHandle);
-            }
-            Program.currentModuleHandle = LoadLibraryEx(filePath, IntPtr.Zero, LoadLibraryFlags.LOAD_LIBRARY_AS_DATAFILE);
 
-            EnumResourceTypes(Program.currentModuleHandle, (h, typePtr, lParam) =>
+            IntPtr hModule = LoadLibraryEx(filePath, IntPtr.Zero, LoadLibraryFlags.LOAD_LIBRARY_AS_DATAFILE);
+
+            EnumResourceTypes(hModule, (h, typePtr, lParam) =>
             {
                 bool isInt = IsIntResource(typePtr);
                 string typeName = isInt
@@ -145,9 +142,9 @@ namespace Peare
                 };
 
                 if (isInt)
-                    EnumResourceNames(Program.currentModuleHandle, typePtr, nameCallback, IntPtr.Zero);
+                    EnumResourceNames(hModule, typePtr, nameCallback, IntPtr.Zero);
                 else
-                    EnumResourceNames(Program.currentModuleHandle, typeName, nameCallback, IntPtr.Zero);
+                    EnumResourceNames(hModule, typeName, nameCallback, IntPtr.Zero);
 
                 return true;
             }, IntPtr.Zero);
@@ -161,15 +158,18 @@ namespace Peare
             return ((ulong)ptr.ToInt64() & 0xFFFF0000) == 0;
         }
 
-        public static byte[] OpenResourcePE(string lpType, string lpName, out string message, out bool found)
+        public static byte[] OpenResourcePE(string currentFilePath, string lpType, string lpName, out string message, out bool found)
         {
             found = false;
             message = "";
 
-            if (Program.currentModuleHandle == IntPtr.Zero) 
+            IntPtr hModule = LoadLibraryEx(currentFilePath, IntPtr.Zero, LoadLibraryFlags.LOAD_LIBRARY_AS_DATAFILE);
+            if (hModule == IntPtr.Zero)
+            {
+                Console.WriteLine(GetErrorMessage(Marshal.GetLastWin32Error()));
                 return new byte[0];
+            }
 
-            IntPtr hDll = Program.currentModuleHandle;
             // Find and load the resource
             IntPtr hResource = IntPtr.Zero;
 
@@ -181,22 +181,22 @@ namespace Peare
             {
                 if (numericName == -1)
                 {
-                    hResource = FindResource(hDll, lpName, new IntPtr(numericType.Value));
+                    hResource = FindResource(hModule, lpName, new IntPtr(numericType.Value));
                 }
                 else
                 {
-                    hResource = FindResource(hDll, new IntPtr(numericName), new IntPtr(numericType.Value));
+                    hResource = FindResource(hModule, new IntPtr(numericName), new IntPtr(numericType.Value));
                 }
             }
             else
             {
                 if (numericName == -1)
                 {
-                    hResource = FindResource(hDll, lpName, lpType);
+                    hResource = FindResource(hModule, lpName, lpType);
                 }
                 else
                 {
-                    hResource = FindResource(hDll, new IntPtr(numericName), lpType);
+                    hResource = FindResource(hModule, new IntPtr(numericName), lpType);
                 }
             }
             if (hResource != IntPtr.Zero) 
@@ -208,11 +208,11 @@ namespace Peare
                 return new byte[0];
             }
 
-            IntPtr hResourceData = LoadResource(hDll, hResource);
+            IntPtr hResourceData = LoadResource(hModule, hResource);
 
             // Access the data
             IntPtr pRes = LockResource(hResourceData);
-            uint size = SizeofResource(hDll, hResource);
+            uint size = SizeofResource(hModule, hResource);
             byte[] bytes = new byte[size];
 
             message = $"Windows PE Resource {lpType} {lpName} found.\nLength: {bytes.Length} byte.";
@@ -223,6 +223,7 @@ namespace Peare
                     bytes[i] = Marshal.ReadByte(pRes, i);
                 }
             }
+            FreeLibrary(hModule);
             return bytes;
         }
 

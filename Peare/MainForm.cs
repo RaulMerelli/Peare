@@ -27,6 +27,7 @@ namespace Peare
         {
             try
             {
+                Program.isUnicode = false;
                 Program.isOS2 = false;
                 using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read))
                 using (var br = new BinaryReader(fs))
@@ -51,7 +52,7 @@ namespace Peare
                         // targetOS NE
                         fs.Seek(headerOffset + 0x36, SeekOrigin.Begin);
                     }
-                    else if(signature == 0x454C || signature == 0x584C)
+                    else if (signature == 0x454C || signature == 0x584C)
                     {
                         // targetOS LE/LX
                         fs.Seek(headerOffset + 0x0A, SeekOrigin.Begin);
@@ -84,6 +85,11 @@ namespace Peare
                                 version = " for IBM Microkernel Personality Neutral";
                                 break;
                         }
+                    }
+
+                    if (signature == 0x4550)
+                    {
+                        Program.isUnicode = true;
                     }
 
                     switch (signature)
@@ -183,7 +189,9 @@ namespace Peare
                     if (parentName == "Root")
                     {
                         // Add directly as a root node
-                        treeView1.Nodes.Add(childName);
+                        TreeNode currentNode = treeView1.Nodes.Add(childName);
+                        currentNode.ImageKey = "FolderClose";
+                        currentNode.SelectedImageKey = "FolderClose";
                     }
                     else
                     {
@@ -204,13 +212,51 @@ namespace Peare
                         {
                             parentNode = new TreeNode(parentName);
                             treeView1.Nodes.Add(parentNode);
+                            parentNode.ImageKey = "Folder";
+                            parentNode.SelectedImageKey = "Folder";
                         }
 
                         // Add the child to the parent node
-                        parentNode.Nodes.Add(childName);
+                        TreeNode currentNode = parentNode.Nodes.Add(childName);
+                        string icon = "File";
+                        switch (parentName)
+                        {
+                            case "RT_FONT":
+                            case "RT_FONTDIR":
+                                icon = "FontFile";
+                                break;
+                            case "RT_BITMAP":
+                            case "RT_ICON":
+                                icon = "BitmapFile";
+                                break;
+                            case "RT_VERSION":
+                            case "RT_MENU":
+                            case "RT_STRING":
+                                icon = "ConfigFile";
+                                break;
+                            case "RT_MANIFEST":
+                                icon = "XmlFile";
+                                break;
+                        }
+                        currentNode.ImageKey = icon;
+                        currentNode.SelectedImageKey = icon;
                     }
                 }
 
+            }
+        }
+
+        private void treeView1_BeforeExpandCollapse(object sender, TreeViewCancelEventArgs e)
+        {
+            if (!e.Node.IsExpanded && e.Node.Nodes.Count > 0)
+            {
+                e.Node.ImageKey = "FolderOpen";
+                e.Node.SelectedImageKey = "FolderOpen";
+            }
+            else if (e.Node.IsExpanded && e.Node.Nodes.Count > 0)
+            {
+                e.Node.ImageKey = "FolderClose";
+                e.Node.SelectedImageKey = "FolderClose";
             }
         }
 
@@ -221,15 +267,15 @@ namespace Peare
             byte[] resData = null;
             if (headerType.StartsWith("PE"))
             {
-                resData = PeResources.OpenResourcePE(typeName, targetResourceName, out message, out found);
+                resData = PeResources.OpenResourcePE(Program.currentFilePath, typeName, targetResourceName, out message, out found);
             }
             else if (headerType.StartsWith("LX"))
             {
-                resData = LxResources.OpenResourceLX(typeName, targetResourceName, out message, out found);
+                resData = LxResources.OpenResourceLX(Program.currentFilePath, typeName, targetResourceName, out message, out found);
             }
             else if (headerType.StartsWith("NE"))
             {
-                resData = NeResources.OpenResourceNE(typeName, targetResourceName, out message, out found);
+                resData = NeResources.OpenResourceNE(Program.currentFilePath, typeName, targetResourceName, out message, out found);
             }
             return resData;
         }
@@ -265,6 +311,7 @@ namespace Peare
                 }
                 else if (typeName == "RT_MENU")
                 {
+                    Program.DumpRaw(resData);
                     string val = RT_MENU.Get(resData);
                     flowLayoutPanel1.Controls.Add(GetTextbox(val));
                 }
@@ -315,15 +362,23 @@ namespace Peare
                 }
                 else if (typeName == "RT_GROUP_ICON")
                 {
-                    string val = RT_GROUP_ICON.Get(resData);
+                    List<Bitmap> bitmaps = new List<Bitmap>();
+                    string val = RT_GROUP_ICON.Get(resData, Program.currentFilePath, out bitmaps);
+                    foreach (Bitmap bmp in bitmaps)
+                    {
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
+                    }
                     flowLayoutPanel1.Controls.Add(GetTextbox(val));
                 }
                 else if (typeName == "RT_GROUP_CURSOR")
                 {
-                    string val = RT_GROUP_CURSOR.Get(resData);
+                    List<Bitmap> bitmaps = new List<Bitmap>();
+                    string val = RT_GROUP_CURSOR.Get(resData, Program.currentFilePath, out bitmaps);
+                    foreach (Bitmap bmp in bitmaps)
+                    {
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
+                    }
                     flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    string dump = Program.DumpRaw(resData);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(dump));
                 }
                 else if (typeName == "RT_VERSION")
                 {
@@ -334,15 +389,11 @@ namespace Peare
                 {
                     string val = RT_MESSAGE.Get(resData);
                     flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    string dump = Program.DumpRaw(resData);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(dump));
                 }
                 else if (typeName == "RT_STRING")
                 {
                     string val = RT_STRING.Get(resData);
                     flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    string dump = Program.DumpRaw(resData);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(dump));
                 }
                 else
                 {
@@ -417,6 +468,85 @@ namespace Peare
                 case var _ when sender == mnu_About:
                     OpenAbout();
                     break;
+            }
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
+        public static extern int SetWindowTheme(IntPtr hWnd, string pszSubAppName, string pszSubIdList);
+
+        const int TVM_SETEXTENDEDSTYLE = 0x1100 + 44;
+        const int TVS_EX_DOUBLEBUFFER = 0x0004;
+        const int TVS_EX_FADEINOUTEXPANDOS = 0x0040;
+
+        private void SetTreeViewStyle()
+        {
+            SendMessage(treeView1.Handle, TVM_SETEXTENDEDSTYLE, (IntPtr)(TVS_EX_DOUBLEBUFFER | TVS_EX_FADEINOUTEXPANDOS), (IntPtr)(TVS_EX_DOUBLEBUFFER | TVS_EX_FADEINOUTEXPANDOS));
+            SetWindowTheme(treeView1.Handle, "Explorer", null);
+        }
+
+        private void MainForm_Load(object sender, EventArgs e)
+        {
+            SetTreeViewStyle();
+
+            // Add icons to imagelist using our method or from the associated extension icon as fallback
+            string shell32 = @"C:\Windows\System32\shell32.dll";
+            string mmcndmgr = @"C:\Windows\System32\mmcndmgr.dll";
+            List<Bitmap> bitmaps = new List<Bitmap>();
+            Bitmap bmp = null;
+            // Folder Close
+            RT_GROUP_ICON.Get(PeResources.OpenResourcePE(shell32, "RT_GROUP_ICON", "4", out _, out _), shell32, out bitmaps);
+            if (bitmaps.Count > 0)
+            {
+                imageList1.Images.Add("FolderClose", bitmaps.Where(x => x.Width == 16 && x.Height == 16).Last());
+            }
+            // Folder Open
+            RT_GROUP_ICON.Get(PeResources.OpenResourcePE(shell32, "RT_GROUP_ICON", "5", out _, out _), shell32, out bitmaps);
+            if (bitmaps.Count > 0)
+            {
+                imageList1.Images.Add("FolderOpen", bitmaps.Where(x => x.Width == 16 && x.Height == 16).Last());
+            }
+            // File
+            RT_GROUP_ICON.Get(PeResources.OpenResourcePE(shell32, "RT_GROUP_ICON", "1", out _, out _), shell32, out bitmaps);
+            if (bitmaps.Count > 0)
+            {
+                imageList1.Images.Add("File", bitmaps.Where(x => x.Width == 16 && x.Height == 16).Last());
+            }
+            // Font File
+            RT_GROUP_ICON.Get(PeResources.OpenResourcePE(shell32, "RT_GROUP_ICON", "155", out _, out _), shell32, out bitmaps);
+            if (bitmaps.Count > 0)
+            {
+                imageList1.Images.Add("FontFile", bitmaps.Where(x => x.Width == 16 && x.Height == 16).Last());
+            }
+            // Config File
+            RT_GROUP_ICON.Get(PeResources.OpenResourcePE(shell32, "RT_GROUP_ICON", "151", out _, out _), shell32, out bitmaps);
+            if (bitmaps.Count > 0)
+            {
+                imageList1.Images.Add("ConfigFile", bitmaps.Where(x => x.Width == 16 && x.Height == 16).Last());
+            }
+            // Bitmap File
+            RT_GROUP_ICON.Get(PeResources.OpenResourcePE(shell32, "RT_GROUP_ICON", "16823", out _, out _), shell32, out bitmaps);
+            if (bitmaps.Count > 0)
+            {
+                imageList1.Images.Add("BitmapFile", bitmaps.Where(x => x.Width == 16 && x.Height == 16).Last());
+            }
+            else
+            {
+                bmp = IconFromExt.Get(".bmp");
+                imageList1.Images.Add("BitmapFile", bmp == null ? imageList1.Images[2] : bmp);
+            }
+            // Xml File
+            RT_GROUP_ICON.Get(PeResources.OpenResourcePE(mmcndmgr, "RT_GROUP_ICON", "1098", out _, out _), mmcndmgr, out bitmaps);
+            if (bitmaps.Count > 0)
+            {
+                imageList1.Images.Add("XmlFile", bitmaps.Where(x => x.Width == 16 && x.Height == 16).Last());
+            }
+            else
+            {
+                bmp = IconFromExt.Get(".xml");
+                imageList1.Images.Add("XmlFile", bmp == null ? imageList1.Images[2] : bmp);
             }
         }
     }
