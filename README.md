@@ -76,3 +76,25 @@ RT_FONT support for NE Windows is handcrafted, this is what is supported:
 	- Fvariable width raster fonts
 - Fnt ver. 3
 	- monospace raster fonts
+
+
+## Screenshots
+
+Some examples of the software working at current status:
+
+### LX RT_POINTER
+![LX RT_POINTER](https://github.com/RaulMerelli/Peare/raw/main/Screenshots/LX%20RT_POINTER.png)
+
+### NE RT_BITMAP
+![NE RT_BITMAP](https://github.com/RaulMerelli/Peare/raw/main/Screenshots/NE%20RT_BITMAP.png)
+
+### NE RT_FONT
+![NE RT_FONT](https://github.com/RaulMerelli/Peare/raw/main/Screenshots/NE%20RT_FONT.png)
+
+### PE RT_BITMAP
+![PE RT_BITMAP](https://github.com/RaulMerelli/Peare/raw/main/Screenshots/PE%20RT_BITMAP.png)
+
+### PE RT_MENU
+![PE RT_MENU](https://github.com/RaulMerelli/Peare/raw/main/Screenshots/PE%20RT_MENU.png)
+
+
