@@ -8,10 +8,11 @@
     <OutputType>WinExe</OutputType>
     <RootNamespace>Peare</RootNamespace>
     <AssemblyName>Peare</AssemblyName>
-    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <Deterministic>true</Deterministic>
+    <TargetFrameworkProfile />
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <PlatformTarget>AnyCPU</PlatformTarget>
@@ -41,12 +42,10 @@
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Core" />
-    <Reference Include="System.Xml.Linq" />
     <Reference Include="Microsoft.CSharp" />
     <Reference Include="System.Deployment" />
     <Reference Include="System.Drawing" />
     <Reference Include="System.Windows.Forms" />
-    <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="About.cs">
@@ -56,43 +55,14 @@
       <DependentUpon>About.cs</DependentUpon>
     </Compile>
     <Compile Include="IconFromExt.cs" />
-    <Compile Include="LX\IMAGE_LX_HEADER.cs" />
-    <Compile Include="LX\LX_OBJECT_TABLE_ENTRY.cs" />
-    <Compile Include="LX\LX_OBJECT_FLAGS.cs" />
-    <Compile Include="Resources\ModuleResources.cs" />
-    <Compile Include="Resources\RT_BITMAP\RT_BITMAP.cs" />
-    <Compile Include="Resources\RT_CURSOR\RT_CURSOR.cs" />
-    <Compile Include="Resources\RT_FONTDIR\FONTDIRENTRY.cs" />
-    <Compile Include="Resources\RT_FONTDIR\RT_FONTDIR.cs" />
-    <Compile Include="Resources\RT_DISPLAYINFO\RT_DISPLAYINFO.cs" />
-    <Compile Include="Resources\RT_GROUP_CURSOR\RT_GROUP_CURSOR.cs" />
-    <Compile Include="Resources\RT_GROUP_ICON\RT_GROUP_ICON.cs" />
-    <Compile Include="Resources\RT_MENU\OS2_RT_MENU.cs" />
-    <Compile Include="Resources\RT_MENU\RT_MENU.cs" />
-    <Compile Include="Resources\RT_MESSAGE\RT_MESSAGE.cs" />
-    <Compile Include="Resources\RT_FONT\RT_FONT.cs" />
-    <Compile Include="Resources\RT_FONT\FONTINFO16.cs" />
-    <Compile Include="LE\IMAGE_LE_HEADER.cs" />
-    <Compile Include="LE\LeResources.cs" />
-    <Compile Include="LE\LE_OBJECT_FLAGS.cs" />
-    <Compile Include="LE\LE_OBJECT_TABLE_ENTRY.cs" />
-    <Compile Include="LX\LxResources.cs" />
     <Compile Include="MainForm.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="MainForm.Designer.cs">
       <DependentUpon>MainForm.cs</DependentUpon>
     </Compile>
-    <Compile Include="Resources\RT_POINTER\RT_POINTER.cs" />
-    <Compile Include="Resources\RT_STRING\RT_STRING.cs" />
-    <Compile Include="PE\FormatMessageFlags.cs" />
-    <Compile Include="Resources\RT_ICON\RT_ICON.cs" />
-    <Compile Include="PE\LoadLibraryFlags.cs" />
-    <Compile Include="NE\NeResources.cs" />
-    <Compile Include="PE\PeResources.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="Resources\RT_VERSION\RT_VERSION.cs" />
     <EmbeddedResource Include="About.resx">
       <DependentUpon>About.cs</DependentUpon>
     </EmbeddedResource>
@@ -125,6 +95,12 @@
   <ItemGroup>
     <Content Include="icon.ico" />
     <Content Include="Properties\icon.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\PeareModule\PeareModule.csproj">
+      <Project>{1008d04a-8e20-482a-9d1c-06e8ddc8a8fb}</Project>
+      <Name>PeareModule</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

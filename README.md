@@ -60,6 +60,7 @@ What is currently (at least partially) implemented right now:
 		- RT_GROUP_CURSOR
 		- RT_CURSOR
 		- RT_MENU
+		- RT_ACCELERATOR
 
 	- Fallback to ASCII text and raw bytes (All the formats)
 

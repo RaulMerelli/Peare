@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{1008D04A-8E20-482A-9D1C-06E8DDC8A8FB}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <RootNamespace>PeareModule</RootNamespace>
+    <AssemblyName>PeareModule</AssemblyName>
+    <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Xml.Linq" />
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Xml" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Class1.cs" />
+    <Compile Include="LE\IMAGE_LE_HEADER.cs" />
+    <Compile Include="LE\LeResources.cs" />
+    <Compile Include="LE\LE_OBJECT_FLAGS.cs" />
+    <Compile Include="LE\LE_OBJECT_TABLE_ENTRY.cs" />
+    <Compile Include="LX\IMAGE_LX_HEADER.cs" />
+    <Compile Include="LX\LxResources.cs" />
+    <Compile Include="LX\LX_OBJECT_FLAGS.cs" />
+    <Compile Include="LX\LX_OBJECT_TABLE_ENTRY.cs" />
+    <Compile Include="NE\NeResources.cs" />
+    <Compile Include="PE\FormatMessageFlags.cs" />
+    <Compile Include="PE\LoadLibraryFlags.cs" />
+    <Compile Include="PE\PeResources.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Resources\ModuleResources.cs" />
+    <Compile Include="Resources\RT_ACCELERATOR\RT_ACCELERATOR.cs" />
+    <Compile Include="Resources\RT_BITMAP\RT_BITMAP.cs" />
+    <Compile Include="Resources\RT_CURSOR\RT_CURSOR.cs" />
+    <Compile Include="Resources\RT_DISPLAYINFO\RT_DISPLAYINFO.cs" />
+    <Compile Include="Resources\RT_FONTDIR\FONTDIRENTRY.cs" />
+    <Compile Include="Resources\RT_FONTDIR\RT_FONTDIR.cs" />
+    <Compile Include="Resources\RT_FONT\FONTINFO16.cs" />
+    <Compile Include="Resources\RT_FONT\RT_FONT.cs" />
+    <Compile Include="Resources\RT_GROUP_CURSOR\RT_GROUP_CURSOR.cs" />
+    <Compile Include="Resources\RT_GROUP_ICON\RT_GROUP_ICON.cs" />
+    <Compile Include="Resources\RT_ICON\RT_ICON.cs" />
+    <Compile Include="Resources\RT_MENU\OS2_RT_MENU.cs" />
+    <Compile Include="Resources\RT_MENU\RT_MENU.cs" />
+    <Compile Include="Resources\RT_MESSAGE\RT_MESSAGE.cs" />
+    <Compile Include="Resources\RT_POINTER\RT_POINTER.cs" />
+    <Compile Include="Resources\RT_STRING\RT_STRING.cs" />
+    <Compile Include="Resources\RT_VERSION\RT_VERSION.cs" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>
