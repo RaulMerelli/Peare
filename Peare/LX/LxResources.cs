@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Drawing;
 using System.Drawing.Printing;
 using System.IO;
@@ -347,13 +346,13 @@ namespace Peare
             }
         }
 
-        public static byte[] OpenResourceLX(string currentFilePath, string typeName, string targetResourceName, out string message, out bool found)
+        public static byte[] OpenResourceLX(ModuleResources.ModuleProperties properties, string typeName, string targetResourceName, out string message, out bool found)
         {
             message = "";
             found = false;
             List<byte> result = new List<byte>();
             byte[] headerBytes = new byte[172];
-            byte[] fileBytes = File.ReadAllBytes(currentFilePath);
+            byte[] fileBytes = File.ReadAllBytes(properties.filePath);
             int lxHeaderOffset = BitConverter.ToInt32(fileBytes, 0x3C);
 
             Console.WriteLine($"Attempting to open resource Type: {typeName}, Name: {targetResourceName}");

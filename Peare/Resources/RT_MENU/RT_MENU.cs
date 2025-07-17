@@ -29,7 +29,7 @@ namespace Peare
             MF_END = 0x0080
         }
 
-        public static string Get(byte[] data)
+        public static string Get(byte[] data, ModuleResources.ModuleProperties properties)
         {
             if (data == null || data.Length < 2)
             {
@@ -38,12 +38,13 @@ namespace Peare
 
             StringBuilder menuOutput = new StringBuilder();
             int offset = 0;
-            bool isUnicode = Program.isUnicode;
+            bool isUnicode = properties.headerType == ModuleResources.HeaderType.PE;
 
-            if (Program.isOS2)
+            if ((properties.headerType == ModuleResources.HeaderType.NE && properties.versionType == ModuleResources.VersionType.OS2) || 
+                properties.headerType == ModuleResources.HeaderType.LX)
             {
-                // Structure is different
-                return OS2_RTMENU.Get(data);
+                // Structure is different for OS/2
+                return OS2_RTMENU.Get(data, properties);
             }
 
             if (data.Length >= 4 && BitConverter.ToUInt32(data, 0) == 0)

@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
-using System.Security.Cryptography;
 using System.Text;
 
 namespace Peare
@@ -10,11 +9,11 @@ namespace Peare
     {
         public static string Get(byte[] data)
         {
-            // This function only reads the single RT_GROUP_CURSOR resource without accessing the single RT_ICON resources.
-            return Get(data, "", out _);
+            // This function only reads the single RT_GROUP_CURSOR resource without accessing the single RT_CURSOR resources.
+            return Get(data, null, out _);
         }
 
-        public static string Get(byte[] data, string filepath, out List<Bitmap> bitmaps)
+        public static string Get(byte[] data, ModuleResources.ModuleProperties properties, out List<Bitmap> bitmaps)
         {
             bitmaps = new List<Bitmap>();
 
@@ -66,10 +65,10 @@ namespace Peare
                 sb.AppendLine("\t}");
                 try
                 {
-                    if (!string.IsNullOrEmpty(filepath))
+                    if (properties != null)
                     {
                         bitmaps.Add(RT_CURSOR.Get(
-                            PeResources.OpenResourcePE(filepath,
+                            ModuleResources.OpenResource(properties,
                             "RT_CURSOR",
                             nID.ToString(),
                             out _,

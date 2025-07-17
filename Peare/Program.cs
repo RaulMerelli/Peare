@@ -7,11 +7,6 @@ namespace Peare
 {
     public static class Program
     {
-        public static string currentFilePath;
-        public static string currentHeaderType;
-        public static bool isOS2;
-        public static bool isUnicode;
-
         [STAThread]
         static void Main()
         {

@@ -158,12 +158,12 @@ namespace Peare
             return ((ulong)ptr.ToInt64() & 0xFFFF0000) == 0;
         }
 
-        public static byte[] OpenResourcePE(string currentFilePath, string lpType, string lpName, out string message, out bool found)
+        public static byte[] OpenResourcePE(ModuleResources.ModuleProperties properties, string lpType, string lpName, out string message, out bool found)
         {
             found = false;
             message = "";
 
-            IntPtr hModule = LoadLibraryEx(currentFilePath, IntPtr.Zero, LoadLibraryFlags.LOAD_LIBRARY_AS_DATAFILE);
+            IntPtr hModule = LoadLibraryEx(properties.filePath, IntPtr.Zero, LoadLibraryFlags.LOAD_LIBRARY_AS_DATAFILE);
             if (hModule == IntPtr.Zero)
             {
                 Console.WriteLine(GetErrorMessage(Marshal.GetLastWin32Error()));
@@ -237,14 +237,5 @@ namespace Peare
 
             return true;
         }
-
-        //public static Bitmap AddBitmapToFlow(IntPtr hDll, string lpBitmapName)
-        //{
-        //    IntPtr myimage = LoadBitmap(hDll, lpBitmapName);
-        //    Bitmap bitmap = Bitmap.FromHbitmap(myimage);
-        //    // Remember to free the HBITMAP when you're done with it
-        //    DeleteObject(myimage);
-        //    return bitmap;
-        //}
     }
 }

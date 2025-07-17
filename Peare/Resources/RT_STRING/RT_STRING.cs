@@ -114,11 +114,11 @@ namespace Peare
             }
         }
 
-        public static string Get(byte[] data, int baseId = 100)
+        public static string Get(byte[] data, ModuleResources.ModuleProperties properties, int baseId = 100)
         {
             ushort cp = 20127; // Default ASCII
 
-            if (Program.isUnicode)
+            if (properties.headerType == ModuleResources.HeaderType.PE)
             {
                 cp = 1200;
             }
@@ -131,7 +131,9 @@ namespace Peare
             sb.AppendLine("{");
 
             int offset = 0;
-            if (Program.isOS2)
+
+            if ((properties.headerType == ModuleResources.HeaderType.NE && properties.versionType == ModuleResources.VersionType.OS2) ||
+                properties.headerType == ModuleResources.HeaderType.LX)
             {
                 // First two bytes in OS/2 are the codepage
                 cp = ReadUInt16(data, ref offset);
@@ -142,7 +144,7 @@ namespace Peare
             while (offset < data.Length)
             {
                 int length;
-                if (Program.isUnicode)
+                if (properties.headerType == ModuleResources.HeaderType.PE)
                 {
                     length = ReadUInt16(data, ref offset);
                 }

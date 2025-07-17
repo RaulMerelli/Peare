@@ -35,12 +35,14 @@ namespace Peare
         // The 'length' field in MESSAGE_RESOURCE_ENTRY includes the 4-byte header (Length + Flags)
         // AND the string content AND its 2-byte null terminator.
 
-        public static string Get(byte[] data)
+        public static string Get(byte[] data, ModuleResources.ModuleProperties properties)
         {
             ushort cp = 20127; // Default ASCII
 
             int offset = 0; // Current read position in the 'data' array
-            if (Program.isOS2)
+
+            if ((properties.headerType == ModuleResources.HeaderType.NE && properties.versionType == ModuleResources.VersionType.OS2) ||
+                properties.headerType == ModuleResources.HeaderType.LX)
             {
                 // First two bytes in OS/2 are the codepage
                 cp = RT_STRING.ReadUInt16(data, ref offset);
@@ -67,7 +69,7 @@ namespace Peare
                 while (offset + 1 < data.Length) // This loop condition might need adjustment based on full resource parsing
                 {
                     int msgId; // Will be the actual message ID from MESSAGE_RESOURCE_BLOCK/ENTRY
-                    if (Program.currentHeaderType.StartsWith("PE"))
+                    if (properties.headerType == ModuleResources.HeaderType.PE)
                     {
                         // --- Windows PE (RT_MESSAGETABLE) Parsing Logic ---
 

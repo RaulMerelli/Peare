@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.Data;
 using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
@@ -29,7 +28,7 @@ namespace Peare
             {
                 // load the image from the our executable using our function!
                 pictureBox1.Image = RT_ICON.Get(
-                    PeResources.OpenResourcePE(System.Reflection.Assembly.GetEntryAssembly().Location, 
+                    ModuleResources.OpenResource(System.Reflection.Assembly.GetEntryAssembly().Location, 
                     "RT_ICON", 
                     "2", 
                     out _, 

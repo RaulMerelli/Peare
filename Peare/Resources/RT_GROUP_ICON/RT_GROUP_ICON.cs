@@ -10,10 +10,10 @@ namespace Peare
         public static string Get(byte[] data)
         {
             // This function only reads the single RT_GROUP_ICON resource without accessing the single RT_ICON resources.
-            return Get(data, "", out _);
+            return Get(data, null, out _);
         }
 
-        public static string Get(byte[] data, string filepath, out List<Bitmap> bitmaps)
+        public static string Get(byte[] data, ModuleResources.ModuleProperties properties, out List<Bitmap> bitmaps)
         {
             bitmaps = new List<Bitmap>();
 
@@ -62,10 +62,10 @@ namespace Peare
                 sb.AppendLine("\t}");
                 try
                 {
-                    if (!string.IsNullOrEmpty(filepath))
+                    if (properties != null)
                     {
                         bitmaps.Add(RT_ICON.Get(
-                            PeResources.OpenResourcePE(filepath,
+                            ModuleResources.OpenResource(properties,
                             "RT_ICON",
                             nID.ToString(),
                             out _,

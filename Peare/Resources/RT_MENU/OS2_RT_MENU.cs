@@ -271,7 +271,7 @@ namespace Peare
             }
         }
 
-        public static string Get(byte[] data)
+        public static string Get(byte[] data, ModuleResources.ModuleProperties properties)
         {
             if (data == null || data.Length == 0)
             {
@@ -322,19 +322,8 @@ namespace Peare
                 // A string table should be at least 3 bytes long (2-byte dummy + 1-byte len).
                 if (data.Length >= 3)
                 {
-                    // Peek at the initial bytes.
-                    ushort dummy = BitConverter.ToUInt16(data, 0);
-                    byte len = data[2]; // The first string's length byte
-
-                    // Heuristic for a string table:
-                    // - 'dummy' is often 0.
-                    // - 'len' should be a valid byte length (0-255).
-                    // This heuristic is weak but helps distinguish from other types if menu failed.
-                    if (dummy == 0 && len <= 255)
-                    {
-                        string result = RT_STRING.Get(data);
-                        if (result != null) return result; // If parsing was successful, return the result
-                    }
+                    string result = RT_STRING.Get(data, properties);
+                    if (result != null) return result; // If parsing was successful, return the result
                 }
             }
             catch (EndOfStreamException) { /* Continue to try other types */ }
