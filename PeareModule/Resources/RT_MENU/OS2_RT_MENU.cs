@@ -30,14 +30,6 @@ namespace PeareModule
         private const ushort MIA_CHECKED = 0x0008;      // Item has a checkmark
                                                         // You can add more MIA_* constants here if needed for other attributes.
 
-        // Constants for Accelerator Key Types (ACCEL_*)
-        // These values are common in Windows resource definitions.
-        private const ushort ACCEL_VIRTUALKEY = 0x0001;
-        private const ushort ACCEL_NOINVERT = 0x0002;
-        private const ushort ACCEL_SHIFT = 0x0004;
-        private const ushort ACCEL_CONTROL = 0x0008;
-        private const ushort ACCEL_ALT = 0x0010;
-
         private static byte ReadByte(byte[] data, ref int offset)
         {
             if (offset + 1 > data.Length)
@@ -56,66 +48,6 @@ namespace PeareModule
             ushort value = BitConverter.ToUInt16(data, offset);
             offset += 2;
             return value;
-        }
-
-        private static string GetRcKeyString(ushort key)
-        {
-            // Common virtual key codes mapping to RC file constants
-            switch (key)
-            {
-                case 0x70: return "VK_F1";
-                case 0x71: return "VK_F2";
-                case 0x72: return "VK_F3";
-                case 0x73: return "VK_F4";
-                case 0x74: return "VK_F5";
-                case 0x75: return "VK_F6";
-                case 0x76: return "VK_F7";
-                case 0x77: return "VK_F8";
-                case 0x78: return "VK_F9";
-                case 0x79: return "VK_F10";
-                case 0x7A: return "VK_F11";
-                case 0x7B: return "VK_F12";
-                case 0x25: return "VK_LEFT";
-                case 0x26: return "VK_UP";
-                case 0x27: return "VK_RIGHT";
-                case 0x28: return "VK_DOWN";
-                case 0x0D: return "VK_RETURN";
-                case 0x1B: return "VK_ESCAPE";
-                case 0x20: return "VK_SPACE";
-                case 0x09: return "VK_TAB";
-                case 0x08: return "VK_BACK";
-                case 0x2E: return "VK_DELETE";
-                case 0x2D: return "VK_INSERT";
-                case 0x21: return "VK_PRIOR"; // Page Up
-                case 0x22: return "VK_NEXT";  // Page Down
-                case 0x23: return "VK_END";
-                case 0x24: return "VK_HOME";
-                // Add more virtual key mappings as needed
-
-                default:
-                    // Handle printable ASCII characters (e.g., 'A', 'B', '1', '2')
-                    if (key >= 0x20 && key <= 0x7E) // ASCII printable range
-                    {
-                        return $"\"{Convert.ToChar(key)}\"";
-                    }
-                    // Fallback for unknown or non-printable keys, represent as hex
-                    return $"0x{key:X4}";
-            }
-        }
-
-        private static string GetRcAccelTypeString(ushort type)
-        {
-            List<string> flags = new List<string>();
-            if ((type & ACCEL_VIRTUALKEY) != 0) flags.Add("VIRTUALKEY");
-            if ((type & ACCEL_NOINVERT) != 0) flags.Add("NOINVERT");
-            if ((type & ACCEL_SHIFT) != 0) flags.Add("SHIFT");
-            if ((type & ACCEL_CONTROL) != 0) flags.Add("CONTROL");
-            if ((type & ACCEL_ALT) != 0) flags.Add("ALT");
-
-            // If no known flags are set, it might be a direct character accelerator without flags,
-            // or an unknown type.
-            if (flags.Count == 0) return "NO_FLAGS"; // Or throw an error if strict validation needed
-            return string.Join(" | ", flags);
         }
 
         private static void ParseMenu(byte[] data, ref int offset, StringBuilder sb, int indentLevel, bool isSubMenu = false)
@@ -227,50 +159,6 @@ namespace PeareModule
             sb.AppendLine($"{indent}}}"); // End of current menu/popup block
         }
 
-        private static string ParseAccelTable(byte[] data)
-        {
-            StringBuilder sb = new StringBuilder();
-            int offset = 0;
-            try
-            {
-                // AccelTable data starts with a 16-bit count and a 16-bit codepage.
-                ushort count = ReadUInt16(data, ref offset); // 16 1 count (number of keys)
-                ushort cp = ReadUInt16(data, ref offset);    // 16 1 cp (acceltable codepage)
-
-                // Emit the RC file syntax for the accelerator table.
-                // A placeholder ID is used as the prompt doesn't specify one.
-                sb.AppendLine("ACCELERATORS ID_ACCEL_TABLE"); // Example: ID_ACCEL_TABLE
-                sb.AppendLine("{");
-
-                // Iterate through each accel-key triplet (type, key, cmd)
-                for (int i = 0; i < count; i++)
-                {
-                    ushort type = ReadUInt16(data, ref offset); // 16 1 type (key's type: VIRTUALKEY, shifted, etc.)
-                    ushort key = ReadUInt16(data, ref offset);  // 16 1 key (key's value: VK_F1, "a", etc.)
-                    ushort cmd = ReadUInt16(data, ref offset);  // 16 1 cmd (accel command)
-
-                    // Convert key and type values to their RC file string representations
-                    string rcKey = GetRcKeyString(key);
-                    string rcType = GetRcAccelTypeString(type);
-
-                    // Append the accelerator entry to the RC output
-                    sb.AppendLine($"    {rcKey}, {cmd}, {rcType}");
-                }
-                sb.AppendLine("}");
-                return sb.ToString();
-            }
-            catch (EndOfStreamException)
-            {
-                // Parsing failed due to insufficient data.
-                return null;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error parsing accel table: {ex.Message}");
-                return null;
-            }
-        }
-
         public static string Get(byte[] data, ModuleResources.ModuleProperties properties)
         {
             if (data == null || data.Length == 0)
@@ -346,9 +234,13 @@ namespace PeareModule
                     // Heuristic for an accel table:
                     // - 'count' should be a reasonable number of accelerators (e.g., < 1000).
                     // - 'type1' should be a combination of known accelerator type flags (or 0 if no flags).
-                    if (count < 1000 && (type1 == 0 || (type1 & (ACCEL_VIRTUALKEY | ACCEL_NOINVERT | ACCEL_SHIFT | ACCEL_CONTROL | ACCEL_ALT)) != 0))
+                    if (count < 1000 && (type1 == 0 || (type1 & (
+                        RT_ACCELTABLE.KC_VIRTUALKEY | 
+                        RT_ACCELTABLE.KC_SHIFT | 
+                        RT_ACCELTABLE.KC_CTRL | 
+                        RT_ACCELTABLE.KC_ALT)) != 0))
                     {
-                        string result = ParseAccelTable(data);
+                        string result = RT_ACCELTABLE.Get(data, properties);
                         if (result != null) return result; // If parsing was successful, return the result
                     }
                 }

@@ -250,7 +250,14 @@ namespace Peare
                 }
                 else if (typeName == "RT_ACCELERATOR")
                 {
-                    string val = RT_ACCELERATOR.Get(resData);
+                    string val = RT_ACCELERATOR.Get(resData, moduleProperties);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    string dump = ModuleResources.DumpRaw(resData);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(dump));
+                }
+                else if (typeName == "RT_ACCELTABLE")
+                {
+                    string val = RT_ACCELTABLE.Get(resData, moduleProperties);
                     flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     string dump = ModuleResources.DumpRaw(resData);
                     flowLayoutPanel1.Controls.Add(GetTextbox(dump));

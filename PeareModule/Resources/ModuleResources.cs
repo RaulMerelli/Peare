@@ -50,7 +50,8 @@ namespace PeareModule
                     ascii.Append(b >= 32 && b <= 126 ? (char)b : '.');
                 }
 
-                string lineStr = $"{lineOffset:X04}: {hex}| {ascii}";
+                //string lineStr = $"{lineOffset:X04}: {hex}| {ascii}";
+                string lineStr = $"{hex}";
                 Console.WriteLine(lineStr);
                 result.AppendLine(lineStr);
             }

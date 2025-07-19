@@ -63,6 +63,13 @@ namespace PeareModule
                             result.Add(bmp);
                         }
 
+                        bmp = Decode_BITMAP_Win1_Win2(resData);
+                        if (bmp != null)
+                        {
+                            imageDecoded = true;
+                            result.Add(bmp);
+                        }
+
                         string status = imageDecoded ? "loaded successfully" : "failed to load";
                         Console.WriteLine($"Bitmap or Pointer {status}");
 
@@ -93,6 +100,13 @@ namespace PeareModule
                         result.Add(bmp);
                     }
 
+                    bmp = Decode_BITMAP_Win1_Win2(resData);
+                    if (bmp != null)
+                    {
+                        imageDecoded = true;
+                        result.Add(bmp);
+                    }
+
                     string status = imageDecoded ? "loaded successfully" : "failed to load";
                     Console.WriteLine($"Bitmap or Pointer {status}");
 
@@ -104,6 +118,129 @@ namespace PeareModule
                 Console.WriteLine("Failed to convert bitmap data: " + ex.Message);
                 return result;
             }
+        }
+
+        public static Bitmap Decode_BITMAP_Win1_Win2(byte[] resourceData)
+        {
+            // Check for null input data
+            if (resourceData == null)
+            {
+                Console.WriteLine("Error: Resource data cannot be null.");
+                return null;
+            }
+
+            // Check for minimum header size
+            if (resourceData.Length < 16) // Minimum header is 16 bytes
+            {
+                Console.WriteLine("Error: Resource data is too short to contain the header.");
+                return null;
+            }
+
+            // Read key values from the header (Little Endian)
+            UInt32 resourceId = BitConverter.ToUInt32(resourceData, 0);   // Offset 0-3
+            UInt16 width = BitConverter.ToUInt16(resourceData, 4);       // Offset 4-5
+            UInt16 height = BitConverter.ToUInt16(resourceData, 6);      // Offset 6-7
+            UInt16 bytesPerLine = BitConverter.ToUInt16(resourceData, 8); // Offset 8-9 (Stride)
+
+            Console.WriteLine($"Header Detected: ResourceID=0x{resourceId:X}, Width={width}, Height={height}, BytesPerLine={bytesPerLine}");
+
+            // Calculate the expected pixel data size based on the header
+            int expectedPixelDataSize = height * bytesPerLine;
+            int headerSize = 16; // Fixed header size
+
+            // Adjust expected pixel data size if the provided data is shorter
+            if (resourceData.Length < headerSize + expectedPixelDataSize)
+            {
+                // Theoretical minimum for 1bpp
+                if (resourceData.Length - headerSize < (width + 7) / 8 * height)
+                {
+                    Console.WriteLine($"Warning: Dump data seems insufficient for a {width}x{height} 1bpp image with stride {bytesPerLine}. Attempting to decode the {resourceData.Length - headerSize} available bytes anyway.");
+                }
+                expectedPixelDataSize = resourceData.Length - headerSize; // Adapt size to what is actually available
+            }
+
+            // Ensure width and height are valid before creating Bitmap
+            if (width == 0 || height == 0)
+            {
+                Console.WriteLine($"Error: Invalid image dimensions. Width: {width}, Height: {height}.");
+                return null;
+            }
+
+            // Create the monochrome bitmap
+            Bitmap bitmap = null;
+            try
+            {
+                bitmap = new Bitmap(width, height, PixelFormat.Format1bppIndexed);
+            }
+            catch (ArgumentException ex)
+            {
+                Console.WriteLine($"Error creating bitmap with dimensions {width}x{height}: {ex.Message}");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An unexpected error occurred while creating the bitmap: {ex.Message}");
+                return null;
+            }
+
+            // Set the palette for black and white (0 = black, 1 = white)
+            ColorPalette pal = bitmap.Palette;
+            pal.Entries[0] = Color.Black; // Bit 0 is black
+            pal.Entries[1] = Color.White; // Bit 1 is white
+            bitmap.Palette = pal;
+
+            BitmapData bmpData = null;
+            try
+            {
+                // Lock the bitmap bits for direct memory access
+                // The internal C# bitmap Scan0 will handle its own stride, which might differ from bytesPerLine
+                bmpData = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height),
+                                          ImageLockMode.WriteOnly,
+                                          PixelFormat.Format1bppIndexed);
+
+                IntPtr destPtr = bmpData.Scan0;
+                int sourceOffset = headerSize;
+
+                for (int y = 0; y < height; y++)
+                {
+                    // Calculate bytes to copy for the current line, ensuring we don't read beyond resourceData bounds
+                    int bytesToCopy = Math.Min(bytesPerLine, resourceData.Length - sourceOffset);
+
+                    // Also ensure we don't write beyond the bitmap's stride for the current line
+                    bytesToCopy = Math.Min(bytesToCopy, bmpData.Stride);
+
+                    if (bytesToCopy <= 0)
+                    {
+                        Console.WriteLine($"Warning: No more valid data to copy for row {y}. Remaining resource data length: {resourceData.Length - sourceOffset}.");
+                        break; // No more valid data to copy
+                    }
+
+                    // Copy data from source buffer to bitmap buffer
+                    System.Runtime.InteropServices.Marshal.Copy(resourceData, sourceOffset, destPtr, bytesToCopy);
+
+                    sourceOffset += bytesPerLine; // Advance in the source data buffer based on its stride
+                    destPtr = new IntPtr(destPtr.ToInt64() + bmpData.Stride); // Advance in the bitmap buffer based on its internal stride
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error during bitmap data copying: {ex.Message}");
+                // If an error occurs here, ensure the bitmap is disposed before returning null
+                if (bitmap != null)
+                {
+                    bitmap.Dispose();
+                }
+                return null;
+            }
+            finally
+            {
+                if (bmpData != null)
+                {
+                    bitmap.UnlockBits(bmpData);
+                }
+            }
+
+            return bitmap;
         }
 
         private static Bitmap Decode_BITMAP(byte[] resData)
@@ -174,6 +311,7 @@ namespace PeareModule
                 {
                     Console.WriteLine("Reading as Windows-style DIB (BITMAPINFOHEADER) failed");
                 }
+
                 return null;
             }
             catch (Exception ex)
@@ -387,6 +525,18 @@ namespace PeareModule
             // It is made to work with everything, Windows Bitmaps, Icons, Cursors and OS/2 Bitmaps, Icons, Pointers etc.
             int colorStride = ((width * bitCount + 31) / 32) * 4;
             int maskStride = ((width + 31) / 32) * 4;
+
+            if (bitCount == 4 && palette.Length == 0)
+            {
+                // Palette EGA
+                palette = new Color[]
+                {
+                    Color.Black, Color.Blue, Color.Green, Color.Cyan,
+                    Color.Red, Color.Magenta, Color.Brown, Color.LightGray,
+                    Color.DarkGray, Color.LightBlue, Color.LightGreen, Color.LightCyan,
+                    Color.LightCoral, Color.LightPink, Color.Yellow, Color.White
+                };
+            }
 
             Bitmap bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb);
             BitmapData bmpData = bmp.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);

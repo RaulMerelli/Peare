@@ -28,6 +28,7 @@ What is currently (at least partially) implemented right now:
 		- RT_STRING
 		- RT_DISPLAYINFO
 		- RT_MENU
+		- RT_ACCELTABLE
 
 	- LX (OS/2)
 		- RT_POINTER (BA, BM, IC, CI, CP, PT)
@@ -36,6 +37,7 @@ What is currently (at least partially) implemented right now:
 		- RT_STRING
 		- RT_DISPLAYINFO (theoretically, I can't find any OS/2 LX contining a RT_DISPLAYINFO resource)
 		- RT_MENU
+		- RT_ACCELTABLE
 
 	- NE (Windows)
 		- RT_MESSAGETABLE (theoretically, I can't find any Windows NE contining a RT_MESSAGETABLE resource)
