@@ -1,4 +1,6 @@
-﻿using System;
+﻿using Peare.Properties;
+using PeareModule;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -10,7 +12,6 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
-using PeareModule;
 
 namespace Peare
 {
@@ -72,8 +73,8 @@ namespace Peare
                     {
                         // Add directly as a root node
                         TreeNode currentNode = treeView1.Nodes.Add(childName);
-                        currentNode.ImageKey = "FolderClose";
-                        currentNode.SelectedImageKey = "FolderClose";
+                        currentNode.ImageKey = "RT_FOLDER_CLOSE";
+                        currentNode.SelectedImageKey = "RT_FOLDER_CLOSE";
                     }
                     else
                     {
@@ -94,31 +95,16 @@ namespace Peare
                         {
                             parentNode = new TreeNode(parentName);
                             treeView1.Nodes.Add(parentNode);
-                            parentNode.ImageKey = "Folder";
-                            parentNode.SelectedImageKey = "Folder";
+                            parentNode.ImageKey = "RT_FOLDER_OPEN";
+                            parentNode.SelectedImageKey = "RT_FOLDER_OPEN";
                         }
 
                         // Add the child to the parent node
                         TreeNode currentNode = parentNode.Nodes.Add(childName);
-                        string icon = "File";
-                        switch (parentName)
+                        string icon = "RT_DEFAULT";
+                        if (imageList1.Images.Keys.Contains(parentName))
                         {
-                            case "RT_FONT":
-                            case "RT_FONTDIR":
-                                icon = "FontFile";
-                                break;
-                            case "RT_BITMAP":
-                            case "RT_ICON":
-                                icon = "BitmapFile";
-                                break;
-                            case "RT_VERSION":
-                            case "RT_MENU":
-                            case "RT_STRING":
-                                icon = "ConfigFile";
-                                break;
-                            case "RT_MANIFEST":
-                                icon = "XmlFile";
-                                break;
+                            icon = parentName;
                         }
                         currentNode.ImageKey = icon;
                         currentNode.SelectedImageKey = icon;
@@ -371,68 +357,80 @@ namespace Peare
             SetWindowTheme(treeView1.Handle, "Explorer", null);
         }
 
+        public class MenuLoader
+        {
+            public MenuLoader(string filepath, string resName, string extDefault)
+            {
+                this.filepath = filepath;
+                this.resName = resName;
+                this.extDefault = extDefault;
+            }
+
+            public string filepath;
+            public string resName;
+            public string extDefault;
+        }
+
         private void MainForm_Load(object sender, EventArgs e)
         {
             Stopwatch sw = Stopwatch.StartNew();
+            string shell32 = @"C:\Windows\System32\shell32.dll";
+            string mmcndmgr = @"C:\Windows\System32\mmcndmgr.dll";
+
+            IniFile settings = new IniFile("Settings.ini");
 
             SetTreeViewStyle();
 
-            // Add icons to imagelist using our method or from the associated extension icon as fallback
-            ModuleResources.ModuleProperties shell32 = ModuleResources.GetModuleProperties(@"C:\Windows\System32\shell32.dll");
-            ModuleResources.ModuleProperties mmcndmgr = ModuleResources.GetModuleProperties(@"C:\Windows\System32\mmcndmgr.dll");
+            void WriteIcoSection(string type, string path, string ordinal, string ext)
+            {
+                settings.WriteIfKeyNotExists("path", path, type);
+                settings.WriteIfKeyNotExists("ordinal", ordinal, type);
+                settings.WriteIfKeyNotExists("iconExt", ext, type);
+            }
+
+            WriteIcoSection("RT_FOLDER_OPEN", shell32, "4", "folder_open"); 
+            WriteIcoSection("RT_FOLDER_CLOSE", shell32, "5", "folder_close");
+            WriteIcoSection("RT_DEFAULT", shell32, "1", "default_unknown_icon");
+            WriteIcoSection("RT_FONT", shell32, "155", "fon");
+            WriteIcoSection("RT_FONTDIR", shell32, "155", "fon");
+            WriteIcoSection("RT_VERSION", shell32, "151", "ini");
+            WriteIcoSection("RT_MENU", shell32, "151", "ini");
+            WriteIcoSection("RT_STRING", shell32, "151", "ini");
+            WriteIcoSection("RT_BITMAP", shell32, "16823", "bmp");
+            WriteIcoSection("RT_ICON", shell32, "16823", "bmp");
+            WriteIcoSection("RT_MANIFEST", mmcndmgr, "1098", "xml");
+
             List<Bitmap> bitmaps = new List<Bitmap>();
             Bitmap bmp = null;
-            // Folder Close
-            RT_GROUP_ICON.Get(ModuleResources.OpenResource(shell32, "RT_GROUP_ICON", "4", out _, out _), shell32, out bitmaps);
-            if (bitmaps.Count > 0)
+            Dictionary<string, ModuleResources.ModuleProperties> properties = new Dictionary<string, ModuleResources.ModuleProperties>();
+            foreach (string section in settings.GetSections())
             {
-                imageList1.Images.Add("FolderClose", bitmaps.Where(x => x.Width == 16 && x.Height == 16).Last());
-            }
-            // Folder Open
-            RT_GROUP_ICON.Get(ModuleResources.OpenResource(shell32, "RT_GROUP_ICON", "5", out _, out _), shell32, out bitmaps);
-            if (bitmaps.Count > 0)
-            {
-                imageList1.Images.Add("FolderOpen", bitmaps.Where(x => x.Width == 16 && x.Height == 16).Last());
-            }
-            // File
-            RT_GROUP_ICON.Get(ModuleResources.OpenResource(shell32, "RT_GROUP_ICON", "1", out _, out _), shell32, out bitmaps);
-            if (bitmaps.Count > 0)
-            {
-                imageList1.Images.Add("File", bitmaps.Where(x => x.Width == 16 && x.Height == 16).Last());
-            }
-            // Font File
-            RT_GROUP_ICON.Get(ModuleResources.OpenResource(shell32, "RT_GROUP_ICON", "155", out _, out _), shell32, out bitmaps);
-            if (bitmaps.Count > 0)
-            {
-                imageList1.Images.Add("FontFile", bitmaps.Where(x => x.Width == 16 && x.Height == 16).Last());
-            }
-            // Config File
-            RT_GROUP_ICON.Get(ModuleResources.OpenResource(shell32, "RT_GROUP_ICON", "151", out _, out _), shell32, out bitmaps);
-            if (bitmaps.Count > 0)
-            {
-                imageList1.Images.Add("ConfigFile", bitmaps.Where(x => x.Width == 16 && x.Height == 16).Last());
-            }
-            // Bitmap File
-            RT_GROUP_ICON.Get(ModuleResources.OpenResource(shell32, "RT_GROUP_ICON", "16823", out _, out _), shell32, out bitmaps);
-            if (bitmaps.Count > 0)
-            {
-                imageList1.Images.Add("BitmapFile", bitmaps.Where(x => x.Width == 16 && x.Height == 16).Last());
-            }
-            else
-            {
-                bmp = IconFromExt.Get(".bmp");
-                imageList1.Images.Add("BitmapFile", bmp == null ? imageList1.Images[2] : bmp);
-            }
-            // Xml File
-            RT_GROUP_ICON.Get(ModuleResources.OpenResource(mmcndmgr, "RT_GROUP_ICON", "1098", out _, out _), mmcndmgr, out bitmaps);
-            if (bitmaps.Count > 0)
-            {
-                imageList1.Images.Add("XmlFile", bitmaps.Where(x => x.Width == 16 && x.Height == 16).Last());
-            }
-            else
-            {
-                bmp = IconFromExt.Get(".xml");
-                imageList1.Images.Add("XmlFile", bmp == null ? imageList1.Images[2] : bmp);
+                if (!string.IsNullOrEmpty(section))
+                {
+                    string path = settings.Read("path", section);
+                    string ordinal = settings.Read("ordinal", section);
+                    string iconExt = settings.Read("iconExt", section);
+
+                    if (!properties.ContainsKey(path))
+                    {
+                        properties[path] = ModuleResources.GetModuleProperties(path);
+                    }
+                    RT_GROUP_ICON.Get(ModuleResources.OpenResource(properties[path], "RT_GROUP_ICON", ordinal, out _, out _), properties[path], out bitmaps);
+                    if (bitmaps.Count > 0)
+                    {
+                        imageList1.Images.Add(section, bitmaps.Where(x => x.Width == 16 && x.Height == 16).Last());
+                    }
+                    else if (iconExt.StartsWith("folder"))
+                    {
+                        bmp = IconFromExt.GetFolder();
+                        imageList1.Images.Add(section, bmp == null ? imageList1.Images[2] : bmp);
+                    }
+                    else
+                    {
+                        bmp = IconFromExt.Get(iconExt);
+                        imageList1.Images.Add(section, bmp == null ? imageList1.Images[2] : bmp);
+                    }
+                }
             }
             sw.Stop();
             Console.WriteLine($"Peare started in {sw.ElapsedMilliseconds}ms");

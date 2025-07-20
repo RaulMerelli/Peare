@@ -13,6 +13,7 @@ namespace Peare
         const uint SHGFI_ICON = 0x000000100;
         const uint SHGFI_SMALLICON = 0x000000001;
         const uint SHGFI_USEFILEATTRIBUTES = 0x000000010;
+        const uint FILE_ATTRIBUTE_DIRECTORY = 0x10;
         const uint FILE_ATTRIBUTE_NORMAL = 0x00000080;
 
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
@@ -50,5 +51,29 @@ namespace Peare
             }
             return bitmap;
         }
+
+        public static Bitmap GetFolder()
+        {
+            SHFILEINFO shinfo = new SHFILEINFO();
+            IntPtr hImg = SHGetFileInfo(
+                "folder", // any string, as FILE_ATTRIBUTE_DIRECTORY is set
+                FILE_ATTRIBUTE_DIRECTORY,
+                ref shinfo,
+                (uint)Marshal.SizeOf(shinfo),
+                SHGFI_ICON | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES
+            );
+
+            Bitmap bitmap = null;
+            if (shinfo.hIcon != IntPtr.Zero)
+            {
+                using (Icon icon = Icon.FromHandle(shinfo.hIcon))
+                {
+                    bitmap = icon.ToBitmap();
+                }
+                DestroyIcon(shinfo.hIcon);
+            }
+            return bitmap;
+        }
+
     }
 }

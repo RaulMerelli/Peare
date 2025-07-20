@@ -55,6 +55,7 @@
       <DependentUpon>About.cs</DependentUpon>
     </Compile>
     <Compile Include="IconFromExt.cs" />
+    <Compile Include="IniFile.cs" />
     <Compile Include="MainForm.cs">
       <SubType>Form</SubType>
     </Compile>
