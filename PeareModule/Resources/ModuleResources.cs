@@ -168,6 +168,13 @@ namespace PeareModule
                     fs.Seek(0x3C, SeekOrigin.Begin);
                     int headerOffset = br.ReadInt32();
 
+                    if (headerOffset + 2 > fs.Length)
+                    {
+                        result.headerType = HeaderType.MZonly;
+                        result.Description = "MZ with invalid secondary header";
+                        return result;
+                    }
+
                     // 3. Go to extended header and read the signature
                     fs.Seek(headerOffset, SeekOrigin.Begin);
                     ushort signature = br.ReadUInt16();

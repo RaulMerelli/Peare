@@ -36,9 +36,7 @@
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Drawing" />
-    <Reference Include="System.Xml.Linq" />
     <Reference Include="Microsoft.CSharp" />
-    <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="LE\IMAGE_LE_HEADER.cs" />
@@ -70,6 +68,7 @@
     <Compile Include="Resources\RT_MENU\OS2_RT_MENU.cs" />
     <Compile Include="Resources\RT_MENU\RT_MENU.cs" />
     <Compile Include="Resources\RT_MESSAGE\RT_MESSAGE.cs" />
+    <Compile Include="Resources\RT_NAMETABLE\RT_NAMETABLE.cs" />
     <Compile Include="Resources\RT_POINTER\RT_POINTER.cs" />
     <Compile Include="Resources\RT_STRING\RT_STRING.cs" />
     <Compile Include="Resources\RT_VERSION\RT_VERSION.cs" />

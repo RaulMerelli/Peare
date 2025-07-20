@@ -1,19 +1,14 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Drawing;
-using System.Drawing.Printing;
 using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
-using System.Security.Principal;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace PeareModule
 {
     public static class LxResources
     {
-        // Special thanks to EDM/2 Wiki for proving the updated doc:
+        // Special thanks to EDM/2 Wiki for providing the updated doc:
         // https://www.edm2.com/index.php/IBM_OS/2_16/32-bit_Object_Module_Format_(OMF)_and_Linear_eXecutable_Module_Format_(LX)
         public static Dictionary<int, string> LxResourceTypes = new Dictionary<int, string>
         {
@@ -59,7 +54,7 @@ namespace PeareModule
 
             if (resourceTableOffsetInHeader == 0 || resourceEntryCount == 0)
             {
-                Console.WriteLine("No resource teble found in the file.");
+                Console.WriteLine("No resource table found in the file.");
                 return relations;
             }
 
