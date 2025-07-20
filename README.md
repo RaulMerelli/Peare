@@ -52,6 +52,7 @@ What is currently (at least partially) implemented right now:
 		- RT_GROUP_CURSOR
 		- RT_CURSOR
 		- RT_MENU
+		- RT_ACCELERATOR
 
 	- PE (Windows)
 		- RT_MESSAGETABLE

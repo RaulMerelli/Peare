@@ -63,145 +63,177 @@ namespace PeareModule
             { 0x18, "VK_FINAL" }, { 0x19, "VK_KANJI" }
         };
 
+        // Mapping for control characters to their ^X representation
+        public static readonly Dictionary<ushort, string> ControlCharMap = new Dictionary<ushort, string>
+        {
+            { 0x01, "^A" }, { 0x02, "^B" }, { 0x03, "^C" }, { 0x04, "^D" },
+            { 0x05, "^E" }, { 0x06, "^F" }, { 0x07, "^G" }, { 0x08, "^H" },
+            { 0x09, "^I" }, { 0x0A, "^J" }, { 0x0B, "^K" }, { 0x0C, "^L" },
+            { 0x0D, "^M" }, { 0x0E, "^N" }, { 0x0F, "^O" }, { 0x10, "^P" },
+            { 0x11, "^Q" }, { 0x12, "^R" }, { 0x13, "^S" }, { 0x14, "^T" },
+            { 0x15, "^U" }, { 0x16, "^V" }, { 0x17, "^W" }, { 0x18, "^X" },
+            { 0x19, "^Y" }, { 0x1A, "^Z" }
+        };
+
+
         public static string Get(byte[] resData, ModuleResources.ModuleProperties properties)
         {
-            // Handle empty or null input data gracefully.
             if (resData == null || resData.Length == 0)
             {
                 return "// No accelerator data provided or data is empty.";
             }
 
+            // Early exit for specific NE/LX types handled by another class.
             if ((properties.headerType == ModuleResources.HeaderType.NE && properties.versionType == ModuleResources.VersionType.OS2) ||
                 properties.headerType == ModuleResources.HeaderType.LX)
             {
                 return RT_ACCELTABLE.Get(resData, properties);
             }
 
-                StringBuilder rcContent = new StringBuilder();
-            // Standard RC file header for an accelerator table.
-            // We use a generic name 'IDR_ACCELERATOR1' as the actual resource ID/name is not in the byte data itself.
+            StringBuilder rcContent = new StringBuilder();
             rcContent.AppendLine("ACCELERATORS");
             rcContent.AppendLine("{");
 
-            // Use MemoryStream and BinaryReader to easily read structured binary data.
             using (MemoryStream ms = new MemoryStream(resData))
             using (BinaryReader reader = new BinaryReader(ms))
             {
                 try
                 {
+                    bool isNEFormat = (properties.headerType == ModuleResources.HeaderType.NE);
                     bool isLastEntry = false;
-                    // Loop through the byte array, reading 6 bytes per ACCELTABLEENTRY,
-                    // and then skipping 2 bytes of padding, until the FLAST flag is encountered or end of stream is reached.
+
                     while (!isLastEntry && reader.BaseStream.Position < reader.BaseStream.Length)
                     {
-                        // Ensure there are enough bytes for a complete ACCELTABLEENTRY (6 bytes).
-                        if (reader.BaseStream.Length - reader.BaseStream.Position < 6)
+                        ushort flags; // Use ushort for flags to be consistent for both PE and NE for bitwise operations.
+                                      // The actual bytes read will differ.
+                        ushort rawKeyOrCharCode;
+                        ushort commandID;
+
+                        if (isNEFormat)
                         {
-                            rcContent.AppendLine("// Warning: Incomplete accelerator entry detected at end of stream.");
-                            break; // Not enough bytes for a full entry, break the loop.
+                            // For NE (Windows 3.x), entries are 5 bytes: byte flags, ushort key, ushort command.
+                            if (reader.BaseStream.Length - reader.BaseStream.Position < 5)
+                            {
+                                rcContent.AppendLine("// Warning: Incomplete accelerator entry detected at end of stream for NE format.");
+                                break;
+                            }
+                            flags = reader.ReadByte(); // Read flags as a single byte, implicitly cast to ushort
+                            rawKeyOrCharCode = reader.ReadUInt16(); // Read key as ushort
+                            commandID = reader.ReadUInt16(); // Read command as ushort
+
+                            // The FLAST flag for NE is 0x80 within the single byte.
+                            isLastEntry = (flags & FLAST) != 0;
+
+                            // No explicit internal padding to skip for NE entries.
+                        }
+                        else // Assume PE format
+                        {
+                            // For PE, entries are 8 bytes: ushort flags, ushort key, ushort command, ushort padding.
+                            if (reader.BaseStream.Length - reader.BaseStream.Position < 8) // Expect 8 bytes per entry for PE
+                            {
+                                rcContent.AppendLine("// Warning: Incomplete accelerator entry detected at end of stream for PE format.");
+                                break;
+                            }
+                            flags = reader.ReadUInt16(); // Read flags as ushort
+                            rawKeyOrCharCode = reader.ReadUInt16(); // Read key as ushort
+                            commandID = reader.ReadUInt16(); // Read command as ushort
+
+                            // For PE, FLAST is 0x0080 in the ushort flags.
+                            isLastEntry = (flags & FLAST) != 0;
+
+                            reader.ReadUInt16(); // Skip 2 bytes of padding after each PE entry
                         }
 
-                        // Read the three WORD (ushort) members of the ACCELTABLEENTRY structure.
-                        // Based on the provided dump and Resource Hacker's output, the order of wID and wAnsiOrVirtualKey
-                        // appears to be swapped relative to the standard definition, and values are in lower byte.
-                        ushort fFlags = reader.ReadUInt16();          // Accelerator flags
-                        ushort rawVirtualKey = reader.ReadUInt16();   // This is interpreted as the Virtual Key code
-                        ushort rawID = reader.ReadUInt16();           // This is interpreted as the Command ID
-
-                        // Check if this is the last entry in the table.
-                        isLastEntry = (fFlags & FLAST) != 0;
-
-                        // After reading 6 bytes, check if there are at least 2 more bytes for padding.
-                        // If so, consume them. This assumes a consistent 8-byte record length in the dump.
-                        // This also handles the case where the very last entry might not have padding.
-                        if (reader.BaseStream.Position + 2 <= reader.BaseStream.Length)
-                        {
-                            reader.ReadUInt16(); // Skip 2 bytes of padding
-                        }
-
-                        // Build a list of RC-specific flags based on the fFlags value.
                         List<string> rcFlags = new List<string>();
-                        if ((fFlags & FNOINVERT) != 0) rcFlags.Add("NOINVERT");
-                        if ((fFlags & FSHIFT) != 0) rcFlags.Add("SHIFT");
-                        if ((fFlags & FCONTROL) != 0) rcFlags.Add("CONTROL");
-                        if ((fFlags & FALT) != 0) rcFlags.Add("ALT");
+                        if ((flags & FCONTROL) != 0) rcFlags.Add("CONTROL");
+                        if ((flags & FSHIFT) != 0) rcFlags.Add("SHIFT");
+                        if ((flags & FALT) != 0) rcFlags.Add("ALT");
+                        if ((flags & FNOINVERT) != 0) rcFlags.Add("NOINVERT");
 
                         string keyString;
-                        // For the command ID, use the full 16-bit value as seen in Resource Hacker's output.
-                        ushort finalID = rawID;
 
-                        // Determine if the accelerator is a virtual key or a character.
-                        // For this specific dump, it appears all key entries are intended as VIRTKEY.
-                        if ((fFlags & FVIRTKEY) != 0)
+                        if ((flags & FVIRTKEY) != 0)
                         {
-                            rcFlags.Add("VIRTKEY"); // Add VIRTKEY flag to the RC output.
-
-                            // Extract only the lower byte for the virtual key code lookup.
-                            ushort actualVirtualKeyCode = (ushort)(rawVirtualKey & 0xFF);
-
-                            // Try to get a human-readable name from the map.
-                            if (VirtualKeyCodeMap.TryGetValue(actualVirtualKeyCode, out string vkName))
+                            rcFlags.Add("VIRTKEY");
+                            if (VirtualKeyCodeMap.TryGetValue(rawKeyOrCharCode, out string vkName))
                             {
                                 keyString = vkName;
                             }
                             else
                             {
-                                // If not in map, try to convert common alphanumeric virtual keys (0-9, A-Z)
-                                // to their VK_ representation (e.g., VK_A, VK_0).
-                                if (actualVirtualKeyCode >= 0x30 && actualVirtualKeyCode <= 0x39) // '0'-'9'
+                                // If a virtual key is not mapped, represent it as its hex value
+                                // Use X4 for PE as VK codes can be > 0xFF, X2 for NE if it's strictly byte range.
+                                // For consistency, and since rawKeyOrCharCode is ushort, X4 is safer.
+                                keyString = $"0x{rawKeyOrCharCode:X4}";
+                            }
+                        }
+                        else // Not a VIRTKEY, so it's a character or control character (ASCII/ANSI)
+                        {
+                            char charCode = (char)rawKeyOrCharCode;
+                            if (ControlCharMap.TryGetValue(rawKeyOrCharCode, out string controlCharName))
+                            {
+                                keyString = $"\"{controlCharName}\"";
+                            }
+                            else if (char.IsLetterOrDigit(charCode) || char.IsPunctuation(charCode) || char.IsSymbol(charCode) || char.IsWhiteSpace(charCode))
+                            {
+                                if (charCode == '"')
                                 {
-                                    keyString = $"VK_{(char)actualVirtualKeyCode}";
+                                    keyString = "\"\\\"\"";
                                 }
-                                else if (actualVirtualKeyCode >= 0x41 && actualVirtualKeyCode <= 0x5A) // 'A'-'Z'
+                                else if (charCode == '\\')
                                 {
-                                    keyString = $"VK_{(char)actualVirtualKeyCode}";
+                                    keyString = "\"\\\\\"";
                                 }
                                 else
                                 {
-                                    // Fallback for unknown or less common virtual keys: use hex representation of the original 16-bit value.
-                                    // We use the original 16-bit value here to preserve all information if the lower byte isn't a standard VK.
-                                    keyString = $"0x{rawVirtualKey:X4}";
+                                    keyString = $"\"{charCode}\"";
                                 }
-                            }
-                        }
-                        else // FVIRTKEY is NOT set, so it's nominally a character accelerator.
-                        {
-                            // Handle specific known special characters first.
-                            if (rawVirtualKey == '\t')
-                            {
-                                keyString = "\"\\t\""; // Represent tab as "\t" in RC
-                            }
-                            else if (rawVirtualKey == '\0')
-                            {
-                                keyString = "\"\\0\""; // Represent null as "\0" in RC
                             }
                             else
                             {
-                                // Fallback for unknown characters or those not matching a VK_ code.
-                                // Represent as hex, and add ASCII flag if it's a control/whitespace char.
-                                if (char.IsControl((char)rawVirtualKey) || (char.IsWhiteSpace((char)rawVirtualKey) && rawVirtualKey != ' '))
-                                {
-                                    rcFlags.Add("ASCII");
-                                }
-                                keyString = $"0x{rawVirtualKey:X4}";
+                                // If it's an unprintable character, or something outside common ASCII, represent as hex.
+                                // PE accelerators can use Unicode chars, so X4 is more appropriate here.
+                                // For NE, it's typically just byte-sized ASCII.
+                                rcFlags.Add("ASCII"); // Indicate it's an ASCII/ANSI character if not printable
+                                keyString = $"0x{rawKeyOrCharCode:X4}";
                             }
                         }
 
-                        // Format the flags string for the RC file.
-                        string flagsString = rcFlags.Count > 0 ? ", " + string.Join(" | ", rcFlags) : "";
+                        // Order flags for RC output: VIRTKEY, then modifiers, then others.
+                        List<string> orderedRcFlags = new List<string>();
+                        if (rcFlags.Contains("VIRTKEY")) orderedRcFlags.Add("VIRTKEY");
+                        if (rcFlags.Contains("CONTROL")) orderedRcFlags.Add("CONTROL");
+                        if (rcFlags.Contains("SHIFT")) orderedRcFlags.Add("SHIFT");
+                        if (rcFlags.Contains("ALT")) orderedRcFlags.Add("ALT");
+                        if (rcFlags.Contains("NOINVERT")) orderedRcFlags.Add("NOINVERT");
+                        if (rcFlags.Contains("ASCII")) orderedRcFlags.Add("ASCII");
 
-                        // Append the formatted accelerator entry to the StringBuilder.
-                        rcContent.AppendLine($"    {keyString}, {finalID}{flagsString}");
+                        string flagsString = orderedRcFlags.Count > 0 ? ", " + string.Join(", ", orderedRcFlags) : "";
+
+                        rcContent.AppendLine($"\t{keyString}, {commandID}{flagsString}");
+
+                        if (isLastEntry)
+                        {
+                            // For NE, there might be residual padding after the FLAST entry
+                            // to align the entire resource. Consume it.
+                            if (isNEFormat)
+                            {
+                                int remainingBytes = (int)(reader.BaseStream.Length - reader.BaseStream.Position);
+                                if (remainingBytes > 0)
+                                {
+                                    reader.ReadBytes(remainingBytes); // Consume remaining bytes
+                                }
+                            }
+                            break; // Stop processing after the last entry
+                        }
                     }
                 }
                 catch (EndOfStreamException)
                 {
-                    // This exception might occur if the data is malformed and ends abruptly.
                     rcContent.AppendLine("// Error: End of stream reached unexpectedly, input data might be truncated or malformed.");
                 }
                 catch (Exception ex)
                 {
-                    // Catch any other unexpected errors during parsing.
                     rcContent.AppendLine($"// An unexpected error occurred during decoding: {ex.Message}");
                 }
             }
