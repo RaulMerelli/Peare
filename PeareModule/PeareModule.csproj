@@ -55,6 +55,9 @@
     <Compile Include="Resources\ModuleResources.cs" />
     <Compile Include="Resources\RT_ACCELTABLE\RT_ACCELTABLE.cs" />
     <Compile Include="Resources\RT_ACCELERATOR\RT_ACCELERATOR.cs" />
+    <Compile Include="Resources\RT_BITMAP\BITMAPFILEHEADER2.cs" />
+    <Compile Include="Resources\RT_BITMAP\BITMAPINFOHEADER2.cs" />
+    <Compile Include="Resources\RT_BITMAP\RGB2.cs" />
     <Compile Include="Resources\RT_BITMAP\RT_BITMAP.cs" />
     <Compile Include="Resources\RT_CURSOR\RT_CURSOR.cs" />
     <Compile Include="Resources\RT_DISPLAYINFO\RT_DISPLAYINFO.cs" />

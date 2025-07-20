@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 
 namespace PeareModule
 {
@@ -49,7 +50,7 @@ namespace PeareModule
 
                         byte[] bmpData = resData.Skip(bmpOffset).Take(nextBmpSize).ToArray();
 
-                        var bmp = Decode_BITMAP(bmpData);
+                        var bmp = Decode_BITMAP(bmpData, resData);
                         if (bmp != null)
                         {
                             imageDecoded = true;
@@ -86,7 +87,7 @@ namespace PeareModule
                 else
                 {
                     bool imageDecoded = false;
-                    Bitmap bmp = Decode_BITMAP(resData);
+                    Bitmap bmp = Decode_BITMAP(resData, resData);
                     if (bmp != null)
                     {
                         imageDecoded = true;
@@ -243,56 +244,72 @@ namespace PeareModule
             return bitmap;
         }
 
-        private static Bitmap Decode_BITMAP(byte[] resData)
+        private static Bitmap Decode_BITMAP(byte[] bmpData, byte[] resData)
         {
             try
             {
                 Console.Write("\r\n\r\nData found:\r\n");
-                ModuleResources.DumpRaw(resData);
+                ModuleResources.DumpRaw(bmpData);
 
-                var bmpOS2 = Decode_BITMAP_OS2_V1(resData);
+                var bmpOS2 = Decode_BITMAP_OS2_V1(bmpData, resData);
+                if (bmpOS2 != null)
+                    return bmpOS2;
+
+                bmpOS2 = Decode_BITMAP_OS2_ArrayPart(bmpData, resData);
+                if (bmpOS2 != null)
+                    return bmpOS2;
+
+                bmpOS2 = Decode_BITMAP_OS2_V2(bmpData); 
                 if (bmpOS2 != null)
                     return bmpOS2;
 
                 // Check if it's a full BMP file (starts with 'BM')
-                if (resData.Length >= 14 && resData[0] == 0x42 && resData[1] == 0x4D)
+                if (bmpData.Length >= 14 && bmpData[0] == 0x42 && bmpData[1] == 0x4D)
                 {
-                    uint bfOffBits = BitConverter.ToUInt32(resData, 10);
+                    uint bfOffBits = BitConverter.ToUInt32(bmpData, 10);
 
-                    if (bfOffBits <= resData.Length)
+                    if (bfOffBits <= bmpData.Length)
                     {
                         // Valid bfOffBits, try loading with GDI+
                         try
                         {
-                            using (MemoryStream ms = new MemoryStream(resData))
+                            using (MemoryStream ms = new MemoryStream(bmpData))
                                 return new Bitmap(ms);
                         }
                         catch
                         {
                             Console.WriteLine("[DEBUG] BMP header present but GDI+ failed to load. Will fallback.");
                             // Remove file header and proceed with DIB
-                            resData = resData.Skip(14).ToArray();
+                            bmpData = bmpData.Skip(14).ToArray();
                         }
                     }
                     else
                     {
                         Console.WriteLine("[DEBUG] BMP signature found but bfOffBits invalid. Treating as DIB.");
                         // Invalid bfOffBits, remove file header and proceed
-                        resData = resData.Skip(14).ToArray();
+                        bmpData = bmpData.Skip(14).ToArray();
                     }
                 }
 
                 // Try again after removing the BMP signature
-                bmpOS2 = Decode_BITMAP_OS2_V1(resData);
+                bmpOS2 = Decode_BITMAP_OS2_V1(bmpData, resData);
+                if (bmpOS2 != null)
+                    return bmpOS2;
+
+                bmpOS2 = Decode_BITMAP_OS2_ArrayPart(bmpData, resData);
+                if (bmpOS2 != null)
+                    return bmpOS2;
+
+                bmpOS2 = Decode_BITMAP_OS2_V2(bmpData);
                 if (bmpOS2 != null)
                     return bmpOS2;
 
                 // Windows-style DIB (BITMAPINFOHEADER)
                 try
                 {
-                    int biSize = BitConverter.ToInt32(resData, 0);
+                    int biSize = BitConverter.ToInt32(bmpData, 0);
                     int bfOffBits = 14 + biSize;
-                    int bfSize = bfOffBits + resData.Length - biSize;
+                    int bfSize = bfOffBits + bmpData.Length - biSize;
 
                     using (MemoryStream ms = new MemoryStream())
                     using (BinaryWriter bw = new BinaryWriter(ms))
@@ -302,7 +319,7 @@ namespace PeareModule
                         bw.Write((ushort)0);
                         bw.Write((ushort)0);
                         bw.Write((uint)bfOffBits);
-                        bw.Write(resData);
+                        bw.Write(bmpData);
                         ms.Position = 0;
                         return new Bitmap(ms);
                     }
@@ -452,22 +469,332 @@ namespace PeareModule
             }
         }
 
-        private static Bitmap Decode_BITMAP_OS2_V1(byte[] data)
+        private static Bitmap Decode_BITMAP_OS2_V2(byte[] data)
+        {
+            if (data == null || data.Length < Marshal.SizeOf(typeof(BITMAPFILEHEADER2)))
+            {
+                Console.WriteLine("Error: Invalid or incomplete bitmap data.");
+                return null;
+            }
+
+            // Pin the byte array to get a stable pointer for marshalling
+            GCHandle handle = GCHandle.Alloc(data, GCHandleType.Pinned);
+            try
+            {
+                ushort BFT_BMAP = 0x4D42; // 'BM'
+                IntPtr dataPtr = handle.AddrOfPinnedObject();
+
+                // Read BITMAPFILEHEADER2
+                BITMAPFILEHEADER2 bfh2 = (BITMAPFILEHEADER2)Marshal.PtrToStructure(dataPtr, typeof(BITMAPFILEHEADER2));
+
+                // Check usType to ensure it's a valid bitmap file
+                if (bfh2.usType != BFT_BMAP)
+                {
+                    Console.WriteLine($"Error: Invalid bitmap type. Expected {BFT_BMAP:X}, got {bfh2.usType:X}.");
+                    return null;
+                }
+
+                // Locate BITMAPINFOHEADER2, which immediately follows BITMAPFILEHEADER2
+                IntPtr bih2Ptr = IntPtr.Add(dataPtr, Marshal.SizeOf(typeof(BITMAPFILEHEADER2)) - Marshal.SizeOf(typeof(BITMAPINFOHEADER2))); // Adjust for the bmp2 field being part of bfh2 semantically
+
+                // Read BITMAPINFOHEADER2. We need to be careful with cbFix as it might indicate a truncated header.
+                BITMAPINFOHEADER2 bih2_partial = (BITMAPINFOHEADER2)Marshal.PtrToStructure(bih2Ptr, typeof(BITMAPINFOHEADER2));
+
+                // Determine the actual size of BITMAPINFOHEADER2 based on cbFix
+                int bih2Size = (int)bih2_partial.cbFix;
+                if (bih2Size > Marshal.SizeOf(typeof(BITMAPINFOHEADER2)))
+                {
+                    // If cbFix is larger than the standard structure, it's malformed or contains undocumented fields.
+                    // For this implementation, we'll only read up to the defined BITMAPINFOHEADER2.
+                    // A more robust solution might read only 'cbFix' bytes.
+                    Console.WriteLine($"Warning: cbFix ({bih2_partial.cbFix}) indicates a larger BITMAPINFOHEADER2 than expected. Reading standard size.");
+                    bih2Size = Marshal.SizeOf(typeof(BITMAPINFOHEADER2));
+                }
+                else if (bih2Size < Marshal.SizeOf(typeof(BITMAPINFOHEADER2)) && bih2Size < 16) // Minimum valid size for essential fields
+                {
+                    Console.WriteLine($"Error: cbFix ({bih2_partial.cbFix}) is too small for a valid BITMAPINFOHEADER2.");
+                    return null;
+                }
+                else if (bih2Size == 0)
+                {
+                    // As per editor's note, if cbFix is 0, it might mean the full header is present.
+                    // However, the spec also says it should be set to sizeof(BITMAPINFOHEADER2).
+                    // Let's assume for now if it's 0, it means the full size.
+                    // A more accurate interpretation would be to check if the essential fields are there.
+                    Console.WriteLine("Warning: cbFix is zero. Assuming full BITMAPINFOHEADER2 size.");
+                    bih2Size = Marshal.SizeOf(typeof(BITMAPINFOHEADER2));
+                }
+
+                // Re-read the full (or standard) BITMAPINFOHEADER2 based on the determined size
+                BITMAPINFOHEADER2 bih2 = new BITMAPINFOHEADER2();
+                IntPtr tempBih2Ptr = Marshal.AllocHGlobal(bih2Size);
+                try
+                {
+                    Marshal.Copy(data, (int)((int)bih2Ptr - (int)dataPtr), tempBih2Ptr, bih2Size);
+                    bih2 = (BITMAPINFOHEADER2)Marshal.PtrToStructure(tempBih2Ptr, typeof(BITMAPINFOHEADER2));
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(tempBih2Ptr);
+                }
+
+                // Determine color table size and locate it
+                int numColors;
+                int bitCount = bih2.cBitCount;
+
+                if (bitCount != 24)
+                {
+                    numColors = (int)bih2.cclrUsed;
+                    if (numColors == 0)
+                    {
+                        // If cclrUsed is 0, it's assumed to be full-length (2^n entries)
+                        numColors = 1 << bitCount;
+                    }
+                }
+                else
+                {
+                    // For 24-bit bitmaps, cclrUsed specifies the exact number of colors in the table.
+                    // If cclrUsed is 0, there is no color table.
+                    numColors = (int)bih2.cclrUsed;
+                }
+
+                int colorTableSize = numColors * Marshal.SizeOf(typeof(RGB2));
+                IntPtr colorTablePtr = IntPtr.Add(bih2Ptr, (int)bih2.cbFix); // Color table immediately follows BITMAPINFOHEADER2 (or its specified length)
+
+
+                // Locate pel data
+                IntPtr pelDataPtr = IntPtr.Add(dataPtr, (int)bfh2.offBits);
+
+                // Basic validation for pointers
+                if (pelDataPtr.ToInt64() + bih2.cbImage > dataPtr.ToInt64() + data.Length && bih2.ulCompression == 0)
+                {
+                    Console.WriteLine("Error: Pel data goes beyond the end of the file.");
+                    return null;
+                }
+
+                // Create Bitmap object
+                PixelFormat pixelFormat;
+                switch (bitCount)
+                {
+                    case 1:
+                        pixelFormat = PixelFormat.Format1bppIndexed;
+                        break;
+                    case 4:
+                        pixelFormat = PixelFormat.Format4bppIndexed;
+                        break;
+                    case 8:
+                        pixelFormat = PixelFormat.Format8bppIndexed;
+                        break;
+                    case 24:
+                        pixelFormat = PixelFormat.Format24bppRgb;
+                        break;
+                    default:
+                        Console.WriteLine($"Error: Unsupported bit depth: {bitCount}.");
+                        return null;
+                }
+
+                Bitmap bitmap = new Bitmap((int)bih2.cx, (int)bih2.cy, pixelFormat);
+
+                // Set color palette for indexed formats
+                if (pixelFormat == PixelFormat.Format1bppIndexed ||
+                    pixelFormat == PixelFormat.Format4bppIndexed ||
+                    pixelFormat == PixelFormat.Format8bppIndexed)
+                {
+                    ColorPalette palette = bitmap.Palette;
+                    for (int i = 0; i < numColors; i++)
+                    {
+                        RGB2 rgb2 = (RGB2)Marshal.PtrToStructure(IntPtr.Add(colorTablePtr, i * Marshal.SizeOf(typeof(RGB2))), typeof(RGB2));
+                        palette.Entries[i] = Color.FromArgb(rgb2.bRed, rgb2.bGreen, rgb2.bBlue);
+                    }
+                    bitmap.Palette = palette;
+                }
+
+                // Copy pel data
+                BitmapData bmpData = bitmap.LockBits(
+                    new Rectangle(0, 0, (int)bih2.cx, (int)bih2.cy),
+                    ImageLockMode.WriteOnly,
+                    pixelFormat);
+
+                int bytesPerPixel = (bitCount + 7) / 8; // Calculate bytes per pixel
+                int stride = (int)bih2.cx * bytesPerPixel;
+                int paddedStride = (stride + 3) & ~3; // Each row padded to nearest doubleword boundary (4 bytes)
+
+                // OS/2 bitmaps are typically bottom-up (BRA_BOTTOMUP).
+                // GDI+ Bitmaps are also typically bottom-up.
+                // If the bitmap is top-down, it would need to be flipped.
+                // The spec mentions usRecording = BRA_BOTTOMUP (default).
+                // We assume BRA_BOTTOMUP and copy rows directly.
+
+                for (int y = 0; y < bih2.cy; y++)
+                {
+                    // In OS/2, the first row of pel data is the bottom row of the image (BRA_BOTTOMUP).
+                    // System.Drawing.Bitmap also expects bottom-up data for the LockBits Scan0.
+                    // So, we copy directly from the source's bottom-up order to the destination's bottom-up order.
+                    // The (bih2.cy - 1 - y) maps the logical top-down row 'y' to the physical bottom-up row index.
+                    // However, LockBits provides Scan0 pointing to the first row of the bitmap buffer,
+                    // which often corresponds to the top row in terms of pixel display if you're writing top-down.
+                    // But since OS/2 is bottom-up and .NET BitmapData is also typically treated bottom-up
+                    // (Scan0 points to the start of the bitmap memory, which for a bottom-up image is the bottom-left pixel),
+                    // we copy from the *bottom* of the source data to the *bottom* of the destination data.
+                    // Or, more simply, we copy the first row of OS/2 data (bottom row of image) to the first row of BitmapData buffer.
+
+                    IntPtr sourceRowPtr = IntPtr.Add(pelDataPtr, (int)((bih2.cy - 1 - y) * paddedStride));
+                    IntPtr destRowPtr = IntPtr.Add(bmpData.Scan0, (int)(y * bmpData.Stride));
+
+                    // Handle 24-bit separately due to BGR vs RGB
+                    if (bitCount == 24)
+                    {
+                        // OS/2 is BGR, System.Drawing.Bitmap is RGB. Need to swap R and B.
+                        byte[] rowBytes = new byte[stride];
+                        Marshal.Copy(sourceRowPtr, rowBytes, 0, stride);
+
+                        for (int x = 0; x < stride; x += 3)
+                        {
+                            byte temp = rowBytes[x]; // Blue
+                            rowBytes[x] = rowBytes[x + 2]; // Blue = Red
+                            rowBytes[x + 2] = temp; // Red = Old Blue
+                        }
+                        Marshal.Copy(rowBytes, 0, destRowPtr, stride);
+                    }
+                    else
+                    {
+                        // For indexed colors, no swapping needed, just copy
+                        // Copy only the actual image data for the row, not the padding
+                        Marshal.Copy(sourceRowPtr, data, (int)((int)sourceRowPtr - (int)dataPtr), stride); // Copy from original data array
+                        Marshal.Copy(data, (int)((int)sourceRowPtr - (int)dataPtr), destRowPtr, stride); // Copy to bitmap data
+                    }
+                }
+
+                bitmap.UnlockBits(bmpData);
+                return bitmap;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An error occurred during bitmap decoding: {ex.Message}");
+                return null;
+            }
+            finally
+            {
+                if (handle.IsAllocated)
+                {
+                    handle.Free();
+                }
+            }
+        }
+
+        private static Bitmap Decode_BITMAP_OS2_ArrayPart(byte[] bmpData, byte[] resData)
         {
             try
             {
-                // OS/2 V1 header is 12 bytes long
+                if (bmpData.Length < 14 || !(bmpData[0] == 0x42 && bmpData[1] == 0x4D))
+                {
+                    Console.WriteLine($"[DEBUG] Decode_BITMAP_OS2_V1_Alt: Not a bitmap.");
+                    return null;
+                }
+                int offset = 14;
+
+                uint bcSize = BitConverter.ToUInt32(bmpData, offset + 0);
+                ushort width = BitConverter.ToUInt16(bmpData, offset + 4);
+                ushort height = BitConverter.ToUInt16(bmpData, offset + 6);
+                ushort planes = BitConverter.ToUInt16(bmpData, offset + 8);
+                ushort bitCount = BitConverter.ToUInt16(bmpData, offset + 10);
+
+                // Validate planes (always 1 for standard bitmaps)
+                if (planes != 1)
+                {
+                    Console.WriteLine("[DEBUG] Decode_BITMAP_OS2_V1_Alt: Unsupported planes count: " + planes);
+                    return null;
+                }
+
+                // --- Calculate Palette Information ---
+                int numColors = 0;
+                if (bitCount <= 8) // Indexed color formats (1, 4, 8 bpp)
+                {
+                    numColors = 1 << bitCount;
+                }
+                else if (bitCount == 24) // 24-bit has no palette 
+                {
+                    numColors = 0;
+                }
+                else
+                {
+                    Console.WriteLine($"[DEBUG] Decode_BITMAP_OS2_V1_Alt: Unsupported bit depth: {bitCount}");
+                    return null;
+                }
+
+                int paletteOffsetFromBCHStart = offset + (int)bcSize;
+                int paletteSize = numColors * 3; // OS/2 palettes use 3 bytes (BGR) per entry
+
+                // Check 'data' length for palette. 'data' contains BCH and palette.
+                if (numColors > 0 && bmpData.Length < paletteOffsetFromBCHStart + paletteSize)
+                {
+                    Console.WriteLine("[DEBUG] Decode_BITMAP_OS2_V1_Alt: 'data' (BCH + palette) too short for full palette.");
+                    return null;
+                }
+
+                Color[] palette = null;
+                if (numColors > 0)
+                {
+                    palette = new Color[numColors];
+                    for (int i = 0; i < numColors; i++)
+                    {
+                        // Read palette entries from the 'data' array
+                        byte b = bmpData[paletteOffsetFromBCHStart + i * 3 + 0];
+                        byte g = bmpData[paletteOffsetFromBCHStart + i * 3 + 1];
+                        byte r = bmpData[paletteOffsetFromBCHStart + i * 3 + 2];
+                        palette[i] = Color.FromArgb(r, g, b); // OS/2 is BGR, System.Drawing is RGB
+                    }
+                }
+
+                // --- Locate Pixel Data in 'resData' ---
+                if (resData.Length < 14) // Ensure resData has at least the full BITMAPFILEHEADER
+                {
+                    Console.WriteLine("[DEBUG] Decode_BITMAP_OS2_V1_Alt: 'resData' too short to read BITMAPFILEHEADER.");
+                    return null;
+                }
+                uint bfOffBits = BitConverter.ToUInt16(bmpData, 10); 
+
+                // Calculate expected size of pixel data
+                int bitsPerLine = width * bitCount;
+                int stride = ((bitsPerLine + 31) / 32) * 4; // Scanline padded to 4-byte boundary
+                int totalPixelBytes = stride * height;
+
+                // Ensure 'resData' is large enough to contain the pixel data
+                if (resData.Length < bfOffBits + (long)totalPixelBytes)
+                {
+                    Console.WriteLine($"[DEBUG] Decode_BITMAP_OS2_V1_Alt: 'resData' too short for pixel data. Expected {bfOffBits + totalPixelBytes}, got {resData.Length}.");
+                    return null;
+                }
+
+                // Extract the pixel data into a new array from 'resData'.
+                byte[] bitmapData = new byte[totalPixelBytes];
+                Array.Copy(resData, (int)bfOffBits, bitmapData, 0, totalPixelBytes);
+
+                return GenerateBitmapFromData(bitmapData, null, width, height, bitCount, palette);
+            }
+            catch (Exception ex)
+            {
+                // Re-using original debug message structure
+                Console.WriteLine("[DEBUG] TryParseOS2V1 failed: " + ex.Message);
+                return null;
+            }
+        }
+
+        private static Bitmap Decode_BITMAP_OS2_V1(byte[] data, byte[] resData)
+        {
+            try
+            {
                 if (data.Length < 12)
                     return null;
 
-                ushort bcSize = BitConverter.ToUInt16(data, 0);
-                if (bcSize != 12)
-                    return null;
-
-                ushort width = BitConverter.ToUInt16(data, 2);
-                ushort height = BitConverter.ToUInt16(data, 4);
-                ushort planes = BitConverter.ToUInt16(data, 6);
-                ushort bitCount = BitConverter.ToUInt16(data, 8);
+                ushort bcSize = BitConverter.ToUInt16(data, 10);
+                ushort width = BitConverter.ToUInt16(data, 14);
+                ushort height = BitConverter.ToUInt16(data, 16);
+                ushort planes = BitConverter.ToUInt16(data, 18);
+                ushort bitCount = BitConverter.ToUInt16(data, 20);
+                int numColors = 1 << bitCount;
+                int paletteSize = numColors * 3; // 3 bytes per color (RGB)
+                int paletteOffset = bcSize - paletteSize;
 
                 if (planes != 1 || (bitCount != 1 && bitCount != 4 && bitCount != 8))
                 {
@@ -475,13 +802,9 @@ namespace PeareModule
                     return null;
                 }
 
-                int numColors = 1 << bitCount;
-                int paletteOffset = 12;
-                int paletteSize = numColors * 3;
-
                 if (data.Length < paletteOffset + paletteSize)
                 {
-                    Console.WriteLine("[DEBUG] Data too short for palette");
+                    Console.WriteLine("[DEBUG] Data too short for palette (header size: {0})", bcSize);
                     return null;
                 }
 
@@ -495,18 +818,16 @@ namespace PeareModule
                 }
 
                 int pixelOffset = paletteOffset + paletteSize;
-
                 int bitsPerLine = width * bitCount;
-                int stride = ((bitsPerLine + 31) / 32) * 4;
+                int stride = ((bitsPerLine + 31) / 32) * 4; // Scanline padded to 4-byte boundary
 
                 int totalPixelBytes = stride * height;
                 if (data.Length < pixelOffset + totalPixelBytes)
                 {
-                    Console.WriteLine("[DEBUG] Data too short for pixel rows");
+                    Console.WriteLine("[DEBUG] Data too short for pixel rows (header size: {0})", bcSize);
                     return null;
                 }
 
-                // Estraggo solo la porzione bitmap "pulita" da passare
                 byte[] bitmapData = new byte[totalPixelBytes];
                 Array.Copy(data, pixelOffset, bitmapData, 0, totalPixelBytes);
 
