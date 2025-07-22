@@ -40,7 +40,8 @@ namespace PeareModule
             int offset = 0;
             bool isUnicode = properties.headerType == ModuleResources.HeaderType.PE;
 
-            if ((properties.headerType == ModuleResources.HeaderType.NE && properties.versionType == ModuleResources.VersionType.OS2) || 
+            if ((properties.headerType == ModuleResources.HeaderType.LE && properties.versionType == ModuleResources.VersionType.OS2) || 
+                (properties.headerType == ModuleResources.HeaderType.NE && properties.versionType == ModuleResources.VersionType.OS2) || 
                 properties.headerType == ModuleResources.HeaderType.LX)
             {
                 // Structure is different for OS/2

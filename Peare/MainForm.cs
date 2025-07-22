@@ -30,7 +30,7 @@ namespace Peare
             // This function needs to be updated to include LE and LX
 
             // Separeted extensions list
-            string[] peExtArray = new string[] { "exe", "dll", "sys", "ocx", "cpl", "scr", "drv", "ax", "efi", "mui", "tlb", "acm", "spl", "sct", "wll", "xll", "fll", "pyd", "bpl", "msstyles" };
+            string[] peExtArray = new string[] { "exe", "dll", "sys", "ocx", "cpl", "scr", "drv", "ax", "efi", "mui", "tlb", "acm", "spl", "sct", "wll", "xll", "fll", "pyd", "bpl", "ifs", "msstyles" };
             string[] neExtArray = new string[] { "exe", "dll", "drv", "386", "vxd", "fon" };
 
             // Build string filter with *.

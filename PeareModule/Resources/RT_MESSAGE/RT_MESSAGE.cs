@@ -41,7 +41,8 @@ namespace PeareModule
 
             int offset = 0; // Current read position in the 'data' array
 
-            if ((properties.headerType == ModuleResources.HeaderType.NE && properties.versionType == ModuleResources.VersionType.OS2) ||
+            if ((properties.headerType == ModuleResources.HeaderType.LE && properties.versionType == ModuleResources.VersionType.OS2) || 
+                (properties.headerType == ModuleResources.HeaderType.NE && properties.versionType == ModuleResources.VersionType.OS2) ||
                 properties.headerType == ModuleResources.HeaderType.LX)
             {
                 // First two bytes in OS/2 are the codepage

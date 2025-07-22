@@ -161,13 +161,8 @@ namespace PeareModule
                 using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read))
                 using (var br = new BinaryReader(fs))
                 {
-                    // 1. Verify MZ
+                    // 1. Verify if is MZ
                     ushort mzSignature = br.ReadUInt16();
-                    if (mzSignature != 0x5A4D) // "MZ"
-                    {
-                        result.Description = "Not an executable (no MZ header)";
-                        return result;
-                    }
 
                     // 2. Go to offset 0x3C in order to find the extended header offset
                     fs.Seek(0x3C, SeekOrigin.Begin);
@@ -175,9 +170,17 @@ namespace PeareModule
 
                     if (headerOffset + 2 > fs.Length)
                     {
-                        result.headerType = HeaderType.MZonly;
-                        result.Description = "MZ with invalid secondary header";
-                        return result;
+                        if (mzSignature == 0x5A4D)
+                        {
+                            result.headerType = HeaderType.MZonly;
+                            result.Description = "MZ with invalid secondary header";
+                            return result;
+                        }
+                        else
+                        {
+                            result.Description = "Not an executable (no MZ header)";
+                            return result;
+                        }
                     }
 
                     // 3. Go to extended header and read the signature
@@ -256,33 +259,36 @@ namespace PeareModule
                         return result;
                     }
 
-                    result.headerType = HeaderType.MZonly;
+                    if (mzSignature == 0x5A4D)
+                    {
+                        result.headerType = HeaderType.MZonly;
 
-                    // 4. Search for typical packer signatures
-                    fs.Seek(0, SeekOrigin.Begin);
-                    byte[] fullData = br.ReadBytes((int)Math.Min(fs.Length, 4096)); // max 4 KB 
+                        // 4. Search for typical packer signatures
+                        fs.Seek(0, SeekOrigin.Begin);
+                        byte[] fullData = br.ReadBytes((int)Math.Min(fs.Length, 4096)); // max 4 KB 
 
-                    string fullText = System.Text.Encoding.ASCII.GetString(fullData);
+                        string fullText = System.Text.Encoding.ASCII.GetString(fullData);
 
-                    if (fullText.Contains("UPX!"))
-                    {
-                        result.Description = "MZ (possibly packed with UPX)";
-                    }
-                    else if (fullText.Contains("PKLITE"))
-                    {
-                        result.Description = "MZ (possibly packed with PKLITE)";
-                    }
-                    else if(fullText.Contains("LZ91") || fullText.Contains("LZEXE"))
-                    {
-                        result.Description = "MZ (possibly packed with LZEXE)";
-                    }
-                    else if(fullText.Contains("EXEPACK"))
-                    {
-                        result.Description = "MZ (possibly packed with EXEPACK)";
-                    }
-                    else
-                    {
-                        result.Description = "MZ without known secondary header (maybe plain DOS MZ or unknown packer)";
+                        if (fullText.Contains("UPX!"))
+                        {
+                            result.Description = "MZ (possibly packed with UPX)";
+                        }
+                        else if (fullText.Contains("PKLITE"))
+                        {
+                            result.Description = "MZ (possibly packed with PKLITE)";
+                        }
+                        else if (fullText.Contains("LZ91") || fullText.Contains("LZEXE"))
+                        {
+                            result.Description = "MZ (possibly packed with LZEXE)";
+                        }
+                        else if (fullText.Contains("EXEPACK"))
+                        {
+                            result.Description = "MZ (possibly packed with EXEPACK)";
+                        }
+                        else
+                        {
+                            result.Description = "MZ without known secondary header (maybe plain DOS MZ or unknown packer)";
+                        }
                     }
                 }
             }

@@ -112,10 +112,17 @@ namespace PeareModule
                 return bmp;
             }
 
-            bmp = Decode_RT_POINTER(data, fullData);
+            bmp = Decode_RT_POINTER_V1(data, fullData);
             if (bmp != null)
             {
                 Console.WriteLine("Data was pointer. Decoded with Decode_RT_POINTER.");
+                return bmp;
+            }
+
+            bmp = Decode_RT_POINTER_V2(data, fullData);
+            if (bmp != null)
+            {
+                Console.WriteLine("Data was pointer. Decoded with Decode_RT_POINTER_V2.");
                 return bmp;
             }
 
@@ -272,7 +279,7 @@ namespace PeareModule
                     return bmpOS2;
                 }
 
-                bmpOS2 = Decode_BITMAP_OS2_V2(bmpData);
+                bmpOS2 = Decode_BITMAP_OS2_V2(bmpData, resData);
                 if (bmpOS2 != null)
                 {
                     Console.WriteLine("Data was bitmap. Decoded with Decode_BITMAP_OS2_V2.");
@@ -327,7 +334,7 @@ namespace PeareModule
                     return bmpOS2;
                 }
 
-                bmpOS2 = Decode_BITMAP_OS2_V2(bmpData);
+                bmpOS2 = Decode_BITMAP_OS2_V2(bmpData, resData);
                 if (bmpOS2 != null)
                 {
                     Console.WriteLine($"Data was bitmap. Decoded {dataStripped}with Decode_BITMAP_OS2_V2.");
@@ -369,7 +376,7 @@ namespace PeareModule
             }
         }
 
-        private static Bitmap Decode_RT_POINTER(byte[] CIresData, byte[] bitmapArray)
+        private static Bitmap Decode_RT_POINTER_V1(byte[] CIresData, byte[] bitmapArray)
         {
             using (var ms = new MemoryStream(CIresData))
             using (var reader = new BinaryReader(ms))
@@ -500,217 +507,273 @@ namespace PeareModule
             }
         }
 
-        private static Bitmap Decode_BITMAP_OS2_V2(byte[] data)
+        private static Bitmap Decode_RT_POINTER_V2(byte[] CIresData, byte[] bitmapArray)
         {
-            if (data == null || data.Length < Marshal.SizeOf(typeof(BITMAPFILEHEADER2)))
+            using (var ms = new MemoryStream(CIresData))
+            using (var reader = new BinaryReader(ms))
             {
-                Console.WriteLine("Error: Invalid or incomplete bitmap data.");
-                return null;
-            }
-
-            // Pin the byte array to get a stable pointer for marshalling
-            GCHandle handle = GCHandle.Alloc(data, GCHandleType.Pinned);
-            try
-            {
-                ushort BFT_BMAP = 0x4D42; // 'BM'
-                IntPtr dataPtr = handle.AddrOfPinnedObject();
-
-                // Read BITMAPFILEHEADER2
-                BITMAPFILEHEADER2 bfh2 = (BITMAPFILEHEADER2)Marshal.PtrToStructure(dataPtr, typeof(BITMAPFILEHEADER2));
-
-                // Check usType to ensure it's a valid bitmap file
-                if (bfh2.usType != BFT_BMAP)
+                // "CI", "IC", "CP", "PT" are basically the same format, for a different use.
+                // The main difference is that the bitmap data block might be missing and
+                // there is only the first block (mask) that contains also the bitmap data.
+                // IC icon (OS/2 1.x)
+                // CI icon (OS/2 2.x+)
+                // PT pointer
+                ushort header = reader.ReadUInt16();
+                if (header != 0x4943 && header != 0x4349 && header != 0x5043 && header != 0x5450)
                 {
-                    Console.WriteLine($"Error: Invalid bitmap type. Expected {BFT_BMAP:X}, got {bfh2.usType:X}.");
                     return null;
                 }
 
-                // Locate BITMAPINFOHEADER2, which immediately follows BITMAPFILEHEADER2
-                IntPtr bih2Ptr = IntPtr.Add(dataPtr, Marshal.SizeOf(typeof(BITMAPFILEHEADER2)) - Marshal.SizeOf(typeof(BITMAPINFOHEADER2))); // Adjust for the bmp2 field being part of bfh2 semantically
+                // Skip fileSize and read hotspot and bitmapOffset for the mask
+                _ = reader.ReadUInt32(); // fileSize (total size of the resource)
+                ushort xHotspotMask = reader.ReadUInt16(); // xHotspot
+                ushort yHotspotMask = reader.ReadUInt16(); // yHotspot
+                uint bitmapOffsetMask = reader.ReadUInt32(); // Offset to the actual bitmap data (for the mask)
 
-                // Read BITMAPINFOHEADER2. We need to be careful with cbFix as it might indicate a truncated header.
-                BITMAPINFOHEADER2 bih2_partial = (BITMAPINFOHEADER2)Marshal.PtrToStructure(bih2Ptr, typeof(BITMAPINFOHEADER2));
+                // Read BITMAPINFOHEADER2 for the mask
+                int maskInfoOffset = (int)reader.BaseStream.Position; // Current position is the start of BITMAPINFOHEADER2
+                uint cbFixMask = reader.ReadUInt32();
+                uint widthMask = reader.ReadUInt32();
+                uint heightMask = reader.ReadUInt32(); // This height is typically double the actual height for icons/pointers (mask + image)
+                ushort planesMask = reader.ReadUInt16();
+                ushort bppMask = reader.ReadUInt16(); // Should be 1 bpp for the mask
+                _ = reader.ReadUInt32(); // ulCompression (should be 0 for uncompressed)
+                uint cbImageMask = reader.ReadUInt32(); // Size of the raw pixel data for mask
+                _ = reader.ReadUInt32(); // xpelsPerMeter
+                _ = reader.ReadUInt32(); // ypelsPerMeter
+                uint cclrUsedMask = reader.ReadUInt32(); // Number of colors in the color table (for mask, usually 2 for black/white)
+                _ = reader.ReadUInt32(); // clrImportant
 
-                // Determine the actual size of BITMAPINFOHEADER2 based on cbFix
-                int bih2Size = (int)bih2_partial.cbFix;
-                if (bih2Size > Marshal.SizeOf(typeof(BITMAPINFOHEADER2)))
+                // Validate mask properties
+                if (planesMask != 1 || bppMask != 1) // Mask should typically be 1 bpp and 1 plane
                 {
-                    // If cbFix is larger than the standard structure, it's malformed or contains undocumented fields.
-                    // For this implementation, we'll only read up to the defined BITMAPINFOHEADER2.
-                    // A more robust solution might read only 'cbFix' bytes.
-                    Console.WriteLine($"Warning: cbFix ({bih2_partial.cbFix}) indicates a larger BITMAPINFOHEADER2 than expected. Reading standard size.");
-                    bih2Size = Marshal.SizeOf(typeof(BITMAPINFOHEADER2));
-                }
-                else if (bih2Size < Marshal.SizeOf(typeof(BITMAPINFOHEADER2)) && bih2Size < 16) // Minimum valid size for essential fields
-                {
-                    Console.WriteLine($"Error: cbFix ({bih2_partial.cbFix}) is too small for a valid BITMAPINFOHEADER2.");
-                    return null;
-                }
-                else if (bih2Size == 0)
-                {
-                    // As per editor's note, if cbFix is 0, it might mean the full header is present.
-                    // However, the spec also says it should be set to sizeof(BITMAPINFOHEADER2).
-                    // Let's assume for now if it's 0, it means the full size.
-                    // A more accurate interpretation would be to check if the essential fields are there.
-                    Console.WriteLine("Warning: cbFix is zero. Assuming full BITMAPINFOHEADER2 size.");
-                    bih2Size = Marshal.SizeOf(typeof(BITMAPINFOHEADER2));
+                    Console.WriteLine("Warning: Mask properties unexpected (planes != 1 or bpp != 1). Attempting to proceed.");
+                    // return null; // Or handle more gracefully
                 }
 
-                // Re-read the full (or standard) BITMAPINFOHEADER2 based on the determined size
-                BITMAPINFOHEADER2 bih2 = new BITMAPINFOHEADER2();
-                IntPtr tempBih2Ptr = Marshal.AllocHGlobal(bih2Size);
-                try
+                // Determine the number of colors in the palette for the mask
+                int numColorsMask = (int)(cclrUsedMask != 0 ? (int)cclrUsedMask : (1 << (bppMask * planesMask)));
+                if (numColorsMask == 0) numColorsMask = 2; // For 1bpp, at least 2 colors (black/white)
+
+                int colorTableOffsetMask = 14 + (int)cbFixMask;
+                ms.Seek(colorTableOffsetMask, SeekOrigin.Begin);
+
+                // --- COLOR PALETTE for the mask ---
+                var paletteMask = new Color[numColorsMask];
+                for (int i = 0; i < numColorsMask; i++)
                 {
-                    Marshal.Copy(data, (int)((int)bih2Ptr - (int)dataPtr), tempBih2Ptr, bih2Size);
-                    bih2 = (BITMAPINFOHEADER2)Marshal.PtrToStructure(tempBih2Ptr, typeof(BITMAPINFOHEADER2));
-                }
-                finally
-                {
-                    Marshal.FreeHGlobal(tempBih2Ptr);
+                    // RGB2 structure: BYTE bBlue, BYTE bGreen, BYTE bRed, BYTE fcOptions
+                    byte blue = reader.ReadByte();
+                    byte green = reader.ReadByte();
+                    byte red = reader.ReadByte();
+                    _ = reader.ReadByte(); // fcOptions - not used for color representation
+                    paletteMask[i] = Color.FromArgb(red, green, blue);
                 }
 
-                // Determine color table size and locate it
-                int numColors;
-                int bitCount = bih2.cBitCount;
-
-                if (bitCount != 24)
+                // --- Second block (color image) ---
+                if (reader.BaseStream.Position + 2 <= reader.BaseStream.Length && reader.ReadUInt16() == header)
                 {
-                    numColors = (int)bih2.cclrUsed;
-                    if (numColors == 0)
+                    // Second block found! This is the actual color image data.
+                    _ = reader.ReadUInt32(); // fileSize
+                    ushort xHotspot = reader.ReadUInt16();
+                    ushort yHotspot = reader.ReadUInt16();
+                    uint bitmapOffset = reader.ReadUInt32(); // Offset to the actual bitmap data (for the color image)
+
+                    // Read BITMAPINFOHEADER2 for the color image
+                    int colorInfoOffset = (int)reader.BaseStream.Position;
+                    uint cbFix = reader.ReadUInt32();
+                    uint width = reader.ReadUInt32();
+                    uint height = reader.ReadUInt32(); // This should be the actual height
+                    ushort planes = reader.ReadUInt16();
+                    ushort bpp = reader.ReadUInt16();
+                    _ = reader.ReadUInt32(); // ulCompression
+                    uint cbImage = reader.ReadUInt32(); // Size of the raw pixel data for color image
+                    _ = reader.ReadUInt32(); // xpelsPerMeter
+                    _ = reader.ReadUInt32(); // ypelsPerMeter
+                    uint cclrUsed = reader.ReadUInt32(); // Number of colors in the color table
+                    _ = reader.ReadUInt32(); // clrImportant
+
+                    // Validate color image properties
+                    if (planes != 1 || (bpp != 1 && bpp != 4 && bpp != 8 && bpp != 24)) // Pointers can be 1, 4, 8, 24 bpp
                     {
-                        // If cclrUsed is 0, it's assumed to be full-length (2^n entries)
-                        numColors = 1 << bitCount;
+                        return null; // Unsupported color format
                     }
-                }
-                else
-                {
-                    // For 24-bit bitmaps, cclrUsed specifies the exact number of colors in the table.
-                    // If cclrUsed is 0, there is no color table.
-                    numColors = (int)bih2.cclrUsed;
-                }
+                    int numColors = (int)(cclrUsed != 0 ? (int)cclrUsed : (1 << (bpp * planes)));
+                    if (bpp == 24) numColors = 0; // 24-bit images usually don't have a palette
 
-                int colorTableSize = numColors * Marshal.SizeOf(typeof(RGB2));
-                IntPtr colorTablePtr = IntPtr.Add(bih2Ptr, (int)bih2.cbFix); // Color table immediately follows BITMAPINFOHEADER2 (or its specified length)
+                    int colorTableOffset = colorInfoOffset + (int)cbFix;
+                    ms.Seek(colorTableOffset, SeekOrigin.Begin);
 
-
-                // Locate pel data
-                IntPtr pelDataPtr = IntPtr.Add(dataPtr, (int)bfh2.offBits);
-
-                // Basic validation for pointers
-                if (pelDataPtr.ToInt64() + bih2.cbImage > dataPtr.ToInt64() + data.Length && bih2.ulCompression == 0)
-                {
-                    Console.WriteLine("Error: Pel data goes beyond the end of the file.");
-                    return null;
-                }
-
-                // Create Bitmap object
-                PixelFormat pixelFormat;
-                switch (bitCount)
-                {
-                    case 1:
-                        pixelFormat = PixelFormat.Format1bppIndexed;
-                        break;
-                    case 4:
-                        pixelFormat = PixelFormat.Format4bppIndexed;
-                        break;
-                    case 8:
-                        pixelFormat = PixelFormat.Format8bppIndexed;
-                        break;
-                    case 24:
-                        pixelFormat = PixelFormat.Format24bppRgb;
-                        break;
-                    default:
-                        Console.WriteLine($"Error: Unsupported bit depth: {bitCount}.");
-                        return null;
-                }
-
-                Bitmap bitmap = new Bitmap((int)bih2.cx, (int)bih2.cy, pixelFormat);
-
-                // Set color palette for indexed formats
-                if (pixelFormat == PixelFormat.Format1bppIndexed ||
-                    pixelFormat == PixelFormat.Format4bppIndexed ||
-                    pixelFormat == PixelFormat.Format8bppIndexed)
-                {
-                    ColorPalette palette = bitmap.Palette;
+                    // --- COLOR PALETTE for the color image ---
+                    var palette = new Color[numColors];
                     for (int i = 0; i < numColors; i++)
                     {
-                        RGB2 rgb2 = (RGB2)Marshal.PtrToStructure(IntPtr.Add(colorTablePtr, i * Marshal.SizeOf(typeof(RGB2))), typeof(RGB2));
-                        palette.Entries[i] = Color.FromArgb(rgb2.bRed, rgb2.bGreen, rgb2.bBlue);
+                        byte blue = reader.ReadByte();
+                        byte green = reader.ReadByte();
+                        byte red = reader.ReadByte();
+                        _ = reader.ReadByte(); // fcOptions
+                        palette[i] = Color.FromArgb(red, green, blue);
                     }
-                    bitmap.Palette = palette;
-                }
 
-                // Copy pel data
-                BitmapData bmpData = bitmap.LockBits(
-                    new Rectangle(0, 0, (int)bih2.cx, (int)bih2.cy),
-                    ImageLockMode.WriteOnly,
-                    pixelFormat);
+                    // --- Read data from bitmapArray ---
+                    // The actual pixel data for both mask and color image is typically in bitmapArray,
+                    // and the offsets (`bitmapOffsetMask`, `bitmapOffset`) point to their start within `bitmapArray`.
 
-                int bytesPerPixel = (bitCount + 7) / 8; // Calculate bytes per pixel
-                int stride = (int)bih2.cx * bytesPerPixel;
-                int paddedStride = (stride + 3) & ~3; // Each row padded to nearest doubleword boundary (4 bytes)
+                    int stride = (((int)width * bpp + 31) / 32) * 4;
+                    int strideMask = (((int)widthMask * bppMask + 31) / 32) * 4;
 
-                // OS/2 bitmaps are typically bottom-up (BRA_BOTTOMUP).
-                // GDI+ Bitmaps are also typically bottom-up.
-                // If the bitmap is top-down, it would need to be flipped.
-                // The spec mentions usRecording = BRA_BOTTOMUP (default).
-                // We assume BRA_BOTTOMUP and copy rows directly.
+                    // We use the real weight, already given by the bitmap, not from the mask.
+                    // From the mask it would be heightMask / 2
+                    int bitmapSize = stride * (int)height;
+                    int maskSize = strideMask * (int)height;
 
-                for (int y = 0; y < bih2.cy; y++)
-                {
-                    // In OS/2, the first row of pel data is the bottom row of the image (BRA_BOTTOMUP).
-                    // System.Drawing.Bitmap also expects bottom-up data for the LockBits Scan0.
-                    // So, we copy directly from the source's bottom-up order to the destination's bottom-up order.
-                    // The (bih2.cy - 1 - y) maps the logical top-down row 'y' to the physical bottom-up row index.
-                    // However, LockBits provides Scan0 pointing to the first row of the bitmap buffer,
-                    // which often corresponds to the top row in terms of pixel display if you're writing top-down.
-                    // But since OS/2 is bottom-up and .NET BitmapData is also typically treated bottom-up
-                    // (Scan0 points to the start of the bitmap memory, which for a bottom-up image is the bottom-left pixel),
-                    // we copy from the *bottom* of the source data to the *bottom* of the destination data.
-                    // Or, more simply, we copy the first row of OS/2 data (bottom row of image) to the first row of BitmapData buffer.
-
-                    IntPtr sourceRowPtr = IntPtr.Add(pelDataPtr, (int)((bih2.cy - 1 - y) * paddedStride));
-                    IntPtr destRowPtr = IntPtr.Add(bmpData.Scan0, (int)(y * bmpData.Stride));
-
-                    // Handle 24-bit separately due to BGR vs RGB
-                    if (bitCount == 24)
+                    byte[] colorData = new byte[bitmapSize];
+                    byte[] maskData = new byte[maskSize];
+                    if (bitmapOffset + bitmapSize > bitmapArray.Length)
                     {
-                        // OS/2 is BGR, System.Drawing.Bitmap is RGB. Need to swap R and B.
-                        byte[] rowBytes = new byte[stride];
-                        Marshal.Copy(sourceRowPtr, rowBytes, 0, stride);
-
-                        for (int x = 0; x < stride; x += 3)
-                        {
-                            byte temp = rowBytes[x]; // Blue
-                            rowBytes[x] = rowBytes[x + 2]; // Blue = Red
-                            rowBytes[x + 2] = temp; // Red = Old Blue
-                        }
-                        Marshal.Copy(rowBytes, 0, destRowPtr, stride);
+                        // Out of offset. Must fallback to the mask as bitmap data.
+                        Console.WriteLine("Invalid bitmapOffset detected. Using bitmapOffsetMask.");
+                        Array.Copy(bitmapArray, bitmapOffsetMask, colorData, 0, bitmapSize);
                     }
                     else
                     {
-                        // For indexed colors, no swapping needed, just copy
-                        // Copy only the actual image data for the row, not the padding
-                        Marshal.Copy(sourceRowPtr, data, (int)((int)sourceRowPtr - (int)dataPtr), stride); // Copy from original data array
-                        Marshal.Copy(data, (int)((int)sourceRowPtr - (int)dataPtr), destRowPtr, stride); // Copy to bitmap data
+                        Array.Copy(bitmapArray, bitmapOffset, colorData, 0, bitmapSize);
                     }
-                }
+                    Array.Copy(bitmapArray, bitmapOffsetMask + maskSize, maskData, 0, maskSize); // We skip the first half that we don't care about
 
-                bitmap.UnlockBits(bmpData);
-                return bitmap;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"An error occurred during bitmap decoding: {ex.Message}");
-                return null;
-            }
-            finally
-            {
-                if (handle.IsAllocated)
+                    return GenerateBitmapFromData(colorData, maskData, (int)width, (int)height, bpp, palette);
+                }
+                else
                 {
-                    handle.Free();
+                    // Second block not found.
+                    // We use the bitmap data from the first half of mask data.
+
+                    int stride = (((int)widthMask * bppMask + 31) / 32) * 4;
+                    int maskStride = (((int)widthMask + 31) / 32) * 4; // 1bpp mask
+
+                    int realHeight = (int)heightMask / 2;
+                    int bitmapSize = stride * realHeight;
+                    int maskSize = maskStride * realHeight;
+
+                    if (bitmapOffsetMask + bitmapSize + maskSize > bitmapArray.Length)
+                        return null;
+
+                    byte[] colorData = new byte[bitmapSize];
+                    byte[] maskData = new byte[maskSize];
+
+                    Array.Copy(bitmapArray, bitmapOffsetMask, colorData, 0, bitmapSize);
+                    Array.Copy(bitmapArray, bitmapOffsetMask + bitmapSize, maskData, 0, maskSize);
+
+                    return GenerateBitmapFromData(colorData, maskData, (int)widthMask, realHeight, bppMask, paletteMask);
                 }
             }
+        }
+
+        private static Bitmap Decode_BITMAP_OS2_V2(byte[] data, byte[] resData)
+        {
+            ushort usType = BitConverter.ToUInt16(data, 0);
+
+            if (usType != 0x4D42)
+                return null;
+
+            // Offsets for BITMAPFILEHEADER2 fields
+            const int BFH2_OFFBITS_OFFSET = 10;
+            const int BFH2_BMP2_OFFSET = 14; // Start of BITMAPINFOHEADER2 within BITMAPFILEHEADER2
+
+            // Offsets for BITMAPINFOHEADER2 fields (relative to the start of BITMAPINFOHEADER2)
+            const int BIH2_CBFIX_OFFSET = 0;
+            const int BIH2_CX_OFFSET = 4;
+            const int BIH2_CY_OFFSET = 8;
+            const int BIH2_CPLANES_OFFSET = 12;
+            const int BIH2_CBITCOUNT_OFFSET = 14;
+            const int BIH2_ULCOMPRESSION_OFFSET = 16;
+            const int BIH2_CBIMAGE_OFFSET = 20;
+            const int BIH2_CCLRUSED_OFFSET = 32;
+
+            // Read BITMAPFILEHEADER2
+            uint pixelDataOffset = BitConverter.ToUInt32(data, BFH2_OFFBITS_OFFSET);   // offset to the pel data from the beginning of the *file*
+            int bitmapInfoOffset = BFH2_BMP2_OFFSET;                                   // BITMAPINFOHEADER2 starts at BFH2_BMP2_OFFSET relative to the start of 'data'
+
+            // Read BITMAPINFOHEADER2 fields
+            uint cbFix = BitConverter.ToUInt32(data, bitmapInfoOffset + BIH2_CBFIX_OFFSET);                 // Size of the structure.             
+            uint width = BitConverter.ToUInt32(data, bitmapInfoOffset + BIH2_CX_OFFSET);                    // Width
+            uint height = BitConverter.ToUInt32(data, bitmapInfoOffset + BIH2_CY_OFFSET);                   // Height
+            ushort cPlanes = BitConverter.ToUInt16(data, bitmapInfoOffset + BIH2_CPLANES_OFFSET);          // Color planes (usually 1)
+            ushort bitCount = BitConverter.ToUInt16(data, bitmapInfoOffset + BIH2_CBITCOUNT_OFFSET);       // Bits per pixel
+            uint ulCompression = BitConverter.ToUInt32(data, bitmapInfoOffset + BIH2_ULCOMPRESSION_OFFSET); // Compression scheme
+            uint cclrUsed = BitConverter.ToUInt32(data, bitmapInfoOffset + BIH2_CCLRUSED_OFFSET);           // Number of colors in the color table
+
+            // Validate cPlanes. The docs say "I've never seen this set to anything other than 1."
+            if (cPlanes != 1)
+            {
+                // This is an unexpected value according to the docs.
+                // If we find a value different than 1, we will discover how to handle it.
+            }
+
+            // Determine the number of colors in the palette
+            int numColors;
+            if (bitCount != 24)
+            {
+                numColors = (int)(cclrUsed != 0 ? (int)cclrUsed : (1 << (bitCount * cPlanes)));
+            }
+            else
+            {
+                numColors = (int)cclrUsed; // For 24-bit, cclrUsed gives the actual number of colors or 0 if no palette.
+            }
+
+            Color[] palette = new Color[numColors];
+            int colorTableOffset = bitmapInfoOffset + (int)cbFix;
+
+            // Populate the palette
+            for (int i = 0; i < numColors; i++)
+            {
+                // RGB2 structure: BYTE bBlue, BYTE bGreen, BYTE bRed, BYTE fcOptions
+                byte bBlue = data[colorTableOffset + (i * 4)];
+                byte bGreen = data[colorTableOffset + (i * 4) + 1];
+                byte bRed = data[colorTableOffset + (i * 4) + 2];
+                //byte fcOptions = data[colorTableOffset + (i * 4) + 3]; // Not used for color representation
+
+                palette[i] = Color.FromArgb(bRed, bGreen, bBlue);
+            }
+
+            // Calculate the size of the raw pixel data.
+            // The docs state: "each row of data is padded to the nearest doubleword boundry." (4 bytes)
+            // The total size of the pel data is given by cbImage. If 0, it needs to be calculated.
+            // ULONG cbImage; // The number of bytes that the pel data occupies. For an uncompressed image, this should be initialized to zero.
+            uint cbImage = BitConverter.ToUInt32(data, bitmapInfoOffset + BIH2_CBIMAGE_OFFSET);
+
+            int bytesPerRow;
+            if (bitCount == 24)
+            {
+                bytesPerRow = (((int)width * 3 + 3) / 4) * 4; // 3 bytes per pixel, padded to 4-byte boundary
+            }
+            else
+            {
+                // For 1, 4, 8 bpp: (width * bitCount + 7) / 8 gives actual bits, then divide by 8 for bytes, then pad.
+                bytesPerRow = ((((int)width * bitCount + 7) / 8) + 3) / 4 * 4;
+            }
+
+            int rawBitmapDataSize = bytesPerRow * (int)height;
+
+            if (cbImage == 0)
+            {
+                cbImage = (uint)rawBitmapDataSize;
+            }
+            else if (cbImage != rawBitmapDataSize && ulCompression == 0)
+            {
+                // If cbImage is not zero and doesn't match calculated size for uncompressed,
+                // it's an inconsistency or a special case not explicitly covered for uncompressed.
+                // For uncompressed, it *should* be zero or match the calculated size.
+                // We will trust the calculated size for uncompressed given the doc states "this should be initialized to zero".
+                // If it was non-zero and different, it might indicate a more complex scenario like RLE where cbImage is critical.
+                // For now, if uncompressed, we rely on our calculation based on width/height/bitCount.
+            }
+
+            // Extract the raw bitmap data from resData using the global pixelDataOffset.
+            byte[] bitmapData = new byte[rawBitmapDataSize];
+            Array.Copy(resData, (int)pixelDataOffset, bitmapData, 0, rawBitmapDataSize);
+
+            return GenerateBitmapFromData(bitmapData, null, (int)width, (int)height, bitCount, palette);
         }
 
         private static Bitmap Decode_BITMAP_OS2_ArrayPart(byte[] bmpData, byte[] resData)
@@ -880,7 +943,7 @@ namespace PeareModule
 
             if (bitCount == 4 && palette.Length == 0)
             {
-                // Palette EGA
+                // Palette EGA Windows as fallback with bitCount=4 when is missing 
                 palette = new Color[]
                 {
                     Color.Black, Color.Blue, Color.Green, Color.Cyan,

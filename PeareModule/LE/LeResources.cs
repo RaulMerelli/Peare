@@ -156,7 +156,7 @@ namespace PeareModule
 
                     if (tableEntry.PageTableEntries == 0)
                     {
-                        message = "The object associated with the resource contains no pages.";
+                        message = "The object associated with the resource contains no entries.";
                         Console.WriteLine(message);
                         return result.ToArray();
                     }
@@ -164,24 +164,23 @@ namespace PeareModule
                     int pageDescriptorEntryOffset = objectPageMapOffset + (int)((tableEntry.PageTableIndex - 1) * Marshal.SizeOf(typeof(LE_OBJECT_PAGE_TABLE_ENTRY)));
                     byte[] pageDescriptorBytes = new byte[Marshal.SizeOf(typeof(LE_OBJECT_PAGE_TABLE_ENTRY))];
                     Array.Copy(fileBytes, pageDescriptorEntryOffset, pageDescriptorBytes, 0, Marshal.SizeOf(typeof(LE_OBJECT_PAGE_TABLE_ENTRY)));
-                    LE_OBJECT_PAGE_TABLE_ENTRY pageDescriptor = ModuleResources.Deserialize<LE_OBJECT_PAGE_TABLE_ENTRY>(pageDescriptorBytes);
+                    LE_OBJECT_PAGE_TABLE_ENTRY pageEntry = ModuleResources.Deserialize<LE_OBJECT_PAGE_TABLE_ENTRY>(pageDescriptorBytes);
 
-                    uint globalPageDataAreaOffset = header.DataPagesOffsetFromTopOfFile;
-
-                    int currentPageDataOffset = (int)globalPageDataAreaOffset + ((pageDescriptor.PageTableIndex - 1) * (int)header.MemoryPageSize);
-                    ushort pageFlags = pageDescriptor.Flags;
+                    int currentPageDataOffset = (int)header.DataPagesOffsetFromTopOfFile + ((pageEntry.PageTableIndex - 1) * (int)header.MemoryPageSize);
+                    ushort pageFlags = pageEntry.Flags;
                     ushort pageDataLengthInFile = (ushort)header.MemoryPageSize;
+                    // We take data also over the page end, as resources can overflow to next pages.
+                    // This might be not the correct way to do it, but for Legal Physical Pages seems to be working fine...
                     byte[] page = fileBytes.Skip(currentPageDataOffset).Take(fileBytes.Length - currentPageDataOffset).ToArray();
 
                     Console.WriteLine($"--- Extracted Page Data ---");
                     Console.WriteLine($"  Object Page Table Index (1-based): {tableEntry.PageTableIndex}");
-                    Console.WriteLine($"  Global Page Index (from descriptor): {pageDescriptor.PageTableIndex}");
+                    Console.WriteLine($"  Global Page Index (from descriptor): {pageEntry.PageTableIndex}");
                     Console.WriteLine($"  Calculated Actual Page Data Offset: 0x{currentPageDataOffset:X}");
                     Console.WriteLine($"  Extracted Page Size: {page.Length} bytes.");
 
                     found = true;
-                    message = "Page successfully extracted.";
-                    ModuleResources.DumpRaw(page);
+                    //ModuleResources.DumpRaw(page);
 
                     int currentBaseOffset;
                     if (pageFlags == 0x00) // Legal Physical Page
@@ -200,7 +199,7 @@ namespace PeareModule
                         byte[] resourceData = page.Skip((int)offsetInObject).Take((int)resourceSize).ToArray();
                         result.AddRange(resourceData); // Add to the result list
 
-                        message = "Resource successfully extracted from page.";
+                        message = $"LE resource '{typeName}' (ID: {nameID}) found and extracted successfully.\nSize: {resourceSize} bytes.\r\n";
                         Console.WriteLine($"--- Extracted Resource Data ---");
                         Console.WriteLine($"  Resource offset within page: {offsetInObject}");
                         Console.WriteLine($"  Resource size: {resourceSize} bytes.");

@@ -37,6 +37,8 @@ namespace PeareModule
             if (width <= 0 || height <= 0 || bitCount == 0)
             {
                 Console.WriteLine("Invalid bitmap dimensions or bit count.");
+                return RT_ICON.Get_ICON_Win1_Win2(resData);
+                ModuleResources.DumpRaw(resData);
                 return new Bitmap(1, 1);
             }
 

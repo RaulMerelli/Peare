@@ -44,7 +44,9 @@ What is currently (at least partially) implemented right now:
 		- RT_POINTER (BA, BM, IC, CI, CP, PT)
 		- RT_MESSAGE
 		- RT_BITMAP (BA, BM, IC, CI, CP, PT)
+		- RT_STRING
 		- RT_DISPLAYINFO
+		- RT_MENU
 		- RT_ACCELTABLE
 
 	- NE (Windows)

@@ -317,6 +317,11 @@ namespace PeareModule
                 ushort numResources = BitConverter.ToUInt16(fileBytes, neHeaderOffset + 0x34);
                 int currentParsePos = resourceTablePos;
 
+                if (numResources == 0)
+                {
+                    Console.WriteLine("[DEBUG] OS/2 Resource table has no entries");
+                }
+
                 for (int i = 0; i < numResources; i++)
                 {
                     if (currentParsePos + 4 > fileBytes.Length || currentParsePos + 4 > safeParsingEnd)
