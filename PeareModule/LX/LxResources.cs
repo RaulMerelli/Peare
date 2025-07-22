@@ -100,7 +100,7 @@ namespace PeareModule
         // Special thanks to OsFree project for providing the method to extract ITERDATA2 pages.
         // https://github.com/ErisBlastar/osfree/blob/9472591e4e8f9c8e3b78e6b8d6f0634c63387fd3/tools/lxlite/os2exe.pas#L259
         // This method is a almost complete conversion of their Pascal function UnpackMethod2.
-        static unsafe byte[] UnpackMethod2(ref byte[] srcData, int srcDataSize, int dstDataSize, out bool success)
+        public static unsafe byte[] UnpackMethod2(ref byte[] srcData, int srcDataSize, int dstDataSize, out bool success)
         {
             byte[] destData = new byte[dstDataSize];
 

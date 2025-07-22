@@ -22,104 +22,113 @@ namespace PeareModule
                 if (resData.Length >= 2 && resData[0] == 0x42 && resData[1] == 0x41) // 'BA'
                 {
                     int offset = 0;
-
                     while (offset < resData.Length)
                     {
-                        bool imageDecoded = false;
-                        if (offset + 14 > resData.Length) break;
-
-                        if (resData[offset] != 0x42 || resData[offset + 1] != 0x41)
+                        // Ensure enough data for the initial 'BA' header check and size info
+                        if (offset + 14 > resData.Length)
                         {
-                            Console.WriteLine($"[DEBUG] Invalid 'BA' at offset {offset}. Aborting.");
+                            Console.WriteLine($"[DEBUG] Not enough data for 'BA' header at offset {offset}. Aborting.");
                             break;
                         }
 
-                        int headerSize = BitConverter.ToInt32(resData, offset + 2);
+                        // Validate 'BA' signature for the current entry
+                        if (resData[offset] != 0x42 || resData[offset + 1] != 0x41)
+                        {
+                            Console.WriteLine($"[DEBUG] Invalid 'BA' signature at offset {offset}. Aborting.");
+                            break;
+                        }
+
+                        // int headerSize = BitConverter.ToInt32(resData, offset + 2); // Not used in current logic, consider removing if truly unused.
                         int nextOffset = BitConverter.ToInt32(resData, offset + 6);
-                        int bmpOffset = offset + 14; // + headerSize;
+                        int bmpOffset = offset + 14;
 
                         if (bmpOffset >= resData.Length)
                         {
-                            Console.WriteLine($"[DEBUG] BMP data offset {bmpOffset} beyond end of data.");
+                            Console.WriteLine($"[DEBUG] BMP data offset {bmpOffset} beyond end of data. Aborting.");
                             break;
                         }
 
-                        int nextBmpSize = (nextOffset > 0 && nextOffset > offset)
-                            ? nextOffset - bmpOffset
-                            : resData.Length - bmpOffset;
+                        // Calculate the size of the current bitmap data
+                        int currentBmpSize = (nextOffset > 0 && nextOffset > offset && nextOffset < resData.Length)
+                                                ? nextOffset - bmpOffset
+                                                : resData.Length - bmpOffset;
 
-                        byte[] bmpData = resData.Skip(bmpOffset).Take(nextBmpSize).ToArray();
-
-                        var bmp = Decode_BITMAP(bmpData, resData);
-                        if (bmp != null)
+                        // Ensure we don't try to read beyond the array bounds
+                        if (bmpOffset + currentBmpSize > resData.Length)
                         {
-                            imageDecoded = true;
-                            result.Add(bmp);
+                            Console.WriteLine($"[DEBUG] Calculated BMP size ({currentBmpSize}) from offset {bmpOffset} exceeds data length. Adjusting.");
+                            currentBmpSize = resData.Length - bmpOffset;
                         }
 
-                        bmp = Decode_RT_POINTER(bmpData, resData);
-                        if (bmp != null)
-                        {
-                            imageDecoded = true;
-                            result.Add(bmp);
-                        }
+                        byte[] bmpData = resData.Skip(bmpOffset).Take(currentBmpSize).ToArray();
 
-                        bmp = Decode_BITMAP_Win1_Win2(resData);
-                        if (bmp != null)
+                        Bitmap bmp = TryDecodeBitmap(bmpData, resData);
+                        bool imageDecoded = bmp != null;
+
+                        if (imageDecoded)
                         {
-                            imageDecoded = true;
                             result.Add(bmp);
                         }
 
                         string status = imageDecoded ? "loaded successfully" : "failed to load";
-                        Console.WriteLine($"Bitmap or Pointer {status}");
+                        Console.WriteLine($"Bitmap or Pointer {status} at offset {offset}");
 
+                        // Move to the next offset for the next bitmap
                         if (nextOffset <= offset || nextOffset >= resData.Length)
                         {
+                            Console.WriteLine($"[DEBUG] Next offset {nextOffset} is invalid or end of data. Stopping loop.");
                             break;
                         }
-
                         offset = nextOffset;
                     }
-
-                    return result;
                 }
-                else
+                else // Not an OS/2 BITMAPARRAYHEADER, try to decode as a single bitmap
                 {
-                    bool imageDecoded = false;
-                    Bitmap bmp = Decode_BITMAP(resData, resData);
-                    if (bmp != null)
-                    {
-                        imageDecoded = true;
-                        result.Add(bmp);
-                    }
+                    Bitmap bmp = TryDecodeBitmap(resData, resData);
+                    bool imageDecoded = bmp != null;
 
-                    bmp = Decode_RT_POINTER(resData, resData);
-                    if (bmp != null)
+                    if (imageDecoded)
                     {
-                        imageDecoded = true;
-                        result.Add(bmp);
-                    }
-
-                    bmp = Decode_BITMAP_Win1_Win2(resData);
-                    if (bmp != null)
-                    {
-                        imageDecoded = true;
                         result.Add(bmp);
                     }
 
                     string status = imageDecoded ? "loaded successfully" : "failed to load";
-                    Console.WriteLine($"Bitmap or Pointer {status}");
-
-                    return result;
+                    Console.WriteLine($"Single Bitmap or Pointer {status}");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Failed to convert bitmap data: " + ex.Message);
-                return result;
+                Console.WriteLine("Failed to process bitmap data: " + ex.Message);
             }
+            return result;
         }
+
+
+        private static Bitmap TryDecodeBitmap(byte[] data, byte[] fullData)
+        {
+            Bitmap bmp = Decode_BITMAP(data, fullData);
+            if (bmp != null)
+            {
+                return bmp;
+            }
+
+            bmp = Decode_RT_POINTER(data, fullData);
+            if (bmp != null)
+            {
+                Console.WriteLine("Data was pointer. Decoded with Decode_RT_POINTER.");
+                return bmp;
+            }
+
+            bmp = Decode_BITMAP_Win1_Win2(data);
+            if (bmp != null)
+            {
+                Console.WriteLine("Data was bitmap. Decoded with Decode_BITMAP_Win1_Win2.");
+                return bmp;
+            }
+
+            return null;
+        }
+
 
         public static Bitmap Decode_BITMAP_Win1_Win2(byte[] resourceData)
         {
@@ -195,9 +204,7 @@ namespace PeareModule
             {
                 // Lock the bitmap bits for direct memory access
                 // The internal C# bitmap Scan0 will handle its own stride, which might differ from bytesPerLine
-                bmpData = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height),
-                                          ImageLockMode.WriteOnly,
-                                          PixelFormat.Format1bppIndexed);
+                bmpData = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.WriteOnly, PixelFormat.Format1bppIndexed);
 
                 IntPtr destPtr = bmpData.Scan0;
                 int sourceOffset = headerSize;
@@ -217,7 +224,7 @@ namespace PeareModule
                     }
 
                     // Copy data from source buffer to bitmap buffer
-                    System.Runtime.InteropServices.Marshal.Copy(resourceData, sourceOffset, destPtr, bytesToCopy);
+                    Marshal.Copy(resourceData, sourceOffset, destPtr, bytesToCopy);
 
                     sourceOffset += bytesPerLine; // Advance in the source data buffer based on its stride
                     destPtr = new IntPtr(destPtr.ToInt64() + bmpData.Stride); // Advance in the bitmap buffer based on its internal stride
@@ -253,15 +260,26 @@ namespace PeareModule
 
                 var bmpOS2 = Decode_BITMAP_OS2_V1(bmpData, resData);
                 if (bmpOS2 != null)
+                {
+                    Console.WriteLine("Data was bitmap. Decoded with Decode_BITMAP_OS2_V1.");
                     return bmpOS2;
+                }
 
                 bmpOS2 = Decode_BITMAP_OS2_ArrayPart(bmpData, resData);
                 if (bmpOS2 != null)
+                {
+                    Console.WriteLine("Data was bitmap. Decoded with Decode_BITMAP_OS2_ArrayPart.");
                     return bmpOS2;
+                }
 
-                bmpOS2 = Decode_BITMAP_OS2_V2(bmpData); 
+                bmpOS2 = Decode_BITMAP_OS2_V2(bmpData);
                 if (bmpOS2 != null)
+                {
+                    Console.WriteLine("Data was bitmap. Decoded with Decode_BITMAP_OS2_V2.");
                     return bmpOS2;
+                }
+
+                string dataStripped = "";
 
                 // Check if it's a full BMP file (starts with 'BM')
                 if (bmpData.Length >= 14 && bmpData[0] == 0x42 && bmpData[1] == 0x4D)
@@ -274,19 +292,22 @@ namespace PeareModule
                         try
                         {
                             using (MemoryStream ms = new MemoryStream(bmpData))
+                            {
+                                Console.WriteLine("Data was bitmap. Decoded with GDI+.");
                                 return new Bitmap(ms);
+                            }
                         }
                         catch
                         {
-                            Console.WriteLine("[DEBUG] BMP header present but GDI+ failed to load. Will fallback.");
                             // Remove file header and proceed with DIB
+                            dataStripped = "after stripping the first 14 bytes ";
                             bmpData = bmpData.Skip(14).ToArray();
                         }
                     }
                     else
                     {
-                        Console.WriteLine("[DEBUG] BMP signature found but bfOffBits invalid. Treating as DIB.");
                         // Invalid bfOffBits, remove file header and proceed
+                        dataStripped = "after stripping the first 14 bytes ";
                         bmpData = bmpData.Skip(14).ToArray();
                     }
                 }
@@ -294,15 +315,24 @@ namespace PeareModule
                 // Try again after removing the BMP signature
                 bmpOS2 = Decode_BITMAP_OS2_V1(bmpData, resData);
                 if (bmpOS2 != null)
+                {
+                    Console.WriteLine($"Data was bitmap. Decoded {dataStripped}with Decode_BITMAP_OS2_V1.");
                     return bmpOS2;
+                }
 
                 bmpOS2 = Decode_BITMAP_OS2_ArrayPart(bmpData, resData);
                 if (bmpOS2 != null)
+                {
+                    Console.WriteLine($"Data was bitmap. Decoded {dataStripped}with Decode_BITMAP_OS2_ArrayPart.");
                     return bmpOS2;
+                }
 
                 bmpOS2 = Decode_BITMAP_OS2_V2(bmpData);
                 if (bmpOS2 != null)
+                {
+                    Console.WriteLine($"Data was bitmap. Decoded {dataStripped}with Decode_BITMAP_OS2_V2.");
                     return bmpOS2;
+                }
 
                 // Windows-style DIB (BITMAPINFOHEADER)
                 try
@@ -321,6 +351,7 @@ namespace PeareModule
                         bw.Write((uint)bfOffBits);
                         bw.Write(bmpData);
                         ms.Position = 0;
+                        Console.WriteLine("Data was bitmap. Decoded after stripping the first 14 bytes with Windows-style DIB.");
                         return new Bitmap(ms);
                     }
                 }

@@ -40,6 +40,8 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="LE\IMAGE_LE_HEADER.cs" />
+    <Compile Include="LE\IMAGE_LE_OBJECT.cs" />
+    <Compile Include="LE\LE_OBJECT_PAGE_TABLE_ENTRY.cs" />
     <Compile Include="LE\LeResources.cs" />
     <Compile Include="LE\LE_OBJECT_FLAGS.cs" />
     <Compile Include="LE\LE_OBJECT_TABLE_ENTRY.cs" />

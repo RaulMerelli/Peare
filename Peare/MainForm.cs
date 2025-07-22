@@ -267,7 +267,7 @@ namespace Peare
                 }
                 else
                 {
-                    string val = ModuleResources.DumpRaw(resData);
+                    string val = ModuleResources.DumpRaw(resData, true);
                     flowLayoutPanel1.Controls.Add(GetTextbox(val));
                 }
             }

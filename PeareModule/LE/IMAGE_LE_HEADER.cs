@@ -53,15 +53,16 @@ namespace PeareModule
         public uint PreloadInstancePagesNumber;
         public uint DemandInstancePagesNumber;
         public uint HeapSize;
-        public uint StackSize;
 
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]
-        public byte[] Reserved;
+        // Keep the following unused
+        //public uint StackSize;
 
-        public uint WindowsVXDVersionInfoResourceOffset;
-        public uint WindowsVXDVersionInfoResourceLength;
-        public ushort WindowsVXDDeviceID;
-        public ushort WindowsDDKVersion;
+        //[MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]
+        //public byte[] Reserved;
+
+        //public uint WindowsVXDVersionInfoResourceOffset;
+        //public uint WindowsVXDVersionInfoResourceLength;
+        //public ushort WindowsVXDDeviceID;
+        //public ushort WindowsDDKVersion;
     }
-
 }

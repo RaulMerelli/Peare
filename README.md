@@ -18,6 +18,7 @@ What is currently (at least partially) implemented right now:
 	- NE New Executable (OS/2 16bit)
 	- PE Portable Executable (Windows 32/64bit)
 	- LX Linear Executable Extended (OS/2 32bit)
+	- LE Linear Executable (OS/2 16/32bit)
 
 - Open resources from the list:
 
@@ -37,6 +38,13 @@ What is currently (at least partially) implemented right now:
 		- RT_STRING
 		- RT_DISPLAYINFO (theoretically, I can't find any OS/2 LX containing a RT_DISPLAYINFO resource)
 		- RT_MENU
+		- RT_ACCELTABLE
+
+	- LE (OS/2)
+		- RT_POINTER (BA, BM, IC, CI, CP, PT)
+		- RT_MESSAGE
+		- RT_BITMAP (BA, BM, IC, CI, CP, PT)
+		- RT_DISPLAYINFO
 		- RT_ACCELTABLE
 
 	- NE (Windows)

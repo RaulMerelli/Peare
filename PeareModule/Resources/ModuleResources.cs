@@ -19,7 +19,7 @@ namespace PeareModule
             return s;
         }
 
-        public static string DumpRaw(byte[] data)
+        public static string DumpRaw(byte[] data, bool showAddressAndAscii = true)
         {
             if (data == null || data.Length == 0)
             {
@@ -49,9 +49,15 @@ namespace PeareModule
                     byte b = data[lineOffset + j];
                     ascii.Append(b >= 32 && b <= 126 ? (char)b : '.');
                 }
-
-                //string lineStr = $"{lineOffset:X04}: {hex}| {ascii}";
-                string lineStr = $"{hex}";
+                string lineStr = "";
+                if (showAddressAndAscii)
+                {
+                    lineStr = $"{lineOffset:X04}: {hex}| {ascii}";
+                }
+                else
+                {
+                    lineStr = $"{hex}";
+                }
                 Console.WriteLine(lineStr);
                 result.AppendLine(lineStr);
             }
@@ -90,7 +96,7 @@ namespace PeareModule
                 case HeaderType.NE:
                     return NeResources.OpenResourceNE(properties, typeName, targetResourceName, out message, out found);
                 case HeaderType.LE:
-                    return null;
+                    return LeResources.OpenResourceLE(properties, typeName, targetResourceName, out message, out found);
                 case HeaderType.LX:
                     return LxResources.OpenResourceLX(properties, typeName, targetResourceName, out message, out found);
             }
@@ -108,7 +114,7 @@ namespace PeareModule
                 case HeaderType.NE:
                     return NeResources.OpenResourceNE(properties, typeName, targetResourceName, out message, out found);
                 case HeaderType.LE:
-                    return null;
+                    return LeResources.OpenResourceLE(properties, typeName, targetResourceName, out message, out found);
                 case HeaderType.LX:
                     return LxResources.OpenResourceLX(properties, typeName, targetResourceName, out message, out found);
             }
@@ -142,7 +148,6 @@ namespace PeareModule
             public VersionType versionType;
             public string filePath;
         }
-
 
         // Read the header and check file type
         public static ModuleProperties GetModuleProperties(string path)

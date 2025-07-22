@@ -6,7 +6,6 @@ namespace PeareModule
     public enum LE_OBJECT_FLAGS : uint
     {
         LE_OBJECT_FLAG_READABLE = 1,
-        LE_OBJECT_FLAG_WRITABLE = 2,
         LE_OBJECT_FLAG_EXECUTABLE = 4,
         LE_OBJECT_FLAG_RESOURCE = 8,
         LE_OBJECT_FLAG_DISCARABLE = 16,
