@@ -181,6 +181,16 @@ namespace Peare
                     string val = RT_DISPLAYINFO.Get(resData);
                     flowLayoutPanel1.Controls.Add(GetTextbox(val));
                 }
+                else if (typeName == "RT_HELPTABLE")
+                {
+                    string val = RT_HELPTABLE.Get(resData);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                }
+                else if (typeName == "RT_HELPSUBTABLE")
+                {
+                    string val = RT_HELPSUBTABLE.Get(resData);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                }
                 else if (typeName == "RT_DLGINCLUDE")
                 {
                     string val = RT_DLGINCLUDE.Get(resData);
@@ -362,20 +372,6 @@ namespace Peare
             SetWindowTheme(treeView1.Handle, "Explorer", null);
         }
 
-        public class MenuLoader
-        {
-            public MenuLoader(string filepath, string resName, string extDefault)
-            {
-                this.filepath = filepath;
-                this.resName = resName;
-                this.extDefault = extDefault;
-            }
-
-            public string filepath;
-            public string resName;
-            public string extDefault;
-        }
-
         private void MainForm_Load(object sender, EventArgs e)
         {
             Stopwatch sw = Stopwatch.StartNew();
@@ -402,7 +398,11 @@ namespace Peare
             WriteIcoSection("RT_MENU", shell32, "151", "ini");
             WriteIcoSection("RT_STRING", shell32, "151", "ini");
             WriteIcoSection("RT_BITMAP", shell32, "16823", "bmp");
+            WriteIcoSection("RT_POINTER", shell32, "16823", "bmp");
             WriteIcoSection("RT_ICON", shell32, "16823", "bmp");
+            WriteIcoSection("RT_GROUP_ICON", shell32, "16823", "bmp");
+            WriteIcoSection("RT_CURSOR", shell32, "16823", "bmp");
+            WriteIcoSection("RT_GROUP_CURSOR", shell32, "16823", "bmp");
             WriteIcoSection("RT_MANIFEST", mmcndmgr, "1098", "xml");
 
             List<Bitmap> bitmaps = new List<Bitmap>();

@@ -467,7 +467,7 @@ namespace PeareModule
 
                             try
                             {
-                                ModuleResources.DumpRaw(compressedBytes);
+                                //ModuleResources.DumpRaw(compressedBytes);
                                 // *** Call the new RLE decompression function ***
                                 byte[] decompressedPageData = DecompressRlePage(compressedBytes, (int)header.PageSize); // pageSize is the logical size 
                                 pageDataLengthInFile = (ushort)decompressedPageData.Length; // Update length for consistency, though it should be pageSize
@@ -477,7 +477,7 @@ namespace PeareModule
                                     Console.WriteLine($"    DEBUG: Decompressed size ({decompressedPageData.Length}) smaller than PageSize ({header.PageSize}). Page will be treated as partially zero-filled.");
                                 }
 
-                                ModuleResources.DumpRaw(decompressedPageData);
+                                //ModuleResources.DumpRaw(decompressedPageData);
                                 // In this case, we handle resource copying after decompression.
                                 // The resource might span multiple pages.
                                 // We don't do 'return decompressedPageData;' here, but copy into resData.

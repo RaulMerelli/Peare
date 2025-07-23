@@ -31,16 +31,20 @@ What is currently (at least partially) implemented right now:
 		- RT_MENU
 		- RT_ACCELTABLE
 		- RT_DLGINCLUDE
+		- RT_HELPTABLE *(1)
+		- RT_HELPSUBTABLE *(1)
 
 	- LX (OS/2)
 		- RT_POINTER (BA, BM, IC, CI, CP, PT)
 		- RT_MESSAGE
 		- RT_BITMAP (BA, BM, IC, CI, CP, PT)
 		- RT_STRING
-		- RT_DISPLAYINFO (theoretically, I can't find any OS/2 LX containing a RT_DISPLAYINFO resource)
+		- RT_DISPLAYINFO *(1)
 		- RT_MENU
 		- RT_ACCELTABLE
 		- RT_DLGINCLUDE
+		- RT_HELPTABLE
+		- RT_HELPSUBTABLE
 
 	- LE (OS/2)
 		- RT_POINTER (BA, BM, IC, CI, CP, PT)
@@ -51,9 +55,11 @@ What is currently (at least partially) implemented right now:
 		- RT_MENU
 		- RT_ACCELTABLE
 		- RT_DLGINCLUDE
+		- RT_HELPTABLE
+		- RT_HELPSUBTABLE
 
 	- NE (Windows)
-		- RT_MESSAGETABLE (theoretically, I can't find any Windows NE containing a RT_MESSAGETABLE resource)
+		- RT_MESSAGETABLE *(1)
 		- RT_NAMETABLE
 		- RT_FONTDIR
 		- RT_FONT
@@ -81,7 +87,7 @@ What is currently (at least partially) implemented right now:
 
 	- Fallback to ASCII text and raw bytes (All the formats)
 
-
+(1) theoretically supported, but I can't find any sample to test it
 
 RT_FONT support for NE Windows is handcrafted, this is what is supported:
 
@@ -102,6 +108,9 @@ Some examples of the software working at current status:
 
 ### LX RT_POINTER
 ![LX RT_POINTER](https://github.com/RaulMerelli/Peare/raw/main/Screenshots/LX%20RT_POINTER.png)
+
+### LE RT_POINTER
+![LE RT_POINTER](https://github.com/RaulMerelli/Peare/raw/main/Screenshots/LE%20RT_POINTER.png)
 
 ### NE RT_BITMAP
 ![NE RT_BITMAP](https://github.com/RaulMerelli/Peare/raw/main/Screenshots/NE%20RT_BITMAP.png)

@@ -203,7 +203,7 @@ namespace PeareModule
                         Console.WriteLine($"--- Extracted Resource Data ---");
                         Console.WriteLine($"  Resource offset within page: {offsetInObject}");
                         Console.WriteLine($"  Resource size: {resourceSize} bytes.");
-                        ModuleResources.DumpRaw(resourceData); // Dump the extracted resource
+                        //ModuleResources.DumpRaw(resourceData); // Dump the extracted resource
                         return result.ToArray();
                     }
                     else

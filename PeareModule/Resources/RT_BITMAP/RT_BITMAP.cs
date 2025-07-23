@@ -1,10 +1,12 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 
 namespace PeareModule
 {
@@ -14,31 +16,36 @@ namespace PeareModule
         // This return as list of Bitmap for compatibility with OS/2 Bitmap Array
         public static List<Bitmap> Get(byte[] resData)
         {
-            var result = new List<Bitmap>();
+            // We'll use ConcurrentBag<Tuple<int, Bitmap>> to store the index and bitmap
+            // so we can reorder at the end.
+            var parallelResults = new ConcurrentBag<Tuple<int, Bitmap>>();
 
             try
             {
                 // Check for OS/2 BITMAPARRAYHEADER (starts with 'BA')
                 if (resData.Length >= 2 && resData[0] == 0x42 && resData[1] == 0x41) // 'BA'
                 {
+                    // This list will store the original index along with the segment details.
+                    // Item1: OriginalIndex, Item2: Offset, Item3: BmpOffset, Item4: CurrentBmpSize
+                    var bitmapSegmentsWithIndex = new List<Tuple<int, int, int, int>>();
                     int offset = 0;
+                    int originalIndex = 0;
+
+                    // Sequentially identify all bitmap segments by their index.
                     while (offset < resData.Length)
                     {
-                        // Ensure enough data for the initial 'BA' header check and size info
                         if (offset + 14 > resData.Length)
                         {
                             Console.WriteLine($"[DEBUG] Not enough data for 'BA' header at offset {offset}. Aborting.");
                             break;
                         }
 
-                        // Validate 'BA' signature for the current entry
                         if (resData[offset] != 0x42 || resData[offset + 1] != 0x41)
                         {
                             Console.WriteLine($"[DEBUG] Invalid 'BA' signature at offset {offset}. Aborting.");
                             break;
                         }
 
-                        // int headerSize = BitConverter.ToInt32(resData, offset + 2); // Not used in current logic, consider removing if truly unused.
                         int nextOffset = BitConverter.ToInt32(resData, offset + 6);
                         int bmpOffset = offset + 14;
 
@@ -48,32 +55,20 @@ namespace PeareModule
                             break;
                         }
 
-                        // Calculate the size of the current bitmap data
                         int currentBmpSize = (nextOffset > 0 && nextOffset > offset && nextOffset < resData.Length)
-                                                ? nextOffset - bmpOffset
-                                                : resData.Length - bmpOffset;
+                                                    ? nextOffset - bmpOffset
+                                                    : resData.Length - bmpOffset;
 
-                        // Ensure we don't try to read beyond the array bounds
                         if (bmpOffset + currentBmpSize > resData.Length)
                         {
                             Console.WriteLine($"[DEBUG] Calculated BMP size ({currentBmpSize}) from offset {bmpOffset} exceeds data length. Adjusting.");
                             currentBmpSize = resData.Length - bmpOffset;
                         }
 
-                        byte[] bmpData = resData.Skip(bmpOffset).Take(currentBmpSize).ToArray();
+                        // Add currentOriginalIndex along with the segment details.
+                        bitmapSegmentsWithIndex.Add(Tuple.Create(originalIndex, offset, bmpOffset, currentBmpSize));
+                        originalIndex++;
 
-                        Bitmap bmp = TryDecodeBitmap(bmpData, resData);
-                        bool imageDecoded = bmp != null;
-
-                        if (imageDecoded)
-                        {
-                            result.Add(bmp);
-                        }
-
-                        string status = imageDecoded ? "loaded successfully" : "failed to load";
-                        Console.WriteLine($"Bitmap or Pointer {status} at offset {offset}");
-
-                        // Move to the next offset for the next bitmap
                         if (nextOffset <= offset || nextOffset >= resData.Length)
                         {
                             Console.WriteLine($"[DEBUG] Next offset {nextOffset} is invalid or end of data. Stopping loop.");
@@ -81,6 +76,31 @@ namespace PeareModule
                         }
                         offset = nextOffset;
                     }
+
+                    Parallel.ForEach(bitmapSegmentsWithIndex, segment =>
+                    {
+                        int currentOriginalIndex = segment.Item1;
+                        int currentOffset = segment.Item2;
+                        int currentBmpOffset = segment.Item3;
+                        int currentBmpSize = segment.Item4;
+
+                        byte[] bmpData = new byte[currentBmpSize];
+                        Buffer.BlockCopy(resData, currentBmpOffset, bmpData, 0, currentBmpSize);
+
+                        Bitmap bmp = TryDecodeBitmap(bmpData, resData);
+                        bool imageDecoded = bmp != null;
+
+                        if (imageDecoded)
+                        {
+                            // Add a tuple (currentOriginalIndex, bitmap) in ConcurrentBag
+                            parallelResults.Add(Tuple.Create(currentOriginalIndex, bmp));
+                        }
+
+                        string status = imageDecoded ? "loaded successfully" : "failed to load";
+                        Console.WriteLine($"Bitmap or Pointer {status} at offset {currentOffset} (Original Index: {currentOriginalIndex})");
+                    });
+
+                    var result = parallelResults.OrderBy(t => t.Item1).Select(t => t.Item2).ToList();                    return result;
                 }
                 else // Not an OS/2 BITMAPARRAYHEADER, try to decode as a single bitmap
                 {
@@ -89,20 +109,21 @@ namespace PeareModule
 
                     if (imageDecoded)
                     {
-                        result.Add(bmp);
+                        parallelResults.Add(Tuple.Create(0, bmp)); // Add with index 0
                     }
 
                     string status = imageDecoded ? "loaded successfully" : "failed to load";
                     Console.WriteLine($"Single Bitmap or Pointer {status}");
+
+                    return parallelResults.Select(t => t.Item2).ToList(); // Extract single bitmap
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine("Failed to process bitmap data: " + ex.Message);
             }
-            return result;
+            return new List<Bitmap>();
         }
-
 
         private static Bitmap TryDecodeBitmap(byte[] data, byte[] fullData)
         {
@@ -263,7 +284,7 @@ namespace PeareModule
             try
             {
                 Console.Write("\r\n\r\nData found:\r\n");
-                ModuleResources.DumpRaw(bmpData);
+                //ModuleResources.DumpRaw(bmpData);
 
                 var bmpOS2 = Decode_BITMAP_OS2_V1(bmpData, resData);
                 if (bmpOS2 != null)

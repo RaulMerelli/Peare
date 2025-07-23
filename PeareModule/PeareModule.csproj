@@ -67,6 +67,8 @@
     <Compile Include="Resources\RT_FONT\RT_FONT.cs" />
     <Compile Include="Resources\RT_GROUP_CURSOR\RT_GROUP_CURSOR.cs" />
     <Compile Include="Resources\RT_GROUP_ICON\RT_GROUP_ICON.cs" />
+    <Compile Include="Resources\RT_HELPSUBTABLE\RT_HELPSUBTABLE.cs" />
+    <Compile Include="Resources\RT_HELPTABLE\RT_HELPTABLE.cs" />
     <Compile Include="Resources\RT_ICON\RT_ICON.cs" />
     <Compile Include="Resources\RT_MENU\OS2_RT_MENU.cs" />
     <Compile Include="Resources\RT_MENU\RT_MENU.cs" />
