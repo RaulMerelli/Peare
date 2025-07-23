@@ -30,6 +30,7 @@ What is currently (at least partially) implemented right now:
 		- RT_DISPLAYINFO
 		- RT_MENU
 		- RT_ACCELTABLE
+		- RT_DLGINCLUDE
 
 	- LX (OS/2)
 		- RT_POINTER (BA, BM, IC, CI, CP, PT)
@@ -39,6 +40,7 @@ What is currently (at least partially) implemented right now:
 		- RT_DISPLAYINFO (theoretically, I can't find any OS/2 LX containing a RT_DISPLAYINFO resource)
 		- RT_MENU
 		- RT_ACCELTABLE
+		- RT_DLGINCLUDE
 
 	- LE (OS/2)
 		- RT_POINTER (BA, BM, IC, CI, CP, PT)
@@ -48,6 +50,7 @@ What is currently (at least partially) implemented right now:
 		- RT_DISPLAYINFO
 		- RT_MENU
 		- RT_ACCELTABLE
+		- RT_DLGINCLUDE
 
 	- NE (Windows)
 		- RT_MESSAGETABLE (theoretically, I can't find any Windows NE containing a RT_MESSAGETABLE resource)

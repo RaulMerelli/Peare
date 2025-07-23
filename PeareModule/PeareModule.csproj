@@ -60,6 +60,7 @@
     <Compile Include="Resources\RT_BITMAP\RT_BITMAP.cs" />
     <Compile Include="Resources\RT_CURSOR\RT_CURSOR.cs" />
     <Compile Include="Resources\RT_DISPLAYINFO\RT_DISPLAYINFO.cs" />
+    <Compile Include="Resources\RT_DLGINCLUDE\RT_DLGINCLUDE.cs" />
     <Compile Include="Resources\RT_FONTDIR\FONTDIRENTRY.cs" />
     <Compile Include="Resources\RT_FONTDIR\RT_FONTDIR.cs" />
     <Compile Include="Resources\RT_FONT\FONTINFO16.cs" />
@@ -75,5 +76,6 @@
     <Compile Include="Resources\RT_STRING\RT_STRING.cs" />
     <Compile Include="Resources\RT_VERSION\RT_VERSION.cs" />
   </ItemGroup>
+  <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

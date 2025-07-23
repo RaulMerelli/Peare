@@ -439,10 +439,13 @@ namespace PeareModule
                     ushort planes = reader.ReadUInt16();
                     ushort bpp = reader.ReadUInt16();
 
-                    if (planes != 1 || (bpp != 1 && bpp != 4 && bpp != 8))
-                        return null;
-
+                    if (planes != 1 || (bpp != 1 && bpp != 4 && bpp != 8 && bpp != 24)) // Pointers can be 1, 4, 8, 24 bpp
+                    {
+                        return null; // Unsupported color format
+                    }
                     int numColors = 1 << bpp;
+                    if (bpp == 24) numColors = 0; // 24-bit images usually don't have a palette
+
                     var palette = new Color[numColors];
                     for (int i = 0; i < numColors; i++)
                     {
@@ -668,12 +671,11 @@ namespace PeareModule
                 }
             }
         }
-
         private static Bitmap Decode_BITMAP_OS2_V2(byte[] data, byte[] resData)
         {
             ushort usType = BitConverter.ToUInt16(data, 0);
 
-            if (usType != 0x4D42)
+            if (usType != 0x4D42) // 'BM' in little-endian
                 return null;
 
             // Offsets for BITMAPFILEHEADER2 fields
@@ -691,89 +693,459 @@ namespace PeareModule
             const int BIH2_CCLRUSED_OFFSET = 32;
 
             // Read BITMAPFILEHEADER2
-            uint pixelDataOffset = BitConverter.ToUInt32(data, BFH2_OFFBITS_OFFSET);   // offset to the pel data from the beginning of the *file*
+            uint pixelDataOffset = BitConverter.ToUInt32(data, BFH2_OFFBITS_OFFSET);    // offset to the pel data from the beginning of the *file*
             int bitmapInfoOffset = BFH2_BMP2_OFFSET;                                   // BITMAPINFOHEADER2 starts at BFH2_BMP2_OFFSET relative to the start of 'data'
 
             // Read BITMAPINFOHEADER2 fields
-            uint cbFix = BitConverter.ToUInt32(data, bitmapInfoOffset + BIH2_CBFIX_OFFSET);                 // Size of the structure.             
-            uint width = BitConverter.ToUInt32(data, bitmapInfoOffset + BIH2_CX_OFFSET);                    // Width
-            uint height = BitConverter.ToUInt32(data, bitmapInfoOffset + BIH2_CY_OFFSET);                   // Height
-            ushort cPlanes = BitConverter.ToUInt16(data, bitmapInfoOffset + BIH2_CPLANES_OFFSET);          // Color planes (usually 1)
-            ushort bitCount = BitConverter.ToUInt16(data, bitmapInfoOffset + BIH2_CBITCOUNT_OFFSET);       // Bits per pixel
+            uint cbFix = BitConverter.ToUInt32(data, bitmapInfoOffset + BIH2_CBFIX_OFFSET);          // Size of the structure.
+            uint width = BitConverter.ToUInt32(data, bitmapInfoOffset + BIH2_CX_OFFSET);             // Width
+            uint height = BitConverter.ToUInt32(data, bitmapInfoOffset + BIH2_CY_OFFSET);           // Height
+            ushort cPlanes = BitConverter.ToUInt16(data, bitmapInfoOffset + BIH2_CPLANES_OFFSET);     // Color planes (usually 1)
+            ushort bitCount = BitConverter.ToUInt16(data, bitmapInfoOffset + BIH2_CBITCOUNT_OFFSET); // Bits per pixel
             uint ulCompression = BitConverter.ToUInt32(data, bitmapInfoOffset + BIH2_ULCOMPRESSION_OFFSET); // Compression scheme
-            uint cclrUsed = BitConverter.ToUInt32(data, bitmapInfoOffset + BIH2_CCLRUSED_OFFSET);           // Number of colors in the color table
+            uint cbImage = BitConverter.ToUInt32(data, bitmapInfoOffset + BIH2_CBIMAGE_OFFSET);     // Size of the compressed/uncompressed pel data
+            uint cclrUsed = BitConverter.ToUInt32(data, bitmapInfoOffset + BIH2_CCLRUSED_OFFSET);     // Number of colors in the color table
 
             // Validate cPlanes. The docs say "I've never seen this set to anything other than 1."
             if (cPlanes != 1)
             {
-                // This is an unexpected value according to the docs.
-                // If we find a value different than 1, we will discover how to handle it.
+                Console.WriteLine($"Warning: cPlanes is {cPlanes}. Expected 1.");
+                // Puoi scegliere di lanciare un'eccezione, loggare o ignorare in base alla tolleranza agli errori.
             }
 
             // Determine the number of colors in the palette
             int numColors;
-            if (bitCount != 24)
+            if (bitCount <= 8) // Paletted images usually have bitCount 1, 4, 8
             {
-                numColors = (int)(cclrUsed != 0 ? (int)cclrUsed : (1 << (bitCount * cPlanes)));
+                numColors = (int)(cclrUsed != 0 ? (int)cclrUsed : (1 << bitCount));
             }
-            else
+            else // For 16, 24-bit, 32-bit images, cclrUsed gives the actual number of colors or 0 if no palette.
             {
-                numColors = (int)cclrUsed; // For 24-bit, cclrUsed gives the actual number of colors or 0 if no palette.
-            }
-
-            Color[] palette = new Color[numColors];
-            int colorTableOffset = bitmapInfoOffset + (int)cbFix;
-
-            // Populate the palette
-            for (int i = 0; i < numColors; i++)
-            {
-                // RGB2 structure: BYTE bBlue, BYTE bGreen, BYTE bRed, BYTE fcOptions
-                byte bBlue = data[colorTableOffset + (i * 4)];
-                byte bGreen = data[colorTableOffset + (i * 4) + 1];
-                byte bRed = data[colorTableOffset + (i * 4) + 2];
-                //byte fcOptions = data[colorTableOffset + (i * 4) + 3]; // Not used for color representation
-
-                palette[i] = Color.FromArgb(bRed, bGreen, bBlue);
+                numColors = (int)cclrUsed;
             }
 
-            // Calculate the size of the raw pixel data.
-            // The docs state: "each row of data is padded to the nearest doubleword boundry." (4 bytes)
-            // The total size of the pel data is given by cbImage. If 0, it needs to be calculated.
-            // ULONG cbImage; // The number of bytes that the pel data occupies. For an uncompressed image, this should be initialized to zero.
-            uint cbImage = BitConverter.ToUInt32(data, bitmapInfoOffset + BIH2_CBIMAGE_OFFSET);
+            Color[] palette = null;
+            if (numColors > 0)
+            {
+                palette = new Color[numColors];
+                int colorTableOffset = bitmapInfoOffset + (int)cbFix;
 
-            int bytesPerRow;
-            if (bitCount == 24)
-            {
-                bytesPerRow = (((int)width * 3 + 3) / 4) * 4; // 3 bytes per pixel, padded to 4-byte boundary
-            }
-            else
-            {
-                // For 1, 4, 8 bpp: (width * bitCount + 7) / 8 gives actual bits, then divide by 8 for bytes, then pad.
-                bytesPerRow = ((((int)width * bitCount + 7) / 8) + 3) / 4 * 4;
-            }
+                // Populate the palette
+                for (int i = 0; i < numColors; i++)
+                {
+                    // RGB2 structure: BYTE bBlue, BYTE bGreen, BYTE bRed, BYTE fcOptions
+                    byte bBlue = data[colorTableOffset + (i * 4)];
+                    byte bGreen = data[colorTableOffset + (i * 4) + 1];
+                    byte bRed = data[colorTableOffset + (i * 4) + 2];
+                    //byte fcOptions = data[colorTableOffset + (i * 4) + 3]; // Not used for color representation
 
-            int rawBitmapDataSize = bytesPerRow * (int)height;
-
-            if (cbImage == 0)
-            {
-                cbImage = (uint)rawBitmapDataSize;
-            }
-            else if (cbImage != rawBitmapDataSize && ulCompression == 0)
-            {
-                // If cbImage is not zero and doesn't match calculated size for uncompressed,
-                // it's an inconsistency or a special case not explicitly covered for uncompressed.
-                // For uncompressed, it *should* be zero or match the calculated size.
-                // We will trust the calculated size for uncompressed given the doc states "this should be initialized to zero".
-                // If it was non-zero and different, it might indicate a more complex scenario like RLE where cbImage is critical.
-                // For now, if uncompressed, we rely on our calculation based on width/height/bitCount.
+                    palette[i] = Color.FromArgb(bRed, bGreen, bBlue);
+                }
             }
 
-            // Extract the raw bitmap data from resData using the global pixelDataOffset.
-            byte[] bitmapData = new byte[rawBitmapDataSize];
-            Array.Copy(resData, (int)pixelDataOffset, bitmapData, 0, rawBitmapDataSize);
+            // --- Extract the raw/compressed pixel data from resData ---
+            // This is the *compressed* or *uncompressed* data as it appears in the file.
+            // If cbImage is 0, it means uncompressed and the size should be calculated.
+            // For compressed data, cbImage should contain the actual size of the compressed data.
+            int actualCompressedDataSize = (int)(cbImage == 0 ? (resData.Length - pixelDataOffset) : cbImage);
+            if (pixelDataOffset + actualCompressedDataSize > resData.Length)
+            {
+                actualCompressedDataSize = resData.Length - (int)pixelDataOffset; // Adjust if header says more than available data
+            }
 
-            return GenerateBitmapFromData(bitmapData, null, (int)width, (int)height, bitCount, palette);
+            byte[] compressedOrRawData = new byte[actualCompressedDataSize];
+            Array.Copy(resData, (int)pixelDataOffset, compressedOrRawData, 0, actualCompressedDataSize);
+
+            // --- Handle Compression ---
+            byte[] decompressedPixelData = null;
+
+            Console.WriteLine("Bitmap is compressd: " + ulCompression);
+
+            switch (ulCompression)
+            {
+                case 0: // BCA_UNCOMP - Uncompressed
+                    decompressedPixelData = compressedOrRawData;
+                    break;
+                case 1: // BCA_HUFFMAN1D - Huffman encoding, monochrome bitmaps only
+                    Console.WriteLine("Error: Huffman 1D compression is not implemented. Cannot decompress.");
+                    return null;
+                case 2: // BCA_RLE4 - Run-length encoded, 4 bits/pixel
+                    decompressedPixelData = DecompressRLE4(compressedOrRawData, (int)width, (int)height, palette);
+                    break;
+                case 3: // BCA_RLE8 - RLE, 8 bits/pixel
+                    decompressedPixelData = DecompressRLE8(compressedOrRawData, (int)width, (int)height);
+                    break;
+                case 4: // BCA_RLE24 - RLE, 24 bits/pixel
+                    decompressedPixelData = DecompressRLE24(compressedOrRawData, (int)width, (int)height);
+                    break;
+                default:
+                    Console.WriteLine($"Error: Unsupported compression type: {ulCompression}.");
+                    return null;
+            }
+
+            if (decompressedPixelData == null)
+            {
+                Console.WriteLine("Error: Decompression failed or was not possible for the given format.");
+                return null;
+            }
+
+            // The GenerateBitmapFromData function expects uncompressed, padded pixel data.
+            return GenerateBitmapFromData(decompressedPixelData, null, (int)width, (int)height, bitCount, palette);
+        }
+
+        private static byte[] DecompressRLE4(byte[] compressedData, int width, int height, Color[] palette)
+        {
+            // RLE4: 4 bits per pixel. Each byte contains two 4-bit pixels.
+            // A common RLE scheme for 4bpp uses special codes.
+            // E.g., for Windows BMP RLE4:
+            // - Byte 1: Count (N)
+            // - Byte 2: Two pixels (e.g., AABB for 4 bits each)
+            //   -> N pairs of (A, B) pixels are repeated.
+            // - If Byte 1 == 0:
+            //   - Byte 2 == 0: End of scanline (EOL)
+            //   - Byte 2 == 1: End of bitmap (EOB)
+            //   - Byte 2 == 2: Delta (Byte 3 = X, Byte 4 = Y offset) - less common for basic RLE
+            //   - Byte 2 > 2: Absolute mode: Byte 2 (N) is number of *pixels* to read, followed by N/2 bytes.
+            //     The N bytes are padded to a word (16-bit) boundary.
+
+            int uncompressedBytesPerRow = (((width * 4 + 7) / 8) + 3) / 4 * 4; // Padded to 4-byte boundary
+            byte[] decompressed = new byte[uncompressedBytesPerRow * height];
+            MemoryStream ms = new MemoryStream(compressedData);
+            BinaryReader reader = new BinaryReader(ms);
+
+            int currentX = 0;
+            int currentY = height - 1; // Bitmaps are typically stored bottom-up
+
+            int it = 0;
+            try
+            {
+                while (reader.BaseStream.Position < reader.BaseStream.Length && currentY >= 0)
+                {
+                    byte count = reader.ReadByte();
+
+                    if (count == 0x00) // Escape character
+                    {
+                        byte command = reader.ReadByte();
+                        it++;
+                        //GenerateBitmapFromData(decompressed, null, width, height, 4, palette).Save(it.ToString()+".BMP");
+                        switch (command)
+                        {
+                            case 0x00: // End of Line (EOL)
+                                currentX = 0;
+                                currentY--;
+                                // Align to next row's start in decompressed array (if not already there)
+                                // This implicit padding is handled by currentX=0 and the `bytesPerOutputRow` calculation
+                                // as we move to the next row.
+                                break;
+                            case 0x01: // End of Bitmap (EOB)
+                                goto EndDecompression; // Exit loop
+                            case 0x02: // Delta
+                                int dx = reader.ReadByte();
+                                int dy = reader.ReadByte();
+                                currentX += dx;
+                                currentY -= dy; // Move up for OS/2 bitmaps
+                                break;
+                            default: // Absolute Mode: 'command' is the number of pixels
+                                int numPixelsToRead = command;
+                                int numBytesToRead = (numPixelsToRead + 1) / 2; // Each byte holds 2 pixels (4-bit)
+
+                                for (int i = 0; i < numBytesToRead; i++)
+                                {
+                                    byte twoPixels = reader.ReadByte();
+                                    if (currentX < width)
+                                    {
+                                        Set4BitPixel(decompressed, currentX, currentY, (byte)((twoPixels >> 4) & 0x0F), width, uncompressedBytesPerRow);
+                                        currentX++;
+                                    }
+                                    if (currentX < width)
+                                    {
+                                        Set4BitPixel(decompressed, currentX, currentY, (byte)(twoPixels & 0x0F), width, uncompressedBytesPerRow);
+                                        currentX++;
+                                    }
+                                }
+                                // Absolute Mode padding: Data is padded to a word boundary (16-bit, 2 bytes)
+                                if (numBytesToRead % 2 != 0)
+                                {
+                                    reader.ReadByte(); // Read padding byte
+                                }
+                                break;
+                        }
+                    }
+                    else // Encoded Mode: 'count' pixels, followed by the two 4-bit values (one byte)
+                    {
+                        byte twoPixels = reader.ReadByte();
+                        byte pixel1 = (byte)((twoPixels >> 4) & 0x0F);
+                        byte pixel2 = (byte)(twoPixels & 0x0F);
+
+                        for (int i = 0; i < count; i++)
+                        {
+                            if (currentX < width)
+                            {
+                                Set4BitPixel(decompressed, currentX, currentY, i % 2 == 0 ? pixel1 : pixel2, width, uncompressedBytesPerRow);
+                                currentX++;
+                            }
+                            else
+                            {
+                                // If we hit width limit, move to next row (should ideally be EOL before this)
+                                // This might indicate an invalid stream or that the 'count' spans multiple lines.
+                                // Assuming 'count' applies to current line.
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (EndOfStreamException)
+            {
+                Console.WriteLine("Warning: Unexpected end of compressed RLE4 data stream.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error during RLE4 decompression: {ex.Message}");
+                return null;
+            }
+
+        EndDecompression:
+            return decompressed;
+        }
+
+        private static byte[] DecompressRLE8(byte[] compressedData, int width, int height)
+        {
+            // RLE8: 8 bits per pixel (1 byte per pixel).
+            // Similar RLE scheme to RLE4, but values are 1 byte.
+            // - Byte 1: Count (N)
+            // - Byte 2: Pixel value (P)
+            //   -> N occurrences of P are repeated.
+            // - If Byte 1 == 0:
+            //   - Byte 2 == 0: End of scanline (EOL)
+            //   - Byte 2 == 1: End of bitmap (EOB)
+            //   - Byte 2 == 2: Delta (Byte 3 = X, Byte 4 = Y offset)
+            //   - Byte 2 > 2: Absolute mode: Byte 2 (N) is number of *pixels* to read, followed by N bytes.
+            //     The N bytes are padded to a word (16-bit) boundary.
+
+            int uncompressedBytesPerRow = ((width + 3) / 4) * 4; // Padded to 4-byte boundary
+            byte[] decompressed = new byte[uncompressedBytesPerRow * height];
+            MemoryStream ms = new MemoryStream(compressedData);
+            BinaryReader reader = new BinaryReader(ms);
+
+            int currentX = 0;
+            int currentY = height - 1; // Bitmaps are typically stored bottom-up
+
+            try
+            {
+                while (reader.BaseStream.Position < reader.BaseStream.Length && currentY >= 0)
+                {
+                    byte count = reader.ReadByte();
+
+                    if (count == 0x00) // Escape character
+                    {
+                        byte command = reader.ReadByte();
+                        switch (command)
+                        {
+                            case 0x00: // End of Line (EOL)
+                                currentX = 0;
+                                currentY--;
+                                break;
+                            case 0x01: // End of Bitmap (EOB)
+                                goto EndDecompression; // Exit loop
+                            case 0x02: // Delta
+                                int dx = reader.ReadByte();
+                                int dy = reader.ReadByte();
+                                currentX += dx;
+                                currentY -= dy; // Move up for OS/2 bitmaps
+                                break;
+                            default: // Absolute Mode: 'command' is the number of pixels
+                                int numPixelsToRead = command;
+                                for (int i = 0; i < numPixelsToRead; i++)
+                                {
+                                    byte pixelValue = reader.ReadByte();
+                                    if (currentX < width)
+                                    {
+                                        Set8BitPixel(decompressed, currentX, currentY, pixelValue, width, uncompressedBytesPerRow);
+                                        currentX++;
+                                    }
+                                }
+                                // Absolute Mode padding: Data is padded to a word boundary (16-bit, 2 bytes)
+                                if (numPixelsToRead % 2 != 0)
+                                {
+                                    reader.ReadByte(); // Read padding byte
+                                }
+                                break;
+                        }
+                    }
+                    else // Encoded Mode: 'count' pixels, followed by pixel value
+                    {
+                        byte pixelValue = reader.ReadByte();
+                        for (int i = 0; i < count; i++)
+                        {
+                            if (currentX < width)
+                            {
+                                Set8BitPixel(decompressed, currentX, currentY, pixelValue, width, uncompressedBytesPerRow);
+                                currentX++;
+                            }
+                            else
+                            {
+                                break; // Reached end of line, should be EOL next
+                            }
+                        }
+                    }
+                }
+            }
+            catch (EndOfStreamException)
+            {
+                Console.WriteLine("Warning: Unexpected end of compressed RLE8 data stream.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error during RLE8 decompression: {ex.Message}");
+                return null;
+            }
+
+        EndDecompression:
+            return decompressed;
+        }
+
+        private static byte[] DecompressRLE24(byte[] compressedData, int width, int height)
+        {
+            // RLE24: 24 bits per pixel (3 bytes per pixel).
+            // RLE for 24bpp is simpler, usually just run-length encoding.
+            // - Byte 1: Count (N)
+            // - Bytes 2,3,4: BGR color value
+            //   -> N occurrences of BGR color are repeated.
+            // There might be special codes (0x00 followed by command), but often 24bpp is just simple runs.
+            // We'll implement the simple run mode, as explicit OS/2 RLE24 documentation is scarce.
+            // If a file uses complex RLE24 (like 0x00 escape codes), this would need adjustment.
+
+            int uncompressedBytesPerRow = (((width * 3 + 3) / 4) * 4); // Padded to 4-byte boundary
+            byte[] decompressed = new byte[uncompressedBytesPerRow * height];
+            MemoryStream ms = new MemoryStream(compressedData);
+            BinaryReader reader = new BinaryReader(ms);
+
+            int currentX = 0;
+            int currentY = height - 1; // Bitmaps are typically stored bottom-up
+
+            try
+            {
+                while (reader.BaseStream.Position < reader.BaseStream.Length && currentY >= 0)
+                {
+                    byte count = reader.ReadByte();
+
+                    if (count == 0x00)
+                    {
+                        // This is a common pattern for special codes in RLE.
+                        // For 24bpp, the common sub-codes are EOL, EOB, Delta.
+                        // We'll use a pragmatic approach, similar to RLE4/RLE8 special codes.
+                        byte command = reader.ReadByte();
+                        switch (command)
+                        {
+                            case 0x00: // End of Line (EOL)
+                                currentX = 0;
+                                currentY--;
+                                break;
+                            case 0x01: // End of Bitmap (EOB)
+                                goto EndDecompression;
+                            case 0x02: // Delta
+                                int dx = reader.ReadByte();
+                                int dy = reader.ReadByte();
+                                currentX += dx;
+                                currentY -= dy;
+                                break;
+                            default: // Absolute Mode: 'command' is the number of pixels
+                                     // For 24bpp absolute mode, it's 'command' * 3 bytes.
+                                int numPixelsToRead = command;
+                                for (int i = 0; i < numPixelsToRead; i++)
+                                {
+                                    byte b = reader.ReadByte();
+                                    byte g = reader.ReadByte();
+                                    byte r = reader.ReadByte();
+                                    if (currentX < width)
+                                    {
+                                        Set24BitPixel(decompressed, currentX, currentY, b, g, r, width, uncompressedBytesPerRow);
+                                        currentX++;
+                                    }
+                                }
+                                // Absolute Mode padding: Data is padded to a word boundary (16-bit)
+                                // For 24bpp, this means padding to an even number of bytes for the data block.
+                                // If (numPixelsToRead * 3) is odd, add a padding byte.
+                                if ((numPixelsToRead * 3) % 2 != 0)
+                                {
+                                    reader.ReadByte(); // Read padding byte
+                                }
+                                break;
+                        }
+                    }
+                    else // Encoded Mode: 'count' pixels, followed by BGR value
+                    {
+                        byte b = reader.ReadByte();
+                        byte g = reader.ReadByte();
+                        byte r = reader.ReadByte();
+                        for (int i = 0; i < count; i++)
+                        {
+                            if (currentX < width)
+                            {
+                                Set24BitPixel(decompressed, currentX, currentY, b, g, r, width, uncompressedBytesPerRow);
+                                currentX++;
+                            }
+                            else
+                            {
+                                break; // Reached end of line, should be EOL next
+                            }
+                        }
+                    }
+                }
+            }
+            catch (EndOfStreamException)
+            {
+                Console.WriteLine("Warning: Unexpected end of compressed RLE24 data stream.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error during RLE24 decompression: {ex.Message}");
+                return null;
+            }
+
+        EndDecompression:
+            return decompressed;
+        }
+
+        // Helper to calculate the starting index of a row in the decompressed array.
+        // Bitmap data is usually stored bottom-up, so row 0 in the image is height-1 in the array.
+        private static int GetRowStartIndex(int y, int height, int uncompressedBytesPerRow)
+        {
+            return (height - 1 - y) * uncompressedBytesPerRow;
+        }
+
+        // Set a 4-bit pixel (packed in bytes)
+        private static void Set4BitPixel(byte[] data, int x, int y, byte pixelValue, int width, int uncompressedBytesPerRow)
+        {
+            int rowStart = GetRowStartIndex(y, (int)Math.Ceiling((double)data.Length / uncompressedBytesPerRow), uncompressedBytesPerRow);
+            int byteIndex = rowStart + (x / 2); // Each byte holds two 4-bit pixels
+
+            if (x % 2 == 0) // First pixel in the byte (upper 4 bits)
+            {
+                data[byteIndex] = (byte)((data[byteIndex] & 0x0F) | (pixelValue << 4));
+            }
+            else // Second pixel in the byte (lower 4 bits)
+            {
+                data[byteIndex] = (byte)((data[byteIndex] & 0xF0) | pixelValue);
+            }
+        }
+
+        // Set an 8-bit pixel
+        private static void Set8BitPixel(byte[] data, int x, int y, byte pixelValue, int width, int uncompressedBytesPerRow)
+        {
+            int rowStart = GetRowStartIndex(y, (int)Math.Ceiling((double)data.Length / uncompressedBytesPerRow), uncompressedBytesPerRow);
+            data[rowStart + x] = pixelValue;
+        }
+
+        // Set a 24-bit pixel (BGR order)
+        private static void Set24BitPixel(byte[] data, int x, int y, byte b, byte g, byte r, int width, int uncompressedBytesPerRow)
+        {
+            int rowStart = GetRowStartIndex(y, (int)Math.Ceiling((double)data.Length / uncompressedBytesPerRow), uncompressedBytesPerRow);
+            int pixelStart = rowStart + (x * 3);
+            data[pixelStart] = b;
+            data[pixelStart + 1] = g;
+            data[pixelStart + 2] = r;
         }
 
         private static Bitmap Decode_BITMAP_OS2_ArrayPart(byte[] bmpData, byte[] resData)

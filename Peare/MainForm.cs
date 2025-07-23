@@ -181,6 +181,11 @@ namespace Peare
                     string val = RT_DISPLAYINFO.Get(resData);
                     flowLayoutPanel1.Controls.Add(GetTextbox(val));
                 }
+                else if (typeName == "RT_DLGINCLUDE")
+                {
+                    string val = RT_DLGINCLUDE.Get(resData);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                }
                 else if (typeName == "RT_POINTER")
                 {
                     bool result = false;
