@@ -13,9 +13,9 @@ namespace PeareModule
             return Get(data, null, out _);
         }
 
-        public static string Get(byte[] data, ModuleResources.ModuleProperties properties, out List<Bitmap> bitmaps)
+        public static string Get(byte[] data, ModuleResources.ModuleProperties properties, out List<Img> imgs)
         {
-            bitmaps = new List<Bitmap>();
+            imgs = new List<Img>();
 
             if (data == null || data.Length < 6)
                 return "Invalid data";
@@ -67,7 +67,7 @@ namespace PeareModule
                 {
                     if (properties != null)
                     {
-                        bitmaps.Add(RT_CURSOR.Get(
+                        imgs.Add(RT_CURSOR.Get(
                             ModuleResources.OpenResource(properties,
                             "RT_CURSOR",
                             nID.ToString(),

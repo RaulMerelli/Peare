@@ -14,11 +14,11 @@ namespace PeareModule
     {
         // This is an entrypoint also for RT_POINTER. A bitmap array can be the base for both the types.
         // This return as list of Bitmap for compatibility with OS/2 Bitmap Array
-        public static List<Bitmap> Get(byte[] resData)
+        public static List<Img> Get(byte[] resData)
         {
             // We'll use ConcurrentBag<Tuple<int, Bitmap>> to store the index and bitmap
             // so we can reorder at the end.
-            var parallelResults = new ConcurrentBag<Tuple<int, Bitmap>>();
+            var parallelResults = new ConcurrentBag<Tuple<int, Img>>();
 
             try
             {
@@ -87,13 +87,13 @@ namespace PeareModule
                         byte[] bmpData = new byte[currentBmpSize];
                         Buffer.BlockCopy(resData, currentBmpOffset, bmpData, 0, currentBmpSize);
 
-                        Bitmap bmp = TryDecodeBitmap(bmpData, resData);
-                        bool imageDecoded = bmp != null;
+                        Img img = TryDecodeBitmap(bmpData, resData);
+                        bool imageDecoded = img != null;
 
                         if (imageDecoded)
                         {
                             // Add a tuple (currentOriginalIndex, bitmap) in ConcurrentBag
-                            parallelResults.Add(Tuple.Create(currentOriginalIndex, bmp));
+                            parallelResults.Add(Tuple.Create(currentOriginalIndex, img));
                         }
 
                         string status = imageDecoded ? "loaded successfully" : "failed to load";
@@ -104,12 +104,12 @@ namespace PeareModule
                 }
                 else // Not an OS/2 BITMAPARRAYHEADER, try to decode as a single bitmap
                 {
-                    Bitmap bmp = TryDecodeBitmap(resData, resData);
-                    bool imageDecoded = bmp != null;
+                    Img img = TryDecodeBitmap(resData, resData);
+                    bool imageDecoded = img != null;
 
                     if (imageDecoded)
                     {
-                        parallelResults.Add(Tuple.Create(0, bmp)); // Add with index 0
+                        parallelResults.Add(Tuple.Create(0, img)); // Add with index 0
                     }
 
                     string status = imageDecoded ? "loaded successfully" : "failed to load";
@@ -122,43 +122,42 @@ namespace PeareModule
             {
                 Console.WriteLine("Failed to process bitmap data: " + ex.Message);
             }
-            return new List<Bitmap>();
+            return new List<Img>();
         }
 
-        private static Bitmap TryDecodeBitmap(byte[] data, byte[] fullData)
+        private static Img TryDecodeBitmap(byte[] data, byte[] fullData)
         {
-            Bitmap bmp = Decode_BITMAP(data, fullData);
-            if (bmp != null)
+            Img img = Decode_BITMAP(data, fullData);
+            if (img != null)
             {
-                return bmp;
+                return img;
             }
 
-            bmp = Decode_RT_POINTER_V1(data, fullData);
-            if (bmp != null)
+            img = Decode_RT_POINTER_V1(data, fullData);
+            if (img != null)
             {
                 Console.WriteLine("Data was pointer. Decoded with Decode_RT_POINTER.");
-                return bmp;
+                return img;
             }
 
-            bmp = Decode_RT_POINTER_V2(data, fullData);
-            if (bmp != null)
+            img = Decode_RT_POINTER_V2(data, fullData);
+            if (img != null)
             {
                 Console.WriteLine("Data was pointer. Decoded with Decode_RT_POINTER_V2.");
-                return bmp;
+                return img;
             }
 
-            bmp = Decode_BITMAP_Win1_Win2(data);
-            if (bmp != null)
+            img = Decode_BITMAP_Win1_Win2(data);
+            if (img != null)
             {
                 Console.WriteLine("Data was bitmap. Decoded with Decode_BITMAP_Win1_Win2.");
-                return bmp;
+                return img;
             }
 
             return null;
         }
 
-
-        public static Bitmap Decode_BITMAP_Win1_Win2(byte[] resourceData)
+        public static Img Decode_BITMAP_Win1_Win2(byte[] resourceData)
         {
             // Check for null input data
             if (resourceData == null)
@@ -276,10 +275,14 @@ namespace PeareModule
                 }
             }
 
-            return bitmap;
+            Img img = new Img();
+            img.Bitmap = bitmap;
+            img.BitCount = 1;
+            img.Size = new Size(width, height);
+            return img;
         }
 
-        private static Bitmap Decode_BITMAP(byte[] bmpData, byte[] resData)
+        private static Img Decode_BITMAP(byte[] bmpData, byte[] resData)
         {
             try
             {
@@ -322,7 +325,13 @@ namespace PeareModule
                             using (MemoryStream ms = new MemoryStream(bmpData))
                             {
                                 Console.WriteLine("Data was bitmap. Decoded with GDI+.");
-                                return new Bitmap(ms);
+                                Bitmap bmp = new Bitmap(ms);
+
+                                Img img = new Img();
+                                img.BitCount = Image.GetPixelFormatSize(bmp.PixelFormat);
+                                img.Size = new Size(bmp.Width, bmp.Height);
+                                img.Bitmap = bmp;
+                                return img;
                             }
                         }
                         catch
@@ -380,7 +389,13 @@ namespace PeareModule
                         bw.Write(bmpData);
                         ms.Position = 0;
                         Console.WriteLine("Data was bitmap. Decoded after stripping the first 14 bytes with Windows-style DIB.");
-                        return new Bitmap(ms);
+                        Bitmap bmp = new Bitmap(ms);
+
+                        Img img = new Img();
+                        img.BitCount = Image.GetPixelFormatSize(bmp.PixelFormat);
+                        img.Size = new Size(bmp.Width, bmp.Height);
+                        img.Bitmap = bmp;
+                        return img;
                     }
                 }
                 catch (Exception ex)
@@ -397,7 +412,7 @@ namespace PeareModule
             }
         }
 
-        private static Bitmap Decode_RT_POINTER_V1(byte[] CIresData, byte[] bitmapArray)
+        private static Img Decode_RT_POINTER_V1(byte[] CIresData, byte[] bitmapArray)
         {
             using (var ms = new MemoryStream(CIresData))
             using (var reader = new BinaryReader(ms))
@@ -412,16 +427,16 @@ namespace PeareModule
                 // PT pointer
                 if (header != 0x4943 && header != 0x4349 && header != 0x5043 && header != 0x5043 && header != 0x5450) 
                     return null; 
-                _ = reader.ReadUInt32(); // fileSize
-                ushort xHotspotMask = reader.ReadUInt16(); // xHotspot
-                ushort yHotspotMask = reader.ReadUInt16(); // yHotspot
+                _ = reader.ReadUInt32();                     // fileSize
+                ushort xHotspotMask = reader.ReadUInt16();   // xHotspot
+                ushort yHotspotMask = reader.ReadUInt16();   // yHotspot
                 uint bitmapOffsetMask = reader.ReadUInt32();
 
-                if (reader.ReadUInt32() != 12) return null; // BitmapCoreHeader size
+                if (reader.ReadUInt32() != 12) return null;  // BitmapCoreHeader size
                 ushort widthMask = reader.ReadUInt16();
-                ushort heightMask = reader.ReadUInt16(); // This is double the height of the bitmap!
-                ushort planesMask = reader.ReadUInt16(); // planes
-                ushort bppMask = reader.ReadUInt16(); // bpp (should be 1)
+                ushort heightMask = reader.ReadUInt16();     // This is double the height of the bitmap!
+                ushort planesMask = reader.ReadUInt16();     // planes
+                ushort bppMask = reader.ReadUInt16();        // bpp (should be 1)
 
                 if (bppMask < 1)
                 {
@@ -531,7 +546,7 @@ namespace PeareModule
             }
         }
 
-        private static Bitmap Decode_RT_POINTER_V2(byte[] CIresData, byte[] bitmapArray)
+        private static Img Decode_RT_POINTER_V2(byte[] CIresData, byte[] bitmapArray)
         {
             using (var ms = new MemoryStream(CIresData))
             using (var reader = new BinaryReader(ms))
@@ -692,7 +707,8 @@ namespace PeareModule
                 }
             }
         }
-        private static Bitmap Decode_BITMAP_OS2_V2(byte[] data, byte[] resData)
+
+        private static Img Decode_BITMAP_OS2_V2(byte[] data, byte[] resData)
         {
             ushort usType = BitConverter.ToUInt16(data, 0);
 
@@ -1169,7 +1185,7 @@ namespace PeareModule
             data[pixelStart + 2] = r;
         }
 
-        private static Bitmap Decode_BITMAP_OS2_ArrayPart(byte[] bmpData, byte[] resData)
+        private static Img Decode_BITMAP_OS2_ArrayPart(byte[] bmpData, byte[] resData)
         {
             try
             {
@@ -1267,7 +1283,7 @@ namespace PeareModule
             }
         }
 
-        private static Bitmap Decode_BITMAP_OS2_V1(byte[] data, byte[] resData)
+        private static Img Decode_BITMAP_OS2_V1(byte[] data, byte[] resData)
         {
             try
             {
@@ -1327,7 +1343,7 @@ namespace PeareModule
             }
         }
 
-        public static Bitmap GenerateBitmapFromData(byte[] pixelData, byte[] maskData, int width, int height, int bitCount, Color[] palette)
+        public static Img GenerateBitmapFromData(byte[] pixelData, byte[] maskData, int width, int height, int bitCount, Color[] palette)
         {
             // Unified function to decode the bitmap given the data.
             // It is made to work with everything, Windows Bitmaps, Icons, Cursors and OS/2 Bitmaps, Icons, Pointers etc.
@@ -1445,7 +1461,11 @@ namespace PeareModule
             }
 
             bmp.UnlockBits(bmpData);
-            return bmp;
+            Img img = new Img();
+            img.BitCount = bitCount;
+            img.Size = new Size((int)width, (int)height);
+            img.Bitmap = bmp;
+            return img;
         }
 
         public static void CopyLarge(byte[] source, long sourceOffset, byte[] destination, int destOffset, long count)

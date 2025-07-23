@@ -6,7 +6,7 @@ namespace PeareModule
 {
     public static class RT_CURSOR
     {
-        public static Bitmap Get(byte[] resData)
+        public static Img Get(byte[] resData)
         {
             if (resData.Length > 4 &&
                 resData[0] == 0x89 && resData[1] == 0x50 &&
@@ -14,7 +14,13 @@ namespace PeareModule
             {
                 using (var ms = new MemoryStream(resData))
                 {
-                    return new Bitmap(ms); // PNG cursor, does it exists?
+                    Bitmap bmp = new Bitmap(ms);
+
+                    Img img = new Img();
+                    img.BitCount = Image.GetPixelFormatSize(bmp.PixelFormat);
+                    img.Size = new Size(bmp.Width, bmp.Height);
+                    img.Bitmap = bmp;
+                    return img;
                 }
             }
 
@@ -38,8 +44,6 @@ namespace PeareModule
             {
                 Console.WriteLine("Invalid bitmap dimensions or bit count.");
                 return RT_ICON.Get_ICON_Win1_Win2(resData);
-                ModuleResources.DumpRaw(resData);
-                return new Bitmap(1, 1);
             }
 
             long pixelDataOffset = hotspotOffset + biSize + paletteEntries * 4;

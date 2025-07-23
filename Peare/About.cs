@@ -33,7 +33,7 @@ namespace Peare
                     "RT_ICON", 
                     "2", 
                     out _, 
-                    out _));
+                    out _)).Bitmap;
             }
             catch 
             {

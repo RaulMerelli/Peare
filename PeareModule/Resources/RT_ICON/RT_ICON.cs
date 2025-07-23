@@ -7,7 +7,7 @@ namespace PeareModule
 {
     public static class RT_ICON
     {
-        public static Bitmap Get(byte[] resData)
+        public static Img Get(byte[] resData)
         {
             if (resData.Length > 4 &&
                 resData[0] == 0x89 && resData[1] == 0x50 &&
@@ -15,7 +15,14 @@ namespace PeareModule
             {
                 using (var ms = new MemoryStream(resData))
                 {
-                    return new Bitmap(ms); // PNG format
+                    // PNG format
+                    Bitmap bmp = new Bitmap(ms);
+
+                    Img img = new Img();
+                    img.BitCount = Image.GetPixelFormatSize(bmp.PixelFormat);
+                    img.Size = new Size(bmp.Width, bmp.Height);
+                    img.Bitmap = bmp;
+                    return img;
                 }
             }
 
@@ -81,12 +88,18 @@ namespace PeareModule
             return RT_BITMAP.GenerateBitmapFromData(pixelData, maskData, width, height, bitCount, palette);
         }
 
-        public static Bitmap Get_ICON_Win1_Win2(byte[] resData)
+        public static Img Get_ICON_Win1_Win2(byte[] resData)
         {
+            Img img = new Img();
             if (resData == null || resData.Length < 14) // Minimum for the common header
             {
                 Console.WriteLine("Error: Windows 1.0 resource data too short for header.");
-                return new Bitmap(1, 1);
+                Bitmap bmp = new Bitmap(1, 1);
+
+                img.BitCount = 0;
+                img.Size = new Size(0, 0);
+                img.Bitmap = bmp;
+                return img;
             }
 
             // 1. Read the common header (14 bytes)
@@ -105,7 +118,12 @@ namespace PeareModule
             if (width == 0 || height == 0 || bytesPerLine == 0)
             {
                 Console.WriteLine("Error: Invalid dimensions or bytesPerLine in Windows 1.0 resource.");
-                return new Bitmap(1, 1);
+                Bitmap bmp = new Bitmap(1, 1);
+
+                img.BitCount = 0;
+                img.Size = new Size(0, 0);
+                img.Bitmap = bmp;
+                return img;
             }
 
             int headerSize = 14; // Size of the header we've identified
@@ -115,7 +133,12 @@ namespace PeareModule
             if (headerSize + maskDataSize * 2 > resData.Length)
             {
                 Console.WriteLine($"Error: Truncated Windows 1.0 resource data. Expected {maskDataSize * 2} bytes for masks, got {resData.Length - headerSize}.");
-                return new Bitmap(1, 1);
+                Bitmap bmp = new Bitmap(1, 1);
+
+                img.BitCount = 0;
+                img.Size = new Size(0, 0);
+                img.Bitmap = bmp;
+                return img;
             }
 
             byte[] mask1Data = new byte[maskDataSize];
@@ -135,7 +158,12 @@ namespace PeareModule
             catch (ArgumentException ex)
             {
                 Console.WriteLine($"Error creating bitmap {width}x{height}: {ex.Message}");
-                return new Bitmap(1, 1);
+                Bitmap bmp = new Bitmap(1, 1);
+
+                img.BitCount = 0;
+                img.Size = new Size(0, 0);
+                img.Bitmap = bmp;
+                return img;
             }
 
             // Colors for monochrome cursor with transparency
@@ -189,7 +217,10 @@ namespace PeareModule
                 }
             }
 
-            return resultBitmap;
+            img.BitCount = Image.GetPixelFormatSize(resultBitmap.PixelFormat);
+            img.Size = new Size(resultBitmap.Width, resultBitmap.Height);
+            img.Bitmap = resultBitmap;
+            return img;
         }
     }
 }

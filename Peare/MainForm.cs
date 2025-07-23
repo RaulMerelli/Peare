@@ -118,13 +118,13 @@ namespace Peare
         {
             if (!e.Node.IsExpanded && e.Node.Nodes.Count > 0)
             {
-                e.Node.ImageKey = "FolderOpen";
-                e.Node.SelectedImageKey = "FolderOpen";
+                e.Node.ImageKey = "RT_FOLDEROPEN";
+                e.Node.SelectedImageKey = "RT_FOLDEROPEN";
             }
             else if (e.Node.IsExpanded && e.Node.Nodes.Count > 0)
             {
-                e.Node.ImageKey = "FolderClose";
-                e.Node.SelectedImageKey = "FolderClose";
+                e.Node.ImageKey = "RT_FOLDER_CLOSE";
+                e.Node.SelectedImageKey = "RT_FOLDER_CLOSE";
             }
         }
 
@@ -170,11 +170,11 @@ namespace Peare
                 }
                 else if (typeName == "RT_ICON")
                 {
-                    flowLayoutPanel1.Controls.Add(GetPictureBox(RT_ICON.Get(resData)));
+                    flowLayoutPanel1.Controls.Add(GetPictureBox(RT_ICON.Get(resData).Bitmap));
                 }
                 else if (typeName == "RT_CURSOR")
                 {
-                    flowLayoutPanel1.Controls.Add(GetPictureBox(RT_CURSOR.Get(resData)));
+                    flowLayoutPanel1.Controls.Add(GetPictureBox(RT_CURSOR.Get(resData).Bitmap));
                 }
                 else if (typeName == "RT_DISPLAYINFO")
                 {
@@ -199,10 +199,10 @@ namespace Peare
                 else if (typeName == "RT_POINTER")
                 {
                     bool result = false;
-                    foreach (Bitmap bmp in RT_POINTER.Get(resData))
+                    foreach (Img img in RT_POINTER.Get(resData))
                     {
                         result = true;
-                        flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(img.Bitmap));
                     }
                     if (!result)
                     {
@@ -213,10 +213,10 @@ namespace Peare
                 else if (typeName == "RT_BITMAP")
                 {
                     bool result = false;
-                    foreach (Bitmap bmp in RT_BITMAP.Get(resData))
+                    foreach (Img img in RT_BITMAP.Get(resData))
                     {
                         result = true;
-                        flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(img.Bitmap));
                     }
                     if (!result)
                     {
@@ -226,21 +226,21 @@ namespace Peare
                 }
                 else if (typeName == "RT_GROUP_ICON")
                 {
-                    List<Bitmap> bitmaps = new List<Bitmap>();
-                    string val = RT_GROUP_ICON.Get(resData, moduleProperties, out bitmaps);
-                    foreach (Bitmap bmp in bitmaps)
+                    List<Img> imgs = new List<Img>();
+                    string val = RT_GROUP_ICON.Get(resData, moduleProperties, out imgs);
+                    foreach (Img img in imgs)
                     {
-                        flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(img.Bitmap));
                     }
                     flowLayoutPanel1.Controls.Add(GetTextbox(val));
                 }
                 else if (typeName == "RT_GROUP_CURSOR")
                 {
-                    List<Bitmap> bitmaps = new List<Bitmap>();
-                    string val = RT_GROUP_CURSOR.Get(resData, moduleProperties, out bitmaps);
-                    foreach (Bitmap bmp in bitmaps)
+                    List<Img> imgs = new List<Img>();
+                    string val = RT_GROUP_CURSOR.Get(resData, moduleProperties, out imgs);
+                    foreach (Img img in imgs)
                     {
-                        flowLayoutPanel1.Controls.Add(GetPictureBox(bmp));
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(img.Bitmap));
                     }
                     flowLayoutPanel1.Controls.Add(GetTextbox(val));
                 }
@@ -389,6 +389,8 @@ namespace Peare
                 settings.WriteIfKeyNotExists("iconExt", ext, type);
             }
 
+            // Default icons. Can be changed in the settings.ini file.
+            // In a future update also in a settings section of the GUI.
             WriteIcoSection("RT_FOLDER_OPEN", shell32, "4", "folder_open"); 
             WriteIcoSection("RT_FOLDER_CLOSE", shell32, "5", "folder_close");
             WriteIcoSection("RT_DEFAULT", shell32, "1", "default_unknown_icon");
@@ -405,9 +407,9 @@ namespace Peare
             WriteIcoSection("RT_GROUP_CURSOR", shell32, "16823", "bmp");
             WriteIcoSection("RT_MANIFEST", mmcndmgr, "1098", "xml");
 
-            List<Bitmap> bitmaps = new List<Bitmap>();
+            List<Img> imgs = new List<Img>();
             Bitmap bmp = null;
-            Dictionary<string, ModuleResources.ModuleProperties> properties = new Dictionary<string, ModuleResources.ModuleProperties>();
+            Dictionary<string, ModuleResources.ModuleProperties> propertiesArray = new Dictionary<string, ModuleResources.ModuleProperties>();
             foreach (string section in settings.GetSections())
             {
                 if (!string.IsNullOrEmpty(section))
@@ -416,14 +418,26 @@ namespace Peare
                     string ordinal = settings.Read("ordinal", section);
                     string iconExt = settings.Read("iconExt", section);
 
-                    if (!properties.ContainsKey(path))
+                    if (!propertiesArray.ContainsKey(path))
                     {
-                        properties[path] = ModuleResources.GetModuleProperties(path);
+                        propertiesArray[path] = ModuleResources.GetModuleProperties(path);
                     }
-                    RT_GROUP_ICON.Get(ModuleResources.OpenResource(properties[path], "RT_GROUP_ICON", ordinal, out _, out _), properties[path], out bitmaps);
-                    if (bitmaps.Count > 0)
+                    var properties = propertiesArray[path];
+                    if ((properties.headerType == ModuleResources.HeaderType.LE && properties.versionType == ModuleResources.VersionType.OS2) ||
+                        (properties.headerType == ModuleResources.HeaderType.NE && properties.versionType == ModuleResources.VersionType.OS2) ||
+                        properties.headerType == ModuleResources.HeaderType.LX)
                     {
-                        imageList1.Images.Add(section, bitmaps.Where(x => x.Width == 16 && x.Height == 16).Last());
+                        imgs = RT_POINTER.Get(ModuleResources.OpenResource(properties, "RT_POINTER", ordinal, out _, out _));
+                    }
+                    else
+                    {
+                        RT_GROUP_ICON.Get(ModuleResources.OpenResource(properties, "RT_GROUP_ICON", ordinal, out _, out _), properties, out imgs);
+                    }
+                    if (imgs.Count > 0)
+                    {
+                        List<Img> imgsFiltered = imgs.Where(img => img.Size.Width == 16 && img.Size.Height == 16).ToList();
+                        int maxBitCount = imgsFiltered.Max(img => img.BitCount);
+                        imageList1.Images.Add(section, imgsFiltered.Where(img => img.BitCount >= maxBitCount).Last().Bitmap);
                     }
                     else if (iconExt.StartsWith("folder"))
                     {
