@@ -110,6 +110,10 @@ RT_FONT support is handcrafted, this is what is supported:
 	- variable width raster fonts
 
 
+## DLL
+
+You can use the DLL without the exe, and include it in your own project to load any kind of resource from any kind of compiled module for Windows or OS/2. Since the project is still WIP, it is not stable for production use, as DLL public methods may change from a commit to another.
+
 ## Screenshots
 
 Some examples of the software working at current status:
