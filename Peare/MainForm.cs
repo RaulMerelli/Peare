@@ -166,7 +166,7 @@ namespace Peare
                 }
                 else if (typeName == "RT_FONT")
                 {
-                    flowLayoutPanel1.Controls.Add(GetPictureBox(RT_FONT.Get(resData)));
+                    flowLayoutPanel1.Controls.Add(GetPictureBox(RT_FONT.Get(resData, moduleProperties)));
                 }
                 else if (typeName == "RT_ICON")
                 {

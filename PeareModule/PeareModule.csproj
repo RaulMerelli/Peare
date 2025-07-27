@@ -66,6 +66,7 @@
     <Compile Include="Resources\RT_FONTDIR\RT_FONTDIR.cs" />
     <Compile Include="Resources\RT_FONT\FONTINFO16.cs" />
     <Compile Include="Resources\RT_FONT\RT_FONT.cs" />
+    <Compile Include="Resources\RT_FONT\OS2_RT_FONT.cs" />
     <Compile Include="Resources\RT_GROUP_CURSOR\RT_GROUP_CURSOR.cs" />
     <Compile Include="Resources\RT_GROUP_ICON\RT_GROUP_ICON.cs" />
     <Compile Include="Resources\RT_HELPSUBTABLE\RT_HELPSUBTABLE.cs" />

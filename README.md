@@ -33,6 +33,7 @@ What is currently (at least partially) implemented right now:
 		- RT_DLGINCLUDE
 		- RT_HELPTABLE *(1)
 		- RT_HELPSUBTABLE *(1)
+		- RT_FONT *(2)
 
 	- LX (OS/2)
 		- RT_POINTER (BA, BM, IC, CI, CP, PT)
@@ -45,6 +46,7 @@ What is currently (at least partially) implemented right now:
 		- RT_DLGINCLUDE
 		- RT_HELPTABLE
 		- RT_HELPSUBTABLE
+		- RT_FONT *(2)
 
 	- LE (OS/2)
 		- RT_POINTER (BA, BM, IC, CI, CP, PT)
@@ -57,20 +59,21 @@ What is currently (at least partially) implemented right now:
 		- RT_DLGINCLUDE
 		- RT_HELPTABLE
 		- RT_HELPSUBTABLE
+		- RT_FONT *(2)
 
 	- NE (Windows)
-		- RT_MESSAGETABLE *(1)
-		- RT_NAMETABLE
+		- RT_MESSAGETABLE *(1)(3)
+		- RT_NAMETABLE *(3)
 		- RT_FONTDIR
 		- RT_FONT
 		- RT_GROUP_ICON
 		- RT_ICON
 		- RT_BITMAP
-		- RT_STRING
+		- RT_STRING *(3)
 		- RT_VERSION
 		- RT_GROUP_CURSOR
 		- RT_CURSOR
-		- RT_MENU
+		- RT_MENU *(3)
 		- RT_ACCELERATOR
 
 	- PE (Windows)
@@ -88,18 +91,23 @@ What is currently (at least partially) implemented right now:
 	- Fallback to ASCII text and raw bytes (All the formats)
 
 (1) theoretically supported, but I can't find any sample to test it
+(2) support is partial and may not work on some resources
+(3) incompatibility detected for Windows 1 and 2
 
-RT_FONT support for NE Windows is handcrafted, this is what is supported:
+RT_FONT support is handcrafted, this is what is supported:
 
-- Fnt ver. 1
+- Windows Fnt ver. 1
 	- monospace raster fonts
 	- variable width raster fonts
 	- vectors fonts
-- Fnt ver. 2
+- Windows Fnt ver. 2
 	- monospace raster fonts
-	- Fvariable width raster fonts
-- Fnt ver. 3
+	- variable width raster fonts
+- Windows Fnt ver. 3
 	- monospace raster fonts
+- OS/2 Fnt
+	- monospace raster fonts
+	- variable width raster fonts
 
 
 ## Screenshots

@@ -11,19 +11,16 @@ namespace PeareModule
 {
     public static class RT_FONT
     {
-        public static T Deserialize<T>(byte[] array) where T : struct
+        public static Bitmap Get(byte[] resData, ModuleResources.ModuleProperties properties)
         {
-            var size = Marshal.SizeOf(typeof(T));
-            var ptr = Marshal.AllocHGlobal(size);
-            Marshal.Copy(array, 0, ptr, size);
-            var s = (T)Marshal.PtrToStructure(ptr, typeof(T));
-            Marshal.FreeHGlobal(ptr);
-            return s;
-        }
-
-        public static Bitmap Get(byte[] resData)
-        {
-            FONTINFO16 header = Deserialize<FONTINFO16>(resData);
+            if ((properties.headerType == ModuleResources.HeaderType.LE && properties.versionType == ModuleResources.VersionType.OS2) ||
+                (properties.headerType == ModuleResources.HeaderType.NE && properties.versionType == ModuleResources.VersionType.OS2) ||
+                properties.headerType == ModuleResources.HeaderType.LX)
+            {
+                // Structure is different for OS/2
+                return OS2_RT_FONT.Get(resData);
+            }
+            FONTINFO16 header = ModuleResources.Deserialize<FONTINFO16>(resData);
             int dfVersion = header.dfVersion;
             int headerSize;
 
