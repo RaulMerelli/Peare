@@ -1,15 +1,19 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Runtime.InteropServices;
 using System.Text;
 
 namespace PeareModule
 {
     public static class RT_FONTDIR
     {
-        public static unsafe string Get(byte[] data)
+        public static unsafe string Get(byte[] data, ModuleResources.ModuleProperties properties)
         {
+            if ((properties.headerType == ModuleResources.HeaderType.LE && properties.versionType == ModuleResources.VersionType.OS2) ||
+                (properties.headerType == ModuleResources.HeaderType.NE && properties.versionType == ModuleResources.VersionType.OS2) ||
+                properties.headerType == ModuleResources.HeaderType.LX)
+            {
+                return OS2_RT_FONTDIR.Get(data);
+            }
+            
             if (data == null || data.Length < 2)
                 return string.Empty;
 

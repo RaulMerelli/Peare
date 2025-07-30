@@ -63,6 +63,7 @@
     <Compile Include="Resources\RT_DISPLAYINFO\RT_DISPLAYINFO.cs" />
     <Compile Include="Resources\RT_DLGINCLUDE\RT_DLGINCLUDE.cs" />
     <Compile Include="Resources\RT_FONTDIR\FONTDIRENTRY.cs" />
+    <Compile Include="Resources\RT_FONTDIR\OS2_RT_FONTDIR.cs" />
     <Compile Include="Resources\RT_FONTDIR\RT_FONTDIR.cs" />
     <Compile Include="Resources\RT_FONT\FONTINFO16.cs" />
     <Compile Include="Resources\RT_FONT\RT_FONT.cs" />

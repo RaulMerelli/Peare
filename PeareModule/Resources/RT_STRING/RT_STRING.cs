@@ -27,7 +27,7 @@ namespace PeareModule
             return value;
         }
 
-        private static string ReadLenString(byte[] data, ref int offset, int codepage, int len)
+        public static string ReadLenString(byte[] data, ref int offset, int codepage, int len)
         {
             Encoding encoding = Encoding.GetEncoding(codepage);
             Decoder decoder = encoding.GetDecoder();
@@ -51,7 +51,7 @@ namespace PeareModule
 
             string result = new string(chars);
             offset += bytesUsed;
-            return result;
+            return result.Replace('\0', ' ');
         }
 
         public static string ReadNullTerminatedString(byte[] data, ref int offset, int codepage)

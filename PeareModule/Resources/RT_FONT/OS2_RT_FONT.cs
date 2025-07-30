@@ -29,7 +29,7 @@ namespace PeareModule
 
             // Validate cell array
             if (resData.Length < offset + cellArraySize)
-                throw new InvalidOperationException("Invalid font data: Cell array incomplete");
+                return null;
 
             // Read glyph widths and offsets
             int[] glyphWidths = new int[numCharacters];

@@ -155,7 +155,7 @@ namespace Peare
             {
                 if (typeName == "RT_FONTDIR")
                 {
-                    string val = RT_FONTDIR.Get(resData);
+                    string val = RT_FONTDIR.Get(resData, moduleProperties);
                     flowLayoutPanel1.Controls.Add(GetTextbox(val));
                 }
                 else if (typeName == "RT_MENU")
