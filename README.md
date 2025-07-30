@@ -131,18 +131,20 @@ Plugin support is not yet here. I'm still thinking about how to implement it pro
 
 1. Support or expand resource types support by opening another kind of files of the original implementation. 
 This means being able to open other kind of resources from the same module or open a not supported module type.
+
 	*Example*:
 	- Expand resource types in PE by being able to open .NET resources.
 	- Being able to open jar files.
 
-2. Open resources as listed
+2. Open resources as list.
+
 	*Example*:
-	- A plugin is listing as available some new resources. A plugin can also decode it to bytes.
+	- A plugin is listing as available some new resources (1). A plugin can also decode it to bytes.
 	- A plugin can intercept the default way the program opens a resource. 
 
 3. Decode a resource, returning a List of bitmaps, a string or a control.
 
-A plugin, if not returning a control can also be used from the DLL. 
+A plugin can do more than one thing, and if not returning a control can also be used from the DLL. 
 
 ## Screenshots
 
