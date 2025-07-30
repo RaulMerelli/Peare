@@ -1,4 +1,5 @@
 
+
 # Peare
 
 *Plugin-Extendable Avdanced Resource Editor*
@@ -94,9 +95,13 @@ What is currently (at least partially) implemented right now:
 
 	- Fallback to ASCII text and raw bytes (All the formats)
 
-(1) theoretically supported, but I can't find any sample to test it
-(2) support is partial and may not work on some resources
-(3) incompatibility detected for Windows 1 and 2
+|Ref|  |
+|--|--|
+|(1)|theoretically supported, but I can't find any sample to test it|
+|(2)|support is partial and may not work on some resources|
+|(3)|incompatibility detected for Windows 1 and 2|
+
+
 
 RT_FONT support is handcrafted, this is what is supported:
 
