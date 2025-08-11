@@ -280,10 +280,40 @@ namespace Peare
                     string val = RT_STRING.Get(resData, moduleProperties);
                     flowLayoutPanel1.Controls.Add(GetTextbox(val));
                 }
+                else if (typeName == "RT_DIALOG")
+                {
+                    string val = RT_DIALOG.Get(resData, moduleProperties);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                }
                 else
                 {
-                    string val = ModuleResources.DumpRaw(resData, true);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    dynamic RawResult = ModuleResources.RawDetect(resData, moduleProperties);
+                    if (RawResult != null)
+                    {
+                        if (RawResult.GetType() == typeof(List<Bitmap>))
+                        {
+                            bool result = false;
+                            foreach (Img img in RawResult)
+                            {
+                                result = true;
+                                flowLayoutPanel1.Controls.Add(GetPictureBox(img.Bitmap));
+                            }
+                            if (!result)
+                            {
+                                string val = ModuleResources.DumpRaw(resData);
+                                flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                            }
+                        }
+                        else if (RawResult.GetType() == typeof(Bitmap))
+                        {
+                            flowLayoutPanel1.Controls.Add(GetPictureBox(RawResult));
+                        }
+                    }
+                    else
+                    {
+                        string val = ModuleResources.DumpRaw(resData, true);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
                 }
             }
 

@@ -37,6 +37,7 @@ What is currently (at least partially) implemented right now:
 		- RT_HELPSUBTABLE *(1)
 		- RT_FONT *(2)
 		- RT_FONTDIR
+		- RT_DIALOG *(2)
 
 	- LX (OS/2)
 		- RT_POINTER (BA, BM, IC, CI, CP, PT)
@@ -51,6 +52,7 @@ What is currently (at least partially) implemented right now:
 		- RT_HELPSUBTABLE
 		- RT_FONT *(2)
 		- RT_FONTDIR
+		- RT_DIALOG *(2)
 
 	- LE (OS/2)
 		- RT_POINTER (BA, BM, IC, CI, CP, PT)
@@ -65,6 +67,7 @@ What is currently (at least partially) implemented right now:
 		- RT_HELPSUBTABLE
 		- RT_FONT *(2)
 		- RT_FONTDIR *(1)
+		- RT_DIALOG *(2)
 
 	- NE (Windows)
 		- RT_MESSAGETABLE *(1)(3)

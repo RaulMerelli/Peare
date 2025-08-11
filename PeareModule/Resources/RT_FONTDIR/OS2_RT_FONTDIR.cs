@@ -10,9 +10,9 @@ namespace PeareModule
         {
             StringBuilder rcString = new StringBuilder();
 
-            int resType = BitConverter.ToInt16(resData, 0);
+            int resType = BitConverter.ToInt16(resData, 0);    // Even when the font in #1000, here is always 6 (RT_FONT)
             int numEntries = BitConverter.ToInt16(resData, 2);
-            int blockSize = BitConverter.ToInt16(resData, 4); // Always 182
+            int blockSize = BitConverter.ToInt16(resData, 4);  // Always 182
 
             rcString.AppendLine("RT_FONTDIR");
             rcString.AppendLine("{");
@@ -77,7 +77,7 @@ namespace PeareModule
                 short usKerningPairs = ReadInt16(blockData, ref localOffset);                   // 162->164
                 short sFamilyClass = ReadInt16(blockData, ref localOffset);                     // 164->166
 
-                rcString.AppendLine("    RT FONT #" + resourceId);
+                rcString.AppendLine($"    RT_FONT #" + resourceId);
                 rcString.AppendLine("    {");
                 rcString.AppendLine($"        ulIdentity = {ulIdentity}");
                 rcString.AppendLine($"        ulSize = {ulSize}");

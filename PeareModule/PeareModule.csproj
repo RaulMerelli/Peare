@@ -60,6 +60,8 @@
     <Compile Include="Resources\RT_BITMAP\ImageProperties.cs" />
     <Compile Include="Resources\RT_BITMAP\RT_BITMAP.cs" />
     <Compile Include="Resources\RT_CURSOR\RT_CURSOR.cs" />
+    <Compile Include="Resources\RT_DIALOG\OS2_RT_DIALOG.cs" />
+    <Compile Include="Resources\RT_DIALOG\RT_DIALOG.cs" />
     <Compile Include="Resources\RT_DISPLAYINFO\RT_DISPLAYINFO.cs" />
     <Compile Include="Resources\RT_DLGINCLUDE\RT_DLGINCLUDE.cs" />
     <Compile Include="Resources\RT_FONTDIR\FONTDIRENTRY.cs" />

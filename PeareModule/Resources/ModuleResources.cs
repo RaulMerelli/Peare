@@ -68,6 +68,15 @@ namespace PeareModule
             return result.ToString();
         }
 
+        public static dynamic RawDetect(byte[] resData, ModuleProperties properties)
+        {
+            if (resData.Length >= 18 && System.Text.Encoding.Default.GetString(resData.Skip(8).Take(10).ToArray()) == "OS/2 FONT ")
+            {
+                return RT_FONT.Get(resData, properties);
+            }
+            return null;
+        }
+
         public static List<string[]> ListTypesAndRes(string currentFilePath)
         {
             switch (GetModuleProperties(currentFilePath).headerType)
