@@ -2,7 +2,7 @@
 
 # Peare
 
-*Plugin-Extendable Avdanced Resource Editor*
+*Plugin-Extendable Advanced Resource Editor*
 
 <img width="472" height="442" alt="Peare icon" src="https://github.com/user-attachments/assets/bab6314a-0ae0-4c13-a3a4-d46ee26b5ab8" />
 
