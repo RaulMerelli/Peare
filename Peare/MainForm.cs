@@ -27,6 +27,23 @@ namespace Peare
         private ResourceFileFormat selectedOriginalFormat;
         private List<string> selectedConversionExtensions = new List<string>();
 
+        private sealed class PreparedFontGlyph : IDisposable
+        {
+            public Bitmap Bitmap;
+            public int CharacterCode;
+            public int DrawX;
+            public int DrawY;
+
+            public void Dispose()
+            {
+                if (Bitmap != null)
+                {
+                    Bitmap.Dispose();
+                    Bitmap = null;
+                }
+            }
+        }
+
         public MainForm()
         {
             InitializeComponent();
@@ -185,9 +202,9 @@ namespace Peare
                     }
                     else if (typeName == "RT_FONT")
                     {
-                        Bitmap bitmap = RT_FONT.Get(resData, moduleProperties);
-                        selectedDecodedResource = bitmap;
-                        flowLayoutPanel1.Controls.Add(GetPictureBox(bitmap));
+                        DecodedFont font = RT_FONT.Decode(resData, moduleProperties);
+                        selectedDecodedResource = font;
+                        ShowFontPreview(font);
                     }
                     else if (typeName == "RT_ICON")
                     {
@@ -376,6 +393,13 @@ namespace Peare
                 return true;
             }
 
+            DecodedFont decodedFont = rawResult as DecodedFont;
+            if (decodedFont != null)
+            {
+                ShowFontPreview(decodedFont);
+                return decodedFont.Glyphs.Count > 0;
+            }
+
             Bitmap bitmap = rawResult as Bitmap;
             if (bitmap != null)
             {
@@ -395,6 +419,10 @@ namespace Peare
 
         private void ClearSelectedResource()
         {
+            IDisposable disposable = selectedDecodedResource as IDisposable;
+            if (disposable != null)
+                disposable.Dispose();
+
             selectedResourceData = null;
             selectedResourceType = null;
             selectedResourceLabel = null;
@@ -588,6 +616,315 @@ namespace Peare
                 MessageBox.Show(summary, "Export all resources", MessageBoxButtons.OK,
                     failed == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
             }
+        }
+
+        private void ShowFontPreview(DecodedFont font)
+        {
+            if (font == null)
+                return;
+
+            FlowLayoutPanel fontPanel = new FlowLayoutPanel
+            {
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                Margin = new Padding(0),
+                Padding = new Padding(8)
+            };
+
+            int displayedGlyphCount = font.Glyphs.Count > 0
+                ? font.Glyphs.Count
+                : font.DeclaredGlyphCount;
+            string details = (string.IsNullOrEmpty(font.FaceName) ? "Unnamed font" : font.FaceName) +
+                " — " + (string.IsNullOrEmpty(font.FormatName) ? "FNT" : font.FormatName) +
+                " — " + (font.IsVector ? "vector" : "raster") +
+                " — " + displayedGlyphCount.ToString() + " glyphs" +
+                " — codes " + font.FirstCharacter.ToString() + "–" + font.LastCharacter.ToString() +
+                " — native height " + font.PixelHeight.ToString() + " px";
+            if (font.CodePage > 0)
+                details += " — CP" + font.CodePage.ToString();
+            else if (font.CharacterSet > 0)
+                details += " — charset " + font.CharacterSet.ToString();
+
+            fontPanel.Controls.Add(new Label
+            {
+                AutoSize = true,
+                Font = new Font(Font, FontStyle.Bold),
+                Text = details,
+                Margin = new Padding(3, 3, 3, 10)
+            });
+
+            if (!string.IsNullOrEmpty(font.PreviewMessage))
+            {
+                fontPanel.Controls.Add(new Label
+                {
+                    AutoSize = true,
+                    MaximumSize = new Size(760, 0),
+                    Text = font.PreviewMessage,
+                    Margin = new Padding(3, 0, 3, 10)
+                });
+            }
+
+            const string sampleText = "The quick brown fox jumps over the lazy dog";
+            int[] scales = new int[] { 1, 2, 3, 4 };
+            for (int i = 0; i < scales.Length; i++)
+            {
+                int scale = scales[i];
+                Bitmap sample = RenderFontText(font, sampleText, scale);
+                if (sample == null)
+                    continue;
+
+                fontPanel.Controls.Add(new Label
+                {
+                    AutoSize = true,
+                    Text = "Sample — " + (font.PixelHeight * scale).ToString() + " px (" + scale.ToString() + "×)",
+                    Margin = new Padding(3, 8, 3, 2)
+                });
+                fontPanel.Controls.Add(GetPictureBox(sample));
+            }
+
+            Bitmap glyphMap = RenderGlyphMap(font);
+            if (glyphMap != null)
+            {
+                fontPanel.Controls.Add(new Label
+                {
+                    AutoSize = true,
+                    Text = "Glyph map",
+                    Margin = new Padding(3, 12, 3, 2)
+                });
+                fontPanel.Controls.Add(GetPictureBox(glyphMap));
+            }
+
+            flowLayoutPanel1.Controls.Add(fontPanel);
+        }
+
+        private Bitmap RenderFontText(DecodedFont font, string text, int scale)
+        {
+            if (font == null || font.Glyphs == null || font.Glyphs.Count == 0 || string.IsNullOrEmpty(text))
+                return null;
+            if (scale < 1)
+                scale = 1;
+
+            List<PreparedFontGlyph> prepared = new List<PreparedFontGlyph>();
+            int penX = 0;
+            int minimumX = 0;
+            int minimumY = 0;
+            int maximumX = 0;
+            int maximumY = Math.Max(1, font.LineHeight * scale);
+
+            try
+            {
+                for (int i = 0; i < text.Length; i++)
+                {
+                    FontGlyph glyph = ResolveFontGlyph(font, text[i]);
+                    if (glyph == null)
+                    {
+                        penX += Math.Max(1, font.PixelHeight / 2) * scale;
+                        maximumX = Math.Max(maximumX, penX);
+                        continue;
+                    }
+
+                    int offsetX;
+                    int offsetY;
+                    Bitmap bitmap = RT_FONT.RenderGlyph(glyph, scale, out offsetX, out offsetY);
+                    PreparedFontGlyph item = new PreparedFontGlyph
+                    {
+                        Bitmap = bitmap,
+                        CharacterCode = glyph.CharacterCode,
+                        DrawX = penX + offsetX,
+                        DrawY = offsetY
+                    };
+                    prepared.Add(item);
+
+                    minimumX = Math.Min(minimumX, item.DrawX);
+                    minimumY = Math.Min(minimumY, item.DrawY);
+                    maximumX = Math.Max(maximumX, item.DrawX + bitmap.Width);
+                    maximumY = Math.Max(maximumY, item.DrawY + bitmap.Height);
+
+                    penX += Math.Max(1, glyph.AdvanceX) * scale;
+                    maximumX = Math.Max(maximumX, penX);
+                }
+
+                const int margin = 8;
+                int width = Math.Max(1, maximumX - minimumX + margin * 2);
+                int height = Math.Max(1, maximumY - minimumY + margin * 2);
+                Bitmap result = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+                using (Graphics graphics = Graphics.FromImage(result))
+                {
+                    graphics.Clear(Color.White);
+                    graphics.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceOver;
+                    for (int i = 0; i < prepared.Count; i++)
+                    {
+                        PreparedFontGlyph item = prepared[i];
+                        graphics.DrawImageUnscaled(
+                            item.Bitmap,
+                            margin + item.DrawX - minimumX,
+                            margin + item.DrawY - minimumY);
+                    }
+                }
+
+                return result;
+            }
+            finally
+            {
+                for (int i = 0; i < prepared.Count; i++)
+                    prepared[i].Dispose();
+            }
+        }
+
+        private FontGlyph ResolveFontGlyph(DecodedFont font, char value)
+        {
+            FontGlyph glyph = font.FindGlyph((int)value);
+            if (glyph != null)
+                return glyph;
+
+            glyph = font.FindGlyph(font.DefaultCharacter);
+            if (glyph != null)
+                return glyph;
+
+            glyph = font.FindGlyph((int)'?');
+            if (glyph != null)
+                return glyph;
+
+            return font.FindGlyph((int)' ');
+        }
+
+        private Bitmap RenderGlyphMap(DecodedFont font)
+        {
+            if (font == null || font.Glyphs == null || font.Glyphs.Count == 0)
+                return null;
+
+            int scale = font.IsVector ? 1 : (font.PixelHeight <= 16 ? 2 : 1);
+            int columns = 16;
+            List<PreparedFontGlyph> prepared = new List<PreparedFontGlyph>();
+            List<int> widths = new List<int>();
+            List<int> heights = new List<int>();
+
+            try
+            {
+                for (int i = 0; i < font.Glyphs.Count; i++)
+                {
+                    FontGlyph glyph = font.Glyphs[i];
+                    if (glyph == null)
+                    {
+                        prepared.Add(null);
+                        continue;
+                    }
+
+                    int offsetX;
+                    int offsetY;
+                    Bitmap bitmap = RT_FONT.RenderGlyph(glyph, scale, out offsetX, out offsetY);
+                    prepared.Add(new PreparedFontGlyph
+                    {
+                        Bitmap = bitmap,
+                        CharacterCode = glyph.CharacterCode
+                    });
+
+                    if (bitmap.Width > 0)
+                        widths.Add(bitmap.Width);
+                    if (bitmap.Height > 0)
+                        heights.Add(bitmap.Height);
+                }
+
+                int typicalWidth = GetRobustGlyphDimension(widths, Math.Max(8, font.PixelHeight * scale));
+                int typicalHeight = GetRobustGlyphDimension(heights, Math.Max(8, font.LineHeight * scale));
+
+                int imageAreaWidth = Math.Max(
+                    typicalWidth,
+                    Math.Max(8, Math.Min(font.PixelHeight * 2 * scale, 96)));
+                int imageAreaHeight = Math.Max(
+                    typicalHeight,
+                    Math.Max(8, Math.Min(font.LineHeight * scale, 96)));
+                imageAreaWidth = Math.Min(imageAreaWidth, 96);
+                imageAreaHeight = Math.Min(imageAreaHeight, 96);
+
+                int cellWidth = imageAreaWidth + 12;
+                int cellHeight = imageAreaHeight + 18;
+                int rows = (font.Glyphs.Count + columns - 1) / columns;
+                Bitmap result = new Bitmap(
+                    Math.Max(1, columns * cellWidth + 1),
+                    Math.Max(1, rows * cellHeight + 1),
+                    PixelFormat.Format32bppArgb);
+
+                using (Graphics graphics = Graphics.FromImage(result))
+                using (Pen gridPen = new Pen(Color.LightGray))
+                using (Font codeFont = new Font(FontFamily.GenericMonospace, 7, FontStyle.Regular, GraphicsUnit.Point))
+                {
+                    graphics.Clear(Color.White);
+                    graphics.InterpolationMode = font.IsVector
+                        ? System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic
+                        : System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                    graphics.PixelOffsetMode = font.IsVector
+                        ? System.Drawing.Drawing2D.PixelOffsetMode.HighQuality
+                        : System.Drawing.Drawing2D.PixelOffsetMode.Half;
+
+                    for (int i = 0; i < font.Glyphs.Count; i++)
+                    {
+                        int column = i % columns;
+                        int row = i / columns;
+                        int cellX = column * cellWidth;
+                        int cellY = row * cellHeight;
+                        graphics.DrawRectangle(gridPen, cellX, cellY, cellWidth, cellHeight);
+
+                        PreparedFontGlyph item = prepared[i];
+                        FontGlyph glyph = font.Glyphs[i];
+                        if (item != null && item.Bitmap != null)
+                        {
+                            int targetWidth = item.Bitmap.Width;
+                            int targetHeight = item.Bitmap.Height;
+                            if (targetWidth > imageAreaWidth || targetHeight > imageAreaHeight)
+                            {
+                                double fit = Math.Min(
+                                    (double)imageAreaWidth / Math.Max(1, targetWidth),
+                                    (double)imageAreaHeight / Math.Max(1, targetHeight));
+                                targetWidth = Math.Max(1, (int)Math.Floor(targetWidth * fit));
+                                targetHeight = Math.Max(1, (int)Math.Floor(targetHeight * fit));
+                            }
+
+                            int imageX = cellX + 6 + Math.Max(0, (imageAreaWidth - targetWidth) / 2);
+                            int imageY = cellY + 2 + Math.Max(0, (imageAreaHeight - targetHeight) / 2);
+                            graphics.DrawImage(item.Bitmap,
+                                new Rectangle(imageX, imageY, targetWidth, targetHeight),
+                                0, 0, item.Bitmap.Width, item.Bitmap.Height,
+                                GraphicsUnit.Pixel);
+                        }
+
+                        if (glyph != null)
+                        {
+                            string code = glyph.CharacterCode <= 0xFF
+                                ? glyph.CharacterCode.ToString("X2")
+                                : glyph.CharacterCode.ToString("X4");
+                            graphics.DrawString(code, codeFont, Brushes.DimGray,
+                                cellX + 2, cellY + imageAreaHeight + 3);
+                        }
+                    }
+                }
+
+                return result;
+            }
+            finally
+            {
+                for (int i = 0; i < prepared.Count; i++)
+                {
+                    if (prepared[i] != null)
+                        prepared[i].Dispose();
+                }
+            }
+        }
+
+        private static int GetRobustGlyphDimension(List<int> values, int fallback)
+        {
+            if (values == null || values.Count == 0)
+                return Math.Max(1, fallback);
+
+            values.Sort();
+            int percentileIndex = (int)Math.Floor((values.Count - 1) * 0.90);
+            if (percentileIndex < 0)
+                percentileIndex = 0;
+            if (percentileIndex >= values.Count)
+                percentileIndex = values.Count - 1;
+            return Math.Max(1, values[percentileIndex]);
         }
 
         PictureBox GetPictureBox(Bitmap bitmap)

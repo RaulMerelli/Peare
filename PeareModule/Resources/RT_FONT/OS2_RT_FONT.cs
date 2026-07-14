@@ -1,156 +1,347 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
-using System.Runtime.InteropServices;
-using System.Collections.Generic;
+using System.Text;
 
 namespace PeareModule
 {
     public static class OS2_RT_FONT
     {
-        public static Bitmap Get(byte[] resData)
+        private const int SignatureSize = 20;
+        private const int DefaultMetricsSize = 168;
+        private const int DefinitionSize = 28;
+        private const int MaximumCells = 1024;
+
+        public static DecodedFont Decode(byte[] resData)
         {
-            // Validate minimum data length
-            if (resData.Length < 20 + 168 + 28)
-                throw new InvalidOperationException("Invalid font data: Insufficient length");
+            if (resData == null || resData.Length < SignatureSize + DefaultMetricsSize + DefinitionSize)
+                throw new InvalidOperationException("Invalid OS/2 font data: insufficient length.");
 
-            // Read FONTSIGNATURE (20 bytes) - assert as validated
-            // Skip FOCAMETRICS (168 bytes)
-            const int focametricsOffset = 20;
-            int offset = focametricsOffset + 168; // Move to FONTDEFINITIONHEADER
+            int metricsOffset = SignatureSize;
+            int metricsSize = ReadPositiveInt32(resData, metricsOffset + 4, DefaultMetricsSize);
+            if (metricsSize < 136 || metricsOffset + metricsSize + DefinitionSize > resData.Length)
+                metricsSize = DefaultMetricsSize;
 
-            // Read FONTDEFINITIONHEADER (28 bytes)
-            short yCellHeight = BitConverter.ToInt16(resData, offset + 16); // Character height
-            short usCellSize = BitConverter.ToInt16(resData, offset + 12);   // Cell size
-            offset += 28; // Move to cell array
+            int definitionOffset = metricsOffset + metricsSize;
+            // ulSize in FONTDEFINITIONHEADER describes the complete definition
+            // record (header, cell table and glyph data), not the header length.
+            int definitionSize = DefinitionSize;
 
-            const int numCharacters = 300;
-            int cellArraySize = numCharacters * usCellSize;
+            int cellSize = BitConverter.ToUInt16(resData, definitionOffset + 12);
+            int defaultCellWidth = Math.Abs((int)BitConverter.ToInt16(resData, definitionOffset + 14));
+            int rawCellHeight = Math.Abs((int)BitConverter.ToInt16(resData, definitionOffset + 16));
+            int defaultCellIncrement = Math.Abs((int)BitConverter.ToInt16(resData, definitionOffset + 18));
+            int defaultASpace = BitConverter.ToInt16(resData, definitionOffset + 20);
+            int defaultBSpace = BitConverter.ToUInt16(resData, definitionOffset + 22);
+            int defaultCSpace = BitConverter.ToInt16(resData, definitionOffset + 24);
+            if (cellSize != 6 && cellSize != 10)
+                throw new InvalidOperationException("Unsupported OS/2 font cell size: " + cellSize.ToString());
+            if (rawCellHeight <= 0)
+                throw new InvalidOperationException("Invalid OS/2 font cell height: " + rawCellHeight.ToString());
 
-            // Validate cell array
-            if (resData.Length < offset + cellArraySize)
-                return null;
+            int rawFirstCharacter = BitConverter.ToUInt16(resData, metricsOffset + 114);
+            int rawLastCharacter = BitConverter.ToUInt16(resData, metricsOffset + 116);
+            int rawDefaultCharacter = BitConverter.ToUInt16(resData, metricsOffset + 118);
+            int rawBreakCharacter = BitConverter.ToUInt16(resData, metricsOffset + 120);
+            int codePage = BitConverter.ToUInt16(resData, metricsOffset + 74);
+            int ascentUnits = Math.Abs((int)BitConverter.ToInt16(resData, metricsOffset + 80));
+            int descentUnits = Math.Abs((int)BitConverter.ToInt16(resData, metricsOffset + 82));
+            int emUnits = Math.Abs((int)BitConverter.ToInt16(resData, metricsOffset + 76));
+            int nominalPointTenths = Math.Abs((int)BitConverter.ToInt16(resData, metricsOffset + 122));
+            int definitionFlags = BitConverter.ToUInt16(resData, metricsOffset + 130);
 
-            // Read glyph widths and offsets
-            int[] glyphWidths = new int[numCharacters];
-            uint[] glyphOffsets = new uint[numCharacters]; // Absolute offsets within resource
-            int maxWidth = 0;
+            int characterCount = rawLastCharacter >= rawFirstCharacter
+                ? rawLastCharacter - rawFirstCharacter + 1
+                : 0;
+            if (characterCount <= 0 || characterCount > MaximumCells)
+                throw new InvalidOperationException("Invalid OS/2 font character range.");
 
-            for (int i = 0; i < numCharacters; i++)
+            int cellArrayOffset = definitionOffset + definitionSize;
+            if ((long)cellArrayOffset + (long)characterCount * cellSize > resData.Length)
+                throw new InvalidOperationException("Invalid OS/2 font data: truncated cell table.");
+
+            // fsDefn is not a reliable raster/outline discriminator across old
+            // OS/2 font producers. Prefer the actual cell table: bitmap entries
+            // must point to enough bytes for width x height monochrome data.
+            bool bitmapDataIsPlausible = LooksLikeBitmapFont(
+                resData, cellArrayOffset, cellSize, characterCount, rawCellHeight,
+                defaultCellWidth, defaultCellIncrement, defaultBSpace);
+
+            if (bitmapDataIsPlausible)
             {
-                int cellOffset = offset + i * usCellSize;
+                return DecodeBitmapFont(resData, metricsOffset, cellArrayOffset, cellSize,
+                    rawFirstCharacter, rawLastCharacter, rawDefaultCharacter, rawBreakCharacter,
+                    codePage, rawCellHeight, ascentUnits, descentUnits,
+                    defaultCellWidth, defaultCellIncrement, defaultASpace, defaultBSpace, defaultCSpace);
+            }
 
-                if (usCellSize == 6) // TYPE1/TYPE2
+            return DecodeOutlineMetadata(resData, metricsOffset,
+                rawFirstCharacter, rawLastCharacter, rawDefaultCharacter, rawBreakCharacter,
+                codePage, rawCellHeight, emUnits, ascentUnits, descentUnits,
+                nominalPointTenths, definitionFlags);
+        }
+
+        private static bool LooksLikeBitmapFont(
+            byte[] data,
+            int cellArrayOffset,
+            int cellSize,
+            int characterCount,
+            int cellHeight,
+            int defaultCellWidth,
+            int defaultCellIncrement,
+            int defaultBSpace)
+        {
+            if (cellHeight <= 0 || cellHeight > 4096)
+                return false;
+
+            int samples = Math.Min(characterCount, 32);
+            int plausible = 0;
+            int nonEmpty = 0;
+
+            for (int i = 0; i < samples; i++)
+            {
+                int entry = cellArrayOffset + i * cellSize;
+                if (entry < 0 || entry + cellSize > data.Length)
+                    break;
+
+                uint glyphOffset = BitConverter.ToUInt32(data, entry);
+                int width = cellSize == 6
+                    ? BitConverter.ToUInt16(data, entry + 4)
+                    : BitConverter.ToUInt16(data, entry + 6);
+
+                if (width == 0 || width == 0x8000)
                 {
-                    glyphOffsets[i] = BitConverter.ToUInt32(resData, cellOffset);
-                    glyphWidths[i] = BitConverter.ToUInt16(resData, cellOffset + 4);
+                    width = defaultBSpace;
+                    if (width == 0 || width == 0x8000)
+                        width = defaultCellWidth > 0 ? defaultCellWidth : defaultCellIncrement;
                 }
-                else if (usCellSize == 10) // TYPE3
+
+                if (width <= 0)
+                    continue;
+
+                nonEmpty++;
+                long bytesPerColumn = (width + 7L) / 8L;
+                long requiredEnd = (long)glyphOffset + bytesPerColumn * cellHeight;
+                if (glyphOffset < data.Length && requiredEnd <= data.Length)
+                    plausible++;
+            }
+
+            if (nonEmpty == 0)
+                return false;
+
+            return plausible * 4 >= nonEmpty * 3;
+        }
+
+        private static DecodedFont DecodeOutlineMetadata(
+            byte[] data,
+            int metricsOffset,
+            int firstCharacter,
+            int lastCharacter,
+            int defaultCharacter,
+            int breakCharacter,
+            int codePage,
+            int cellHeightUnits,
+            int emUnits,
+            int ascentUnits,
+            int descentUnits,
+            int nominalPointTenths,
+            int definitionFlags)
+        {
+            int baseHeight = nominalPointTenths > 0
+                ? Math.Max(12, Math.Min(32, (nominalPointTenths + 5) / 10 + 4))
+                : 16;
+            double unitScale = (double)baseHeight / Math.Max(1, cellHeightUnits);
+
+            DecodedFont font = CreateFontHeader(data, metricsOffset, codePage,
+                firstCharacter + 1, lastCharacter + 1,
+                defaultCharacter + 1, breakCharacter + 1);
+            font.FormatName = "OS/2 FNT outline";
+            font.PixelHeight = baseHeight;
+            font.Ascent = Math.Max(1, ScaleUnit(ascentUnits, unitScale));
+            font.Descent = Math.Max(0, ScaleUnit(descentUnits, unitScale));
+            font.LineHeight = Math.Max(baseHeight, font.Ascent + font.Descent);
+            font.IsVector = true;
+            font.DeclaredGlyphCount = Math.Max(0, lastCharacter - firstCharacter + 1);
+            font.PreviewMessage =
+                "OS/2 outline font recognized. Glyph rendering is disabled because " +
+                "the FOCA command stream is not decoded reliably yet.";
+            return font;
+        }
+
+        private static DecodedFont DecodeBitmapFont(
+            byte[] data, int metricsOffset, int cellArrayOffset, int cellSize,
+            int firstCharacter, int lastCharacter, int defaultCharacter, int breakCharacter,
+            int codePage, int cellHeight, int ascent, int descent,
+            int defaultCellWidth, int defaultCellIncrement,
+            int defaultASpace, int defaultBSpace, int defaultCSpace)
+        {
+            if (cellHeight > 1024)
+                throw new InvalidOperationException("Invalid OS/2 bitmap font cell height: " + cellHeight.ToString());
+
+            int characterCount = lastCharacter - firstCharacter + 1;
+            DecodedFont font = CreateFontHeader(data, metricsOffset, codePage, firstCharacter, lastCharacter, defaultCharacter, breakCharacter);
+            font.FormatName = cellSize == 10 ? "OS/2 FNT type 3" : "OS/2 FNT type 1/2";
+            font.PixelHeight = cellHeight;
+            font.Ascent = ascent > 0 ? ascent : cellHeight;
+            font.Descent = descent;
+            font.LineHeight = Math.Max(cellHeight, font.Ascent + font.Descent);
+            font.IsVector = false;
+
+            for (int i = 0; i < characterCount; i++)
+            {
+                int cellOffset = cellArrayOffset + i * cellSize;
+                uint glyphDataOffset = BitConverter.ToUInt32(data, cellOffset);
+                int aSpace = 0;
+                int bSpace;
+                int cSpace = 0;
+
+                if (cellSize == 6)
                 {
-                    glyphOffsets[i] = BitConverter.ToUInt32(resData, cellOffset);
-                    glyphWidths[i] = BitConverter.ToUInt16(resData, cellOffset + 6);
+                    bSpace = BitConverter.ToUInt16(data, cellOffset + 4);
+                    if (bSpace <= 0)
+                        bSpace = defaultCellWidth > 0 ? defaultCellWidth : defaultCellIncrement;
                 }
                 else
                 {
-                    throw new InvalidOperationException($"Unsupported cell size: {usCellSize}");
+                    aSpace = BitConverter.ToInt16(data, cellOffset + 4);
+                    bSpace = BitConverter.ToUInt16(data, cellOffset + 6);
+                    cSpace = BitConverter.ToInt16(data, cellOffset + 8);
+                    if (aSpace == short.MinValue)
+                        aSpace = defaultASpace == short.MinValue ? 0 : defaultASpace;
+                    if (bSpace == 0x8000 || bSpace == 0)
+                        bSpace = defaultBSpace == 0x8000 || defaultBSpace == 0 ? defaultCellWidth : defaultBSpace;
+                    if (cSpace == short.MinValue)
+                        cSpace = defaultCSpace == short.MinValue ? 0 : defaultCSpace;
                 }
 
-                if (glyphWidths[i] > maxWidth)
-                    maxWidth = glyphWidths[i];
+                if (bSpace <= 0)
+                    bSpace = defaultCellWidth > 0 ? defaultCellWidth : 1;
+                if (bSpace > 4096)
+                    throw new InvalidOperationException("Invalid OS/2 glyph width " + bSpace.ToString() + ".");
+
+                Bitmap glyphBitmap = DecodeGlyphBitmap(data, glyphDataOffset, bSpace, cellHeight);
+                int advance = aSpace + bSpace + cSpace;
+                if (advance <= 0)
+                    advance = defaultCellIncrement > 0 ? defaultCellIncrement : bSpace;
+
+                font.Glyphs.Add(new FontGlyph
+                {
+                    CharacterCode = font.FirstCharacter + i,
+                    Width = bSpace,
+                    Height = cellHeight,
+                    AdvanceX = advance,
+                    OffsetX = aSpace,
+                    OffsetY = 0,
+                    Bitmap = glyphBitmap
+                });
             }
+            return font;
+        }
 
-            int totalHeight = numCharacters * yCellHeight;
-            int stride = (maxWidth + 31) / 32 * 4; // DWORD-aligned stride
-            Bitmap bitmap = new Bitmap(maxWidth, totalHeight, PixelFormat.Format1bppIndexed);
+        private static DecodedFont CreateFontHeader(byte[] data, int metricsOffset, int codePage,
+            int firstCharacter, int lastCharacter, int defaultCharacter, int breakCharacter)
+        {
+            DecodedFont font = new DecodedFont();
+            font.FaceName = ReadFixedString(data, metricsOffset + 40, 32, codePage);
+            if (string.IsNullOrEmpty(font.FaceName))
+                font.FaceName = "OS/2 font";
+            font.FirstCharacter = firstCharacter;
+            font.LastCharacter = lastCharacter;
+            font.DefaultCharacter = defaultCharacter;
+            font.BreakCharacter = breakCharacter;
+            font.CodePage = codePage;
+            return font;
+        }
 
-            // Set palette (0=white, 1=black)
-            ColorPalette palette = bitmap.Palette;
-            palette.Entries[0] = Color.Transparent;
-            palette.Entries[1] = Color.Black;
-            bitmap.Palette = palette;
+        private static int ScaleUnit(int value, double scale)
+        {
+            return (int)Math.Round(value * scale, MidpointRounding.AwayFromZero);
+        }
 
-            BitmapData bmpData = bitmap.LockBits(
-                new Rectangle(0, 0, bitmap.Width, bitmap.Height),
-                ImageLockMode.WriteOnly,
-                PixelFormat.Format1bppIndexed
-            );
+        private static int ReadPositiveInt32(byte[] data, int offset, int fallback)
+        {
+            if (offset < 0 || offset + 4 > data.Length)
+                return fallback;
+            uint value = BitConverter.ToUInt32(data, offset);
+            return value > 0 && value <= int.MaxValue ? (int)value : fallback;
+        }
 
-            try
+        private static Bitmap DecodeGlyphBitmap(byte[] data, uint glyphDataOffset, int width, int height)
+        {
+            Bitmap bitmap = new Bitmap(Math.Max(1, width), Math.Max(1, height), PixelFormat.Format32bppArgb);
+            using (Graphics graphics = Graphics.FromImage(bitmap))
+                graphics.Clear(Color.Transparent);
+
+            int columns = (width + 7) / 8;
+            long requiredEnd = (long)glyphDataOffset + (long)columns * height;
+            if (glyphDataOffset >= data.Length || requiredEnd > data.Length)
+                return bitmap;
+
+            for (int row = 0; row < height; row++)
             {
-                IntPtr scan0 = bmpData.Scan0;
-                int bytesPerScanline = Math.Abs(bmpData.Stride);
-                byte[] blankLine = new byte[bytesPerScanline]; // Initialized to 0 (transparent)
-
-                // Clear entire bitmap to transparent
-                for (int y = 0; y < totalHeight; y++)
+                for (int column = 0; column < columns; column++)
                 {
-                    IntPtr linePtr = scan0 + y * bytesPerScanline;
-                    Marshal.Copy(blankLine, 0, linePtr, blankLine.Length);
-                }
-
-                for (int charIndex = 0; charIndex < numCharacters; charIndex++)
-                {
-                    int width = glyphWidths[charIndex];
-                    int height = yCellHeight;
-                    int columns = (width + 7) / 8;
-                    uint glyphDataOffset = glyphOffsets[charIndex];
-                    int globalY = charIndex * height;
-
-                    // Skip zero-width glyphs
-                    if (width <= 0 || height <= 0)
-                        continue;
-
-                    // Calculate required data size for this glyph
-                    int requiredDataSize = columns * height;
-
-                    // Skip glyph if data would extend beyond resource bounds
-                    if (glyphDataOffset + requiredDataSize > resData.Length)
-                        continue;
-
-                    // Process each row
-                    for (int row = 0; row < height; row++)
+                    int dataPosition = (int)glyphDataOffset + column * height + row;
+                    byte value = data[dataPosition];
+                    int firstPixel = column * 8;
+                    for (int bit = 0; bit < 8; bit++)
                     {
-                        IntPtr targetLine = scan0 + (globalY + row) * bytesPerScanline;
-
-                        // Process each column in this row
-                        for (int col = 0; col < columns; col++)
-                        {
-                            int dataPos = (int)glyphDataOffset + col * height + row;
-                            if (dataPos >= resData.Length) break;
-
-                            byte srcByte = resData[dataPos];
-                            int targetX = col * 8;
-
-                            // Process each bit in the byte
-                            for (int bit = 0; bit < 8; bit++)
-                            {
-                                int pixelX = targetX + bit;
-                                if (pixelX >= width) break;
-
-                                int targetByte = pixelX / 8;
-                                int bitPos = 7 - (pixelX % 8);
-
-                                // Skip if beyond bitmap width
-                                if (targetByte >= bytesPerScanline) continue;
-
-                                if ((srcByte & (0x80 >> bit)) != 0) // Set pixel if bit is on
-                                {
-                                    IntPtr targetPtr = targetLine + targetByte;
-                                    byte current = Marshal.ReadByte(targetPtr);
-                                    current |= (byte)(1 << bitPos);
-                                    Marshal.WriteByte(targetPtr, current);
-                                }
-                            }
-                        }
+                        int x = firstPixel + bit;
+                        if (x >= width)
+                            break;
+                        if ((value & (0x80 >> bit)) != 0)
+                            bitmap.SetPixel(x, row, Color.Black);
                     }
                 }
             }
-            finally
-            {
-                bitmap.UnlockBits(bmpData);
-            }
-
             return bitmap;
+        }
+
+        private static string ReadFixedString(byte[] data, int offset, int length, int codePage)
+        {
+            if (offset < 0 || length <= 0 || offset + length > data.Length)
+                return string.Empty;
+            int actualLength = 0;
+            while (actualLength < length && data[offset + actualLength] != 0)
+                actualLength++;
+            try
+            {
+                return Encoding.GetEncoding(codePage).GetString(data, offset, actualLength).Trim();
+            }
+            catch
+            {
+                return Encoding.ASCII.GetString(data, offset, actualLength).Trim();
+            }
+        }
+
+        public static Bitmap Get(byte[] resData)
+        {
+            using (DecodedFont font = Decode(resData))
+            {
+                if (font.Glyphs.Count == 0)
+                    return null;
+                int width = 1;
+                int height = Math.Max(1, font.LineHeight * font.Glyphs.Count);
+                for (int i = 0; i < font.Glyphs.Count; i++)
+                {
+                    FontGlyph glyph = font.Glyphs[i];
+                    if (glyph != null && glyph.Bitmap != null)
+                        width = Math.Max(width, glyph.Bitmap.Width);
+                }
+                Bitmap strip = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+                using (Graphics graphics = Graphics.FromImage(strip))
+                {
+                    graphics.Clear(Color.Transparent);
+                    for (int i = 0; i < font.Glyphs.Count; i++)
+                    {
+                        FontGlyph glyph = font.Glyphs[i];
+                        if (glyph != null && glyph.Bitmap != null)
+                            graphics.DrawImageUnscaled(glyph.Bitmap, Math.Max(0, glyph.OffsetX), i * font.LineHeight + Math.Max(0, glyph.OffsetY));
+                    }
+                }
+                return strip;
+            }
         }
     }
 }

@@ -564,6 +564,29 @@ namespace Peare
             extension = NormalizeExtension(extension);
             baseName = SanitizeFileName(baseName);
 
+            DecodedFont decodedFont = decodedResource as DecodedFont;
+            if (decodedFont != null && (extension == ".png" || extension == ".bmp"))
+            {
+                ImageFormat glyphFormat = extension == ".png" ? ImageFormat.Png : ImageFormat.Bmp;
+                for (int i = 0; i < decodedFont.Glyphs.Count; i++)
+                {
+                    FontGlyph glyph = decodedFont.Glyphs[i];
+                    if (glyph == null || glyph.Bitmap == null)
+                        continue;
+
+                    using (MemoryStream stream = new MemoryStream())
+                    {
+                        glyph.Bitmap.Save(stream, glyphFormat);
+                        result.Add(new ConvertedResourceFile
+                        {
+                            FileName = baseName + "_char_" + glyph.CharacterCode.ToString("X4") + extension,
+                            Data = stream.ToArray()
+                        });
+                    }
+                }
+                return result;
+            }
+
             List<Bitmap> bitmaps = GetBitmaps(decodedResource);
             if (bitmaps.Count > 0 && (extension == ".png" || extension == ".bmp"))
             {
@@ -604,6 +627,18 @@ namespace Peare
         private static List<Bitmap> GetBitmaps(object decodedResource)
         {
             List<Bitmap> result = new List<Bitmap>();
+
+            DecodedFont decodedFont = decodedResource as DecodedFont;
+            if (decodedFont != null)
+            {
+                for (int i = 0; i < decodedFont.Glyphs.Count; i++)
+                {
+                    FontGlyph glyph = decodedFont.Glyphs[i];
+                    if (glyph != null && glyph.Bitmap != null)
+                        result.Add(glyph.Bitmap);
+                }
+                return result;
+            }
 
             Bitmap bitmap = decodedResource as Bitmap;
             if (bitmap != null)

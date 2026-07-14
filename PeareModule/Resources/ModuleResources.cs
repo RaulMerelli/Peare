@@ -80,7 +80,7 @@ namespace PeareModule
             {
                 try
                 {
-                    return OS2_RT_FONT.Get(resData);
+                    return OS2_RT_FONT.Decode(resData);
                 }
                 catch (Exception ex)
                 {
@@ -99,7 +99,7 @@ namespace PeareModule
                     fontProperties.filePath = properties == null ? null : properties.filePath;
                     fontProperties.headerType = HeaderType.PE;
                     fontProperties.versionType = VersionType.Windows;
-                    return RT_FONT.Get(resData, fontProperties);
+                    return RT_FONT.Decode(resData, fontProperties);
                 }
                 catch (Exception ex)
                 {
@@ -154,8 +154,12 @@ namespace PeareModule
 
         private static bool IsOS2Font(byte[] data)
         {
-            return data.Length >= 18 &&
-                   Encoding.ASCII.GetString(data, 8, 10) == "OS/2 FONT ";
+            // The signature is nine characters. Depending on the producer it is
+            // followed by NUL, a space or additional header data. Requiring the
+            // tenth byte to be a space caused valid standalone OS/2 fonts to be
+            // missed by RawDetect.
+            return data.Length >= 17 &&
+                   Encoding.ASCII.GetString(data, 8, 9) == "OS/2 FONT";
         }
 
         private static bool IsWindowsFnt(byte[] data)

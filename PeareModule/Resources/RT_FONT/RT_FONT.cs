@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -11,11 +12,466 @@ namespace PeareModule
 {
     public static class RT_FONT
     {
+        public static DecodedFont Decode(byte[] resData, ModuleResources.ModuleProperties properties)
+        {
+            bool moduleIsOs2 = properties != null &&
+                ((properties.headerType == ModuleResources.HeaderType.LE && properties.versionType == ModuleResources.VersionType.OS2) ||
+                 (properties.headerType == ModuleResources.HeaderType.NE && properties.versionType == ModuleResources.VersionType.OS2) ||
+                 properties.headerType == ModuleResources.HeaderType.LX);
+
+            if (moduleIsOs2)
+                return OS2_RT_FONT.Decode(resData);
+
+            FONTINFO16 header = ModuleResources.Deserialize<FONTINFO16>(resData);
+            int firstCharacter = header.dfFirstChar;
+            int lastCharacter = header.dfLastChar;
+            int characterCount = lastCharacter - firstCharacter + 1;
+            if (characterCount <= 0 || characterCount > 512)
+                throw new InvalidOperationException("Invalid Windows FNT character range.");
+
+            bool isVectorFont = (header.dfType & 0x0001) != 0;
+            int glyphHeight = isVectorFont
+                ? Math.Max(1, header.dfPixHeight + header.dfAscent)
+                : Math.Max(1, (int)header.dfPixHeight);
+
+            DecodedFont font = new DecodedFont();
+            font.FaceName = ReadNullTerminatedAnsi(resData, (int)header.dfFace);
+            if (string.IsNullOrEmpty(font.FaceName))
+                font.FaceName = "Windows FNT";
+            font.FormatName = "Windows FNT " + (header.dfVersion / 256).ToString() + "." + (header.dfVersion & 0xFF).ToString("D2");
+            font.FirstCharacter = firstCharacter;
+            font.LastCharacter = lastCharacter;
+            font.DefaultCharacter = firstCharacter + header.dfDefaultChar;
+            font.BreakCharacter = firstCharacter + header.dfBreakChar;
+            font.PixelHeight = Math.Max(1, (int)header.dfPixHeight);
+            font.Ascent = header.dfAscent;
+            font.Descent = Math.Max(0, font.PixelHeight - font.Ascent);
+            font.LineHeight = Math.Max(glyphHeight, font.PixelHeight + header.dfExternalLeading);
+            font.CharacterSet = header.dfCharSet;
+            font.IsVector = isVectorFont;
+
+            int[] glyphWidths = ReadGlyphWidths(resData, header, characterCount, isVectorFont);
+            if (isVectorFont)
+            {
+                DecodeWindowsVectorGlyphs(resData, header, font, glyphWidths, characterCount);
+                return font;
+            }
+
+            Bitmap strip = Get(resData, properties);
+            if (strip == null)
+                throw new InvalidOperationException("The Windows FNT decoder did not produce an image.");
+
+            try
+            {
+                for (int i = 0; i < characterCount; i++)
+                {
+                    int width = glyphWidths[i];
+                    if (width <= 0)
+                        width = header.dfPixWidth > 0 ? header.dfPixWidth : header.dfAvgWidth;
+                    if (width <= 0)
+                        width = 8;
+                    width = Math.Min(width, strip.Width);
+
+                    int sourceY = i * glyphHeight;
+                    if (sourceY >= strip.Height)
+                        break;
+                    int sourceHeight = Math.Min(glyphHeight, strip.Height - sourceY);
+                    Bitmap glyphBitmap = CopyGlyph(strip, width, sourceY, sourceHeight);
+
+                    font.Glyphs.Add(new FontGlyph
+                    {
+                        CharacterCode = firstCharacter + i,
+                        Width = width,
+                        Height = sourceHeight,
+                        AdvanceX = width,
+                        OffsetX = 0,
+                        OffsetY = 0,
+                        Bitmap = glyphBitmap
+                    });
+                }
+            }
+            finally
+            {
+                strip.Dispose();
+            }
+
+            return font;
+        }
+
+        private static void DecodeWindowsVectorGlyphs(
+            byte[] resData,
+            FONTINFO16 header,
+            DecodedFont font,
+            int[] glyphWidths,
+            int characterCount)
+        {
+            int[] glyphOffsets = ReadVectorGlyphOffsets(resData, header, characterCount);
+            bool coords2Byte = header.dfPixHeight > 128 || header.dfMaxWidth > 128;
+            int yOffset = header.dfPixHeight - header.dfAscent;
+            int dataLength = header.dfBitsOffset < resData.Length
+                ? resData.Length - (int)header.dfBitsOffset
+                : 0;
+
+            for (int i = 0; i < characterCount; i++)
+            {
+                int advance = glyphWidths[i];
+                if (advance <= 0)
+                    advance = header.dfPixWidth > 0 ? header.dfPixWidth : header.dfAvgWidth;
+                if (advance <= 0)
+                    advance = 8;
+
+                int currentOffset = glyphOffsets[i];
+                int nextOffset = i + 1 < characterCount ? glyphOffsets[i + 1] : dataLength;
+                int strokeDataStart = (int)header.dfBitsOffset + currentOffset;
+                int strokeLength = nextOffset - currentOffset;
+
+                List<FontVectorSegment> segments = ParseVectorSegments(
+                    resData,
+                    strokeDataStart,
+                    strokeLength,
+                    coords2Byte,
+                    yOffset);
+
+                FontGlyph glyph = new FontGlyph
+                {
+                    CharacterCode = font.FirstCharacter + i,
+                    AdvanceX = advance,
+                    VectorSegments = segments
+                };
+
+                int offsetX;
+                int offsetY;
+                glyph.Bitmap = RenderGlyph(glyph, 1, out offsetX, out offsetY);
+                glyph.OffsetX = offsetX;
+                glyph.OffsetY = offsetY;
+                glyph.Width = glyph.Bitmap.Width;
+                glyph.Height = glyph.Bitmap.Height;
+                font.Glyphs.Add(glyph);
+            }
+        }
+
+        private static int[] ReadVectorGlyphOffsets(byte[] resData, FONTINFO16 header, int characterCount)
+        {
+            int[] offsets = new int[characterCount];
+            int version = header.dfVersion;
+            int headerSize = version < 0x0200 ? 117 : (version < 0x0300 ? 118 : 148);
+
+            for (int i = 0; i < characterCount; i++)
+            {
+                if (version >= 0x0300)
+                {
+                    int entryOffset = headerSize + i * 6;
+                    if (entryOffset + 6 > resData.Length)
+                        break;
+                    uint value = BitConverter.ToUInt32(resData, entryOffset + 2);
+                    offsets[i] = value <= int.MaxValue ? (int)value : 0;
+                }
+                else
+                {
+                    int entryOffset = headerSize + i * 4;
+                    if (entryOffset + 4 > resData.Length)
+                        break;
+                    offsets[i] = BitConverter.ToUInt16(resData, entryOffset);
+                }
+            }
+
+            return offsets;
+        }
+
+        private static List<FontVectorSegment> ParseVectorSegments(
+            byte[] data,
+            int start,
+            int length,
+            bool coords2Byte,
+            int yOffset)
+        {
+            List<FontVectorSegment> segments = new List<FontVectorSegment>();
+            if (data == null || length <= 0 || start < 0 || start >= data.Length || start + length > data.Length)
+                return segments;
+
+            int x = 0;
+            int y = 0;
+            int position = 0;
+            bool penDown = false;
+            int lastX = 0;
+            int lastY = 0;
+
+            while (position < length)
+            {
+                if (coords2Byte)
+                {
+                    if (position + 2 > length)
+                        break;
+                    short marker = BitConverter.ToInt16(data, start + position);
+                    if (marker == short.MinValue)
+                    {
+                        penDown = false;
+                        position += 2;
+                        continue;
+                    }
+                }
+                else
+                {
+                    sbyte marker = (sbyte)data[start + position];
+                    if (marker == sbyte.MinValue)
+                    {
+                        penDown = false;
+                        position += 1;
+                        continue;
+                    }
+                }
+
+                int dx;
+                int dy;
+                if (coords2Byte)
+                {
+                    if (position + 4 > length)
+                        break;
+                    dx = BitConverter.ToInt16(data, start + position);
+                    dy = BitConverter.ToInt16(data, start + position + 2);
+                    position += 4;
+                }
+                else
+                {
+                    if (position + 2 > length)
+                        break;
+                    dx = (sbyte)data[start + position];
+                    dy = (sbyte)data[start + position + 1];
+                    position += 2;
+                }
+
+                x += dx;
+                y += dy;
+                int currentY = y + yOffset;
+
+                if (penDown)
+                {
+                    segments.Add(new FontVectorSegment
+                    {
+                        X1 = lastX,
+                        Y1 = lastY,
+                        X2 = x,
+                        Y2 = currentY
+                    });
+                }
+
+                lastX = x;
+                lastY = currentY;
+                penDown = true;
+            }
+
+            return segments;
+        }
+
+        public static Bitmap RenderGlyph(FontGlyph glyph, int scale, out int offsetX, out int offsetY)
+        {
+            if (glyph == null)
+                throw new ArgumentNullException("glyph");
+            if (scale < 1)
+                scale = 1;
+
+            if (glyph.HasVectorOutline)
+                return RenderVectorGlyph(glyph, scale, out offsetX, out offsetY);
+
+            offsetX = glyph.OffsetX * scale;
+            offsetY = glyph.OffsetY * scale;
+            if (glyph.Bitmap == null)
+                return new Bitmap(Math.Max(1, glyph.AdvanceX * scale), Math.Max(1, glyph.Height * scale), System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+
+            Bitmap result = new Bitmap(
+                Math.Max(1, glyph.Bitmap.Width * scale),
+                Math.Max(1, glyph.Bitmap.Height * scale),
+                System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (Graphics graphics = Graphics.FromImage(result))
+            {
+                graphics.Clear(Color.Transparent);
+                graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+                graphics.DrawImage(glyph.Bitmap,
+                    new Rectangle(0, 0, result.Width, result.Height),
+                    0, 0, glyph.Bitmap.Width, glyph.Bitmap.Height,
+                    GraphicsUnit.Pixel);
+            }
+            return result;
+        }
+
+        private static Bitmap RenderVectorGlyph(FontGlyph glyph, int scale, out int offsetX, out int offsetY)
+        {
+            List<FontVectorSegment> segments = glyph.VectorSegments;
+            if (segments == null || segments.Count == 0)
+            {
+                offsetX = 0;
+                offsetY = 0;
+                return new Bitmap(Math.Max(1, glyph.AdvanceX * scale), Math.Max(1, glyph.Height * scale), System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            }
+
+            int minX = int.MaxValue;
+            int minY = int.MaxValue;
+            int maxX = int.MinValue;
+            int maxY = int.MinValue;
+            for (int i = 0; i < segments.Count; i++)
+            {
+                FontVectorSegment segment = segments[i];
+                minX = Math.Min(minX, Math.Min(segment.X1, segment.X2));
+                minY = Math.Min(minY, Math.Min(segment.Y1, segment.Y2));
+                maxX = Math.Max(maxX, Math.Max(segment.X1, segment.X2));
+                maxY = Math.Max(maxY, Math.Max(segment.Y1, segment.Y2));
+            }
+
+            float penWidth = Math.Max(1.0f, (float)scale);
+            int margin = Math.Max(1, (int)Math.Ceiling(penWidth / 2.0f));
+            int left = minX * scale - margin;
+            int top = minY * scale - margin;
+            int right = maxX * scale + margin;
+            int bottom = maxY * scale + margin;
+            int width = Math.Max(1, right - left + 1);
+            int height = Math.Max(1, bottom - top + 1);
+
+            Bitmap bitmap = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (Graphics graphics = Graphics.FromImage(bitmap))
+            using (Pen pen = new Pen(Color.Black, penWidth))
+            {
+                graphics.Clear(Color.Transparent);
+                graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                graphics.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighQuality;
+                graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                pen.StartCap = System.Drawing.Drawing2D.LineCap.Round;
+                pen.EndCap = System.Drawing.Drawing2D.LineCap.Round;
+                pen.LineJoin = System.Drawing.Drawing2D.LineJoin.Round;
+
+                for (int i = 0; i < segments.Count; i++)
+                {
+                    FontVectorSegment segment = segments[i];
+                    graphics.DrawLine(pen,
+                        segment.X1 * scale - left,
+                        segment.Y1 * scale - top,
+                        segment.X2 * scale - left,
+                        segment.Y2 * scale - top);
+                }
+            }
+
+            offsetX = left;
+            offsetY = top;
+            return bitmap;
+        }
+
+        private static int[] ReadGlyphWidths(byte[] resData, FONTINFO16 header, int characterCount, bool isVectorFont)
+        {
+            int[] widths = new int[characterCount];
+            int version = header.dfVersion;
+            int headerSize = version < 0x0200 ? 117 : (version < 0x0300 ? 118 : 148);
+            bool isMonospace = (header.dfPitchAndFamily & 1) == 0;
+
+            if (version >= 0x0300)
+            {
+                for (int i = 0; i < characterCount; i++)
+                {
+                    int entryOffset = headerSize + i * 6;
+                    if (entryOffset + 6 > resData.Length)
+                        break;
+                    widths[i] = BitConverter.ToUInt16(resData, entryOffset);
+                }
+            }
+            else if (isMonospace)
+            {
+                int width = header.dfPixWidth;
+                if (width <= 0)
+                    width = header.dfAvgWidth;
+                if (width <= 0)
+                    width = 8;
+                for (int i = 0; i < characterCount; i++)
+                    widths[i] = width;
+                return widths;
+            }
+            else if (version == 0x0100)
+            {
+                if (isVectorFont)
+                {
+                    for (int i = 0; i < characterCount; i++)
+                    {
+                        int entryOffset = headerSize + i * 4;
+                        if (entryOffset + 4 > resData.Length)
+                            break;
+                        widths[i] = BitConverter.ToUInt16(resData, entryOffset + 2);
+                    }
+                }
+                else
+                {
+                    int totalEntries = characterCount + 1;
+                    ushort[] offsets = new ushort[totalEntries];
+                    for (int i = 0; i < totalEntries; i++)
+                    {
+                        int entryOffset = headerSize + i * 2;
+                        if (entryOffset + 2 > resData.Length)
+                            break;
+                        offsets[i] = BitConverter.ToUInt16(resData, entryOffset);
+                    }
+                    for (int i = 0; i < characterCount; i++)
+                        widths[i] = Math.Max(0, offsets[i + 1] - offsets[i]);
+                }
+            }
+            else
+            {
+                for (int i = 0; i < characterCount; i++)
+                {
+                    int entryOffset = headerSize + i * 4;
+                    if (entryOffset + 4 > resData.Length)
+                        break;
+                    widths[i] = BitConverter.ToUInt16(resData, entryOffset);
+                }
+            }
+
+            int fallback = header.dfPixWidth;
+            if (fallback <= 0 && version >= 0x0300)
+                fallback = header.dfBspace;
+            if (fallback <= 0)
+                fallback = header.dfAvgWidth;
+            if (fallback <= 0)
+                fallback = 8;
+            for (int i = 0; i < widths.Length; i++)
+            {
+                if (widths[i] <= 0)
+                    widths[i] = fallback;
+            }
+
+            return widths;
+        }
+
+        private static Bitmap CopyGlyph(Bitmap source, int width, int sourceY, int height)
+        {
+            Bitmap result = new Bitmap(Math.Max(1, width), Math.Max(1, height), System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (Graphics graphics = Graphics.FromImage(result))
+            {
+                graphics.Clear(Color.Transparent);
+                Rectangle destination = new Rectangle(0, 0, result.Width, result.Height);
+                Rectangle sourceRectangle = new Rectangle(0, sourceY, result.Width, result.Height);
+                graphics.DrawImage(source, destination, sourceRectangle, GraphicsUnit.Pixel);
+            }
+            return result;
+        }
+
+        private static string ReadNullTerminatedAnsi(byte[] data, int offset)
+        {
+            if (data == null || offset <= 0 || offset >= data.Length)
+                return string.Empty;
+            int end = offset;
+            while (end < data.Length && data[end] != 0)
+                end++;
+            try
+            {
+                return Encoding.Default.GetString(data, offset, end - offset).Trim();
+            }
+            catch
+            {
+                return Encoding.ASCII.GetString(data, offset, end - offset).Trim();
+            }
+        }
         public static Bitmap Get(byte[] resData, ModuleResources.ModuleProperties properties)
         {
-            if ((properties.headerType == ModuleResources.HeaderType.LE && properties.versionType == ModuleResources.VersionType.OS2) ||
-                (properties.headerType == ModuleResources.HeaderType.NE && properties.versionType == ModuleResources.VersionType.OS2) ||
-                properties.headerType == ModuleResources.HeaderType.LX)
+            if (properties != null &&
+                ((properties.headerType == ModuleResources.HeaderType.LE && properties.versionType == ModuleResources.VersionType.OS2) ||
+                 (properties.headerType == ModuleResources.HeaderType.NE && properties.versionType == ModuleResources.VersionType.OS2) ||
+                 properties.headerType == ModuleResources.HeaderType.LX))
             {
                 // Structure is different for OS/2
                 return OS2_RT_FONT.Get(resData);
@@ -57,9 +513,15 @@ namespace PeareModule
             int[] glyphWidths = new int[charCount];
             int[] glyphOffsets = new int[charCount];
 
-            uint bitmapDataLength = totalSize - dfBitsOffset;
-            if (dfBitsOffset + bitmapDataLength > resData.Length)
-                bitmapDataLength = (uint)resData.Length - dfBitsOffset;
+            uint bitmapDataLength = 0;
+            if (dfBitsOffset < resData.Length)
+            {
+                bitmapDataLength = totalSize > dfBitsOffset
+                    ? totalSize - dfBitsOffset
+                    : (uint)resData.Length - dfBitsOffset;
+                if (dfBitsOffset + bitmapDataLength > resData.Length)
+                    bitmapDataLength = (uint)resData.Length - dfBitsOffset;
+            }
 
             ushort dfType = header.dfType;
             uint dfFlags = header.dfFlags;
@@ -74,7 +536,30 @@ namespace PeareModule
             }
             Debug.WriteLine($"dfType: 0x{dfType:X4}");
 
-            if (isMonospace)
+            if (dfVersion >= 0x0300)
+            {
+                // Version 3 always uses GLYPHENTRY30: WORD width + DWORD absolute offset.
+                // The table is present for fixed-width fonts as well as proportional fonts.
+                const int entrySize = 6;
+                int fallbackWidth = dfPixWidth > 0 ? dfPixWidth : header.dfBspace;
+                if (fallbackWidth <= 0)
+                    fallbackWidth = header.dfAvgWidth;
+                if (fallbackWidth <= 0)
+                    fallbackWidth = 8;
+
+                for (int i = 0; i < charCount; i++)
+                {
+                    int entryOffset = headerSize + i * entrySize;
+                    if (entryOffset + entrySize > resData.Length)
+                        break;
+
+                    int width = BitConverter.ToUInt16(resData, entryOffset);
+                    uint offset = BitConverter.ToUInt32(resData, entryOffset + 2);
+                    glyphWidths[i] = width > 0 ? width : fallbackWidth;
+                    glyphOffsets[i] = offset <= int.MaxValue ? (int)offset : 0;
+                }
+            }
+            else if (isMonospace)
             {
                 // raster monospace
                 int offset = 0;
@@ -227,7 +712,9 @@ namespace PeareModule
 
             // Create the final bitmap
             // maxWidth to the left, all the glyphs vertically stacked
-            Bitmap bmp = new Bitmap(maxWidth, dfPixHeight * charCount);
+            if (maxWidth <= 0)
+                maxWidth = dfPixWidth > 0 ? dfPixWidth : 8;
+            Bitmap bmp = new Bitmap(Math.Max(1, maxWidth), Math.Max(1, dfPixHeight * charCount));
             if (isVectorFont)
             {
                 // dfAscent here might be wrong used like this

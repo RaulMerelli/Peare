@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
@@ -68,6 +68,7 @@
     <Compile Include="Resources\RT_FONTDIR\OS2_RT_FONTDIR.cs" />
     <Compile Include="Resources\RT_FONTDIR\RT_FONTDIR.cs" />
     <Compile Include="Resources\RT_FONT\FONTINFO16.cs" />
+    <Compile Include="Resources\RT_FONT\DecodedFont.cs" />
     <Compile Include="Resources\RT_FONT\RT_FONT.cs" />
     <Compile Include="Resources\RT_FONT\OS2_RT_FONT.cs" />
     <Compile Include="Resources\RT_GROUP_CURSOR\RT_GROUP_CURSOR.cs" />
