@@ -287,29 +287,8 @@ namespace Peare
                 }
                 else
                 {
-                    dynamic RawResult = ModuleResources.RawDetect(resData, moduleProperties);
-                    if (RawResult != null)
-                    {
-                        if (RawResult.GetType() == typeof(List<Bitmap>))
-                        {
-                            bool result = false;
-                            foreach (Img img in RawResult)
-                            {
-                                result = true;
-                                flowLayoutPanel1.Controls.Add(GetPictureBox(img.Bitmap));
-                            }
-                            if (!result)
-                            {
-                                string val = ModuleResources.DumpRaw(resData);
-                                flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                            }
-                        }
-                        else if (RawResult.GetType() == typeof(Bitmap))
-                        {
-                            flowLayoutPanel1.Controls.Add(GetPictureBox(RawResult));
-                        }
-                    }
-                    else
+                    object rawResult = ModuleResources.RawDetect(resData, moduleProperties);
+                    if (!ShowRawResult(rawResult))
                     {
                         string val = ModuleResources.DumpRaw(resData, true);
                         flowLayoutPanel1.Controls.Add(GetTextbox(val));
@@ -318,6 +297,50 @@ namespace Peare
             }
 
             lbMessage.Text = message.Replace("\n", " ");
+        }
+
+        private bool ShowRawResult(object rawResult)
+        {
+            if (rawResult == null)
+                return false;
+
+            List<Img> images = rawResult as List<Img>;
+            if (images != null)
+            {
+                bool shown = false;
+                foreach (Img image in images)
+                {
+                    if (image != null && image.Bitmap != null)
+                    {
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(image.Bitmap));
+                        shown = true;
+                    }
+                }
+                return shown;
+            }
+
+            Img singleImage = rawResult as Img;
+            if (singleImage != null && singleImage.Bitmap != null)
+            {
+                flowLayoutPanel1.Controls.Add(GetPictureBox(singleImage.Bitmap));
+                return true;
+            }
+
+            Bitmap bitmap = rawResult as Bitmap;
+            if (bitmap != null)
+            {
+                flowLayoutPanel1.Controls.Add(GetPictureBox(bitmap));
+                return true;
+            }
+
+            string text = rawResult as string;
+            if (text != null)
+            {
+                flowLayoutPanel1.Controls.Add(GetTextbox(text));
+                return true;
+            }
+
+            return false;
         }
 
         PictureBox GetPictureBox(Bitmap bitmap)

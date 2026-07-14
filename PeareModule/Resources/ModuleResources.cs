@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -70,11 +71,401 @@ namespace PeareModule
 
         public static dynamic RawDetect(byte[] resData, ModuleProperties properties)
         {
-            if (resData.Length >= 18 && System.Text.Encoding.Default.GetString(resData.Skip(8).Take(10).ToArray()) == "OS/2 FONT ")
+            if (resData == null || resData.Length == 0)
+                return null;
+
+            // Fonts have a sufficiently distinctive header and must be tried before
+            // generic binary/image detection.
+            if (IsOS2Font(resData))
             {
-                return RT_FONT.Get(resData, properties);
+                try
+                {
+                    return OS2_RT_FONT.Get(resData);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Header matched an OS/2 font, but decoding failed: " + ex.Message);
+                }
             }
+
+            if (IsWindowsFnt(resData))
+            {
+                try
+                {
+                    // The header identifies a Windows FNT even when it is stored in
+                    // a module targeting another platform. Force the Windows parser.
+                    ModuleProperties fontProperties = new ModuleProperties();
+                    fontProperties.Description = properties == null ? null : properties.Description;
+                    fontProperties.filePath = properties == null ? null : properties.filePath;
+                    fontProperties.headerType = HeaderType.PE;
+                    fontProperties.versionType = VersionType.Windows;
+                    return RT_FONT.Get(resData, fontProperties);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Header matched a Windows font, but decoding failed: " + ex.Message);
+                }
+            }
+
+            // Complete image files (PNG, JPEG, GIF, BMP, TIFF, ICO/CUR, WMF/EMF)
+            // can be decoded directly by GDI+ without knowing the resource type name.
+            Bitmap standardImage = TryDecodeStandardImage(resData);
+            if (standardImage != null)
+                return standardImage;
+
+            // A cursor resource is a DIB preceded by hotspot X/Y values.
+            if (IsDibHeader(resData, 4))
+            {
+                try
+                {
+                    Img cursor = RT_CURSOR.Get(resData);
+                    if (cursor != null && cursor.Bitmap != null)
+                        return cursor;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Header matched a cursor, but decoding failed: " + ex.Message);
+                }
+            }
+
+            // RT_BITMAP already handles Windows DIBs, OS/2 bitmap arrays and
+            // OS/2 IC/CI/CP/PT pointer/icon formats.
+            if (IsDibHeader(resData, 0) || HasBitmapResourceSignature(resData))
+            {
+                try
+                {
+                    List<Img> images = RT_BITMAP.Get(resData);
+                    if (images != null && images.Count > 0)
+                        return images;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Header matched an image resource, but decoding failed: " + ex.Message);
+                }
+            }
+
+            // Text remains a string, so the UI can use its existing text viewer.
+            string text = TryDecodeText(resData);
+            if (text != null)
+                return text;
+
             return null;
+        }
+
+        private static bool IsOS2Font(byte[] data)
+        {
+            return data.Length >= 18 &&
+                   Encoding.ASCII.GetString(data, 8, 10) == "OS/2 FONT ";
+        }
+
+        private static bool IsWindowsFnt(byte[] data)
+        {
+            if (data.Length < 149)
+                return false;
+
+            ushort version = BitConverter.ToUInt16(data, 0);
+            if (version != 0x0100 && version != 0x0200 && version != 0x0300)
+                return false;
+
+            uint declaredSize = BitConverter.ToUInt32(data, 2);
+            if (declaredSize < 117 || declaredSize > data.Length)
+                return false;
+
+            ushort pixelHeight = BitConverter.ToUInt16(data, 88);
+            byte firstChar = data[95];
+            byte lastChar = data[96];
+            uint bitsOffset = BitConverter.ToUInt32(data, 113);
+
+            return pixelHeight > 0 &&
+                   lastChar >= firstChar &&
+                   bitsOffset > 0 &&
+                   bitsOffset < data.Length;
+        }
+
+        private static Bitmap TryDecodeStandardImage(byte[] data)
+        {
+            if (!HasStandardImageSignature(data))
+                return null;
+
+            try
+            {
+                // ICO files are more reliably decoded through Icon than Image.FromStream.
+                if (data.Length >= 4 &&
+                    data[0] == 0x00 && data[1] == 0x00 &&
+                    (data[2] == 0x01 || data[2] == 0x02) && data[3] == 0x00)
+                {
+                    using (MemoryStream stream = new MemoryStream(data, false))
+                    using (Icon icon = new Icon(stream))
+                    {
+                        return icon.ToBitmap();
+                    }
+                }
+
+                using (MemoryStream stream = new MemoryStream(data, false))
+                using (Image image = Image.FromStream(stream, true, true))
+                {
+                    // Clone the image because GDI+ otherwise keeps a dependency on the stream.
+                    return new Bitmap(image);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Known image header found, but GDI+ decoding failed: " + ex.Message);
+                return null;
+            }
+        }
+
+        private static bool HasStandardImageSignature(byte[] data)
+        {
+            if (data.Length >= 8 &&
+                data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 &&
+                data[4] == 0x0D && data[5] == 0x0A && data[6] == 0x1A && data[7] == 0x0A)
+                return true; // PNG
+
+            if (data.Length >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF)
+                return true; // JPEG
+
+            if (data.Length >= 6 &&
+                ((Encoding.ASCII.GetString(data, 0, 6) == "GIF87a") ||
+                 (Encoding.ASCII.GetString(data, 0, 6) == "GIF89a")))
+                return true;
+
+            if (data.Length >= 4 &&
+                ((data[0] == 0x49 && data[1] == 0x49 && data[2] == 0x2A && data[3] == 0x00) ||
+                 (data[0] == 0x4D && data[1] == 0x4D && data[2] == 0x00 && data[3] == 0x2A)))
+                return true; // TIFF
+
+            if (data.Length >= 2 && data[0] == 0x42 && data[1] == 0x4D)
+                return true; // BMP file
+
+            if (data.Length >= 4 && data[0] == 0x00 && data[1] == 0x00 &&
+                ((data[2] == 0x01 && data[3] == 0x00) ||
+                 (data[2] == 0x02 && data[3] == 0x00)))
+                return true; // ICO or CUR file
+
+            if (data.Length >= 4 &&
+                data[0] == 0xD7 && data[1] == 0xCD && data[2] == 0xC6 && data[3] == 0x9A)
+                return true; // Placeable WMF
+
+            if (data.Length >= 44 &&
+                BitConverter.ToUInt32(data, 0) == 1 &&
+                data[40] == 0x20 && data[41] == 0x45 && data[42] == 0x4D && data[43] == 0x46)
+                return true; // EMF
+
+            return false;
+        }
+
+        private static bool HasBitmapResourceSignature(byte[] data)
+        {
+            if (data.Length < 2)
+                return false;
+
+            ushort signature = BitConverter.ToUInt16(data, 0);
+            return signature == 0x4142 || // BA - OS/2 bitmap array
+                   signature == 0x4D42 || // BM - bitmap file
+                   signature == 0x4943 || // CI
+                   signature == 0x4349 || // IC
+                   signature == 0x5043 || // CP
+                   signature == 0x5450;   // PT
+        }
+
+        private static bool IsDibHeader(byte[] data, int offset)
+        {
+            if (data == null || offset < 0 || data.Length < offset + 12)
+                return false;
+
+            uint headerSize = BitConverter.ToUInt32(data, offset);
+            if (headerSize == 12)
+            {
+                ushort width = BitConverter.ToUInt16(data, offset + 4);
+                ushort height = BitConverter.ToUInt16(data, offset + 6);
+                ushort planes = BitConverter.ToUInt16(data, offset + 8);
+                ushort bitCount = BitConverter.ToUInt16(data, offset + 10);
+                return width > 0 && height > 0 && planes == 1 && IsKnownBitCount(bitCount);
+            }
+
+            if (headerSize == 16 || headerSize == 40 || headerSize == 52 ||
+                headerSize == 56 || headerSize == 64 || headerSize == 108 ||
+                headerSize == 124)
+            {
+                if (data.Length < offset + 16)
+                    return false;
+
+                int width = BitConverter.ToInt32(data, offset + 4);
+                int height = BitConverter.ToInt32(data, offset + 8);
+                ushort planes = BitConverter.ToUInt16(data, offset + 12);
+                ushort bitCount = BitConverter.ToUInt16(data, offset + 14);
+
+                return width > 0 && height != 0 && planes == 1 && IsKnownBitCount(bitCount);
+            }
+
+            return false;
+        }
+
+        private static bool IsKnownBitCount(ushort bitCount)
+        {
+            return bitCount == 1 || bitCount == 2 || bitCount == 4 ||
+                   bitCount == 8 || bitCount == 16 || bitCount == 24 ||
+                   bitCount == 32;
+        }
+
+        private static string TryDecodeText(byte[] data)
+        {
+            if (data == null || data.Length == 0)
+                return null;
+
+            Encoding encoding = null;
+            int offset = 0;
+            bool hasBom = true;
+            bool inferredUnicode = false;
+
+            if (data.Length >= 4 && data[0] == 0x00 && data[1] == 0x00 && data[2] == 0xFE && data[3] == 0xFF)
+            {
+                encoding = new UTF32Encoding(true, true, true);
+                offset = 4;
+            }
+            else if (data.Length >= 4 && data[0] == 0xFF && data[1] == 0xFE && data[2] == 0x00 && data[3] == 0x00)
+            {
+                encoding = new UTF32Encoding(false, true, true);
+                offset = 4;
+            }
+            else if (data.Length >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF)
+            {
+                encoding = new UTF8Encoding(false, true);
+                offset = 3;
+            }
+            else if (data.Length >= 2 && data[0] == 0xFE && data[1] == 0xFF)
+            {
+                encoding = new UnicodeEncoding(true, true, true);
+                offset = 2;
+            }
+            else if (data.Length >= 2 && data[0] == 0xFF && data[1] == 0xFE)
+            {
+                encoding = new UnicodeEncoding(false, true, true);
+                offset = 2;
+            }
+            else
+            {
+                hasBom = false;
+                if (LooksLikeUtf16(data, true))
+                {
+                    encoding = new UnicodeEncoding(false, false, true);
+                    inferredUnicode = true;
+                }
+                else if (LooksLikeUtf16(data, false))
+                {
+                    encoding = new UnicodeEncoding(true, false, true);
+                    inferredUnicode = true;
+                }
+                else
+                    encoding = new UTF8Encoding(false, true);
+            }
+
+            string text;
+            try
+            {
+                text = encoding.GetString(data, offset, data.Length - offset);
+            }
+            catch (DecoderFallbackException)
+            {
+                if (hasBom || !LooksLikeSingleByteText(data))
+                    return null;
+
+                text = Encoding.Default.GetString(data);
+            }
+
+            text = text.TrimEnd('\0');
+            if (!LooksLikeReadableText(text))
+                return null;
+
+            string trimmed = text.TrimStart('\uFEFF', ' ', '\t', '\r', '\n');
+            if (trimmed.Length == 0)
+                return text;
+
+            if (hasBom || inferredUnicode || HasKnownTextHeader(trimmed) || LooksLikeSingleByteText(data))
+                return text;
+
+            return null;
+        }
+
+        private static bool HasKnownTextHeader(string text)
+        {
+            return text.StartsWith("<!DOCTYPE html", StringComparison.OrdinalIgnoreCase) ||
+                   text.StartsWith("<html", StringComparison.OrdinalIgnoreCase) ||
+                   text.StartsWith("<head", StringComparison.OrdinalIgnoreCase) ||
+                   text.StartsWith("<body", StringComparison.OrdinalIgnoreCase) ||
+                   text.StartsWith("<?xml", StringComparison.OrdinalIgnoreCase) ||
+                   text.StartsWith("<svg", StringComparison.OrdinalIgnoreCase) ||
+                   text.StartsWith("<manifest", StringComparison.OrdinalIgnoreCase) ||
+                   text.StartsWith("<assembly", StringComparison.OrdinalIgnoreCase) ||
+                   text.StartsWith("{\\rtf", StringComparison.OrdinalIgnoreCase) ||
+                   text.StartsWith("@charset", StringComparison.OrdinalIgnoreCase) ||
+                   text.StartsWith("{", StringComparison.Ordinal) ||
+                   text.StartsWith("[", StringComparison.Ordinal);
+        }
+
+        private static bool LooksLikeUtf16(byte[] data, bool littleEndian)
+        {
+            int pairs = Math.Min(data.Length / 2, 128);
+            if (pairs < 4)
+                return false;
+
+            int expectedZeroes = 0;
+            int unexpectedZeroes = 0;
+            for (int i = 0; i < pairs; i++)
+            {
+                byte first = data[i * 2];
+                byte second = data[i * 2 + 1];
+                byte expected = littleEndian ? second : first;
+                byte unexpected = littleEndian ? first : second;
+                if (expected == 0) expectedZeroes++;
+                if (unexpected == 0) unexpectedZeroes++;
+            }
+
+            return expectedZeroes >= pairs * 3 / 5 && unexpectedZeroes <= pairs / 5;
+        }
+
+        private static bool LooksLikeSingleByteText(byte[] data)
+        {
+            int sampleLength = Math.Min(data.Length, 4096);
+            while (sampleLength > 0 && data[sampleLength - 1] == 0)
+                sampleLength--;
+            if (sampleLength == 0)
+                return false;
+
+            int readable = 0;
+            int zeroes = 0;
+            for (int i = 0; i < sampleLength; i++)
+            {
+                byte value = data[i];
+                if (value == 0)
+                    zeroes++;
+                if (value == 9 || value == 10 || value == 13 || value >= 32)
+                    readable++;
+            }
+
+            return zeroes == 0 && readable >= sampleLength * 9 / 10;
+        }
+
+        private static bool LooksLikeReadableText(string text)
+        {
+            if (String.IsNullOrEmpty(text))
+                return false;
+
+            int sampleLength = Math.Min(text.Length, 4096);
+            int readable = 0;
+            int zeroes = 0;
+            for (int i = 0; i < sampleLength; i++)
+            {
+                char value = text[i];
+                if (value == '\0')
+                    zeroes++;
+                if (value == '\t' || value == '\r' || value == '\n' || !Char.IsControl(value))
+                    readable++;
+            }
+
+            return zeroes <= Math.Max(1, sampleLength / 100) &&
+                   readable >= sampleLength * 9 / 10;
         }
 
         public static List<string[]> ListTypesAndRes(string currentFilePath)

@@ -371,12 +371,28 @@ namespace PeareModule
                     return bmpOS2;
                 }
 
-                // Windows-style DIB (BITMAPINFOHEADER)
+                // Windows-style DIB (BITMAPINFOHEADER).
+                // Decode indexed formats ourselves because GDI+ does not reliably support 2 bpp DIBs.
+                Img windowsDib = Decode_BITMAP_WINDOWS_DIB(bmpData);
+                if (windowsDib != null)
+                {
+                    Console.WriteLine("Data was bitmap. Decoded with Windows-style DIB decoder.");
+                    return windowsDib;
+                }
+
+                // GDI+ fallback for formats not handled by the internal decoder.
                 try
                 {
                     int biSize = BitConverter.ToInt32(bmpData, 0);
-                    int bfOffBits = 14 + biSize;
-                    int bfSize = bfOffBits + bmpData.Length - biSize;
+                    ushort bitCount = BitConverter.ToUInt16(bmpData, 14);
+                    uint colorsUsed = biSize >= 40 && bmpData.Length >= 36
+                        ? BitConverter.ToUInt32(bmpData, 32)
+                        : 0;
+                    int paletteEntries = bitCount <= 8
+                        ? (colorsUsed != 0 ? (int)colorsUsed : (1 << bitCount))
+                        : 0;
+                    int bfOffBits = 14 + biSize + paletteEntries * 4;
+                    int bfSize = 14 + bmpData.Length;
 
                     using (MemoryStream ms = new MemoryStream())
                     using (BinaryWriter bw = new BinaryWriter(ms))
@@ -388,7 +404,7 @@ namespace PeareModule
                         bw.Write((uint)bfOffBits);
                         bw.Write(bmpData);
                         ms.Position = 0;
-                        Console.WriteLine("Data was bitmap. Decoded after stripping the first 14 bytes with Windows-style DIB.");
+                        Console.WriteLine("Data was bitmap. Decoded after adding a Windows BMP file header.");
                         Bitmap bmp = new Bitmap(ms);
 
                         Img img = new Img();
@@ -400,7 +416,7 @@ namespace PeareModule
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("Reading as Windows-style DIB (BITMAPINFOHEADER) failed");
+                    Console.WriteLine("Reading as Windows-style DIB (BITMAPINFOHEADER) failed: " + ex.Message);
                 }
 
                 return null;
@@ -408,6 +424,103 @@ namespace PeareModule
             catch (Exception ex)
             {
                 Console.WriteLine("[DEBUG] TryParseBMP failed: " + ex.Message);
+                return null;
+            }
+        }
+
+        private static Img Decode_BITMAP_WINDOWS_DIB(byte[] data)
+        {
+            try
+            {
+                const uint BI_RGB = 0;
+
+                if (data == null || data.Length < 40)
+                    return null;
+
+                int headerSize = BitConverter.ToInt32(data, 0);
+                if (headerSize < 40 || headerSize > data.Length)
+                    return null;
+
+                int width = BitConverter.ToInt32(data, 4);
+                int signedHeight = BitConverter.ToInt32(data, 8);
+                ushort planes = BitConverter.ToUInt16(data, 12);
+                ushort bitCount = BitConverter.ToUInt16(data, 14);
+                uint compression = BitConverter.ToUInt32(data, 16);
+                uint colorsUsed = BitConverter.ToUInt32(data, 32);
+
+                if (width <= 0 || signedHeight == 0 || planes != 1 || compression != BI_RGB)
+                    return null;
+
+                if (bitCount != 1 && bitCount != 2 && bitCount != 4 && bitCount != 8 &&
+                    bitCount != 24 && bitCount != 32)
+                    return null;
+
+                int height = Math.Abs(signedHeight);
+                bool topDown = signedHeight < 0;
+
+                int paletteEntries = 0;
+                if (bitCount <= 8)
+                {
+                    int maximumPaletteEntries = 1 << bitCount;
+                    paletteEntries = colorsUsed != 0 ? (int)colorsUsed : maximumPaletteEntries;
+                    if (paletteEntries < 0 || paletteEntries > maximumPaletteEntries)
+                        return null;
+                }
+
+                long paletteEnd = (long)headerSize + paletteEntries * 4L;
+                if (paletteEnd > data.Length)
+                    return null;
+
+                Color[] palette = null;
+                if (paletteEntries > 0)
+                {
+                    palette = new Color[paletteEntries];
+                    for (int i = 0; i < paletteEntries; i++)
+                    {
+                        int entryOffset = headerSize + i * 4;
+                        byte blue = data[entryOffset];
+                        byte green = data[entryOffset + 1];
+                        byte red = data[entryOffset + 2];
+                        palette[i] = Color.FromArgb(255, red, green, blue);
+                    }
+                }
+
+                int stride = ((width * bitCount + 31) / 32) * 4;
+                long calculatedImageSize = (long)stride * height;
+                if (calculatedImageSize <= 0 || calculatedImageSize > int.MaxValue)
+                    return null;
+
+                int pixelOffset = (int)paletteEnd;
+                if ((long)pixelOffset + calculatedImageSize > data.Length)
+                {
+                    // biSizeImage is frequently wrong in old resources. Prefer the size
+                    // calculated from width, height and bit depth and anchor it at the end.
+                    int endAnchoredOffset = data.Length - (int)calculatedImageSize;
+                    if (endAnchoredOffset < pixelOffset)
+                        return null;
+                    pixelOffset = endAnchoredOffset;
+                }
+
+                byte[] pixelData = new byte[(int)calculatedImageSize];
+                Buffer.BlockCopy(data, pixelOffset, pixelData, 0, pixelData.Length);
+
+                if (topDown)
+                {
+                    // GenerateBitmapFromData expects bottom-up DIB rows.
+                    byte[] bottomUpData = new byte[pixelData.Length];
+                    for (int y = 0; y < height; y++)
+                    {
+                        Buffer.BlockCopy(pixelData, y * stride,
+                            bottomUpData, (height - 1 - y) * stride, stride);
+                    }
+                    pixelData = bottomUpData;
+                }
+
+                return GenerateBitmapFromData(pixelData, null, width, height, bitCount, palette);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[DEBUG] Decode_BITMAP_WINDOWS_DIB failed: " + ex.Message);
                 return null;
             }
         }
@@ -475,7 +588,7 @@ namespace PeareModule
                     ushort planes = reader.ReadUInt16();
                     ushort bpp = reader.ReadUInt16();
 
-                    if (planes != 1 || (bpp != 1 && bpp != 4 && bpp != 8 && bpp != 24)) // Pointers can be 1, 4, 8, 24 bpp
+                    if (planes != 1 || (bpp != 1 && bpp != 2 && bpp != 4 && bpp != 8 && bpp != 24)) // Pointers can be 1, 2, 4, 8, 24 bpp
                     {
                         return null; // Unsupported color format
                     }
@@ -633,7 +746,7 @@ namespace PeareModule
                     _ = reader.ReadUInt32(); // clrImportant
 
                     // Validate color image properties
-                    if (planes != 1 || (bpp != 1 && bpp != 4 && bpp != 8 && bpp != 24)) // Pointers can be 1, 4, 8, 24 bpp
+                    if (planes != 1 || (bpp != 1 && bpp != 2 && bpp != 4 && bpp != 8 && bpp != 24)) // Pointers can be 1, 2, 4, 8, 24 bpp
                     {
                         return null; // Unsupported color format
                     }
@@ -752,7 +865,7 @@ namespace PeareModule
 
             // Determine the number of colors in the palette
             int numColors;
-            if (bitCount <= 8) // Paletted images usually have bitCount 1, 4, 8
+            if (bitCount <= 8) // Paletted images usually have bitCount 1, 2, 4, 8
             {
                 numColors = (int)(cclrUsed != 0 ? (int)cclrUsed : (1 << bitCount));
             }
@@ -1211,7 +1324,7 @@ namespace PeareModule
 
                 // --- Calculate Palette Information ---
                 int numColors = 0;
-                if (bitCount <= 8) // Indexed color formats (1, 4, 8 bpp)
+                if (bitCount <= 8) // Indexed color formats (1, 2, 4, 8 bpp)
                 {
                     numColors = 1 << bitCount;
                 }
@@ -1299,7 +1412,7 @@ namespace PeareModule
                 int paletteSize = numColors * 3; // 3 bytes per color (RGB)
                 int paletteOffset = bcSize - paletteSize;
 
-                if (planes != 1 || (bitCount != 1 && bitCount != 4 && bitCount != 8))
+                if (planes != 1 || (bitCount != 1 && bitCount != 2 && bitCount != 4 && bitCount != 8))
                 {
                     Console.WriteLine("[DEBUG] Unsupported OS/2 v1 planes or BPP: planes={0}, bpp={1}", planes, bitCount);
                     return null;
@@ -1350,16 +1463,31 @@ namespace PeareModule
             int colorStride = ((width * bitCount + 31) / 32) * 4;
             int maskStride = ((width + 31) / 32) * 4;
 
-            if (bitCount == 4 && palette.Length == 0)
+            if (palette == null || palette.Length == 0)
             {
-                // Palette EGA Windows as fallback with bitCount=4 when is missing 
-                palette = new Color[]
+                if (bitCount == 1)
                 {
-                    Color.Black, Color.Blue, Color.Green, Color.Cyan,
-                    Color.Red, Color.Magenta, Color.Brown, Color.LightGray,
-                    Color.DarkGray, Color.LightBlue, Color.LightGreen, Color.LightCyan,
-                    Color.LightCoral, Color.LightPink, Color.Yellow, Color.White
-                };
+                    palette = new Color[] { Color.Black, Color.White };
+                }
+                else if (bitCount == 2)
+                {
+                    // Safe fallback for malformed indexed resources without a color table.
+                    palette = new Color[]
+                    {
+                        Color.Black, Color.DarkGray, Color.LightGray, Color.White
+                    };
+                }
+                else if (bitCount == 4)
+                {
+                    // Palette EGA Windows as fallback with bitCount=4 when it is missing.
+                    palette = new Color[]
+                    {
+                        Color.Black, Color.Blue, Color.Green, Color.Cyan,
+                        Color.Red, Color.Magenta, Color.Brown, Color.LightGray,
+                        Color.DarkGray, Color.LightBlue, Color.LightGreen, Color.LightCyan,
+                        Color.LightCoral, Color.LightPink, Color.Yellow, Color.White
+                    };
+                }
             }
 
             Bitmap bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb);
@@ -1409,6 +1537,18 @@ namespace PeareModule
                             if (off < pixelData.Length)
                             {
                                 int idx = pixelData[off];
+                                if (idx < palette.Length)
+                                    color = palette[idx];
+                            }
+                        }
+                        else if (bitCount == 2 && palette != null)
+                        {
+                            int off = pixelOffset + (x / 4);
+                            if (off < pixelData.Length)
+                            {
+                                byte val = pixelData[off];
+                                int shift = 6 - ((x % 4) * 2);
+                                int idx = (val >> shift) & 0x03;
                                 if (idx < palette.Length)
                                     color = palette[idx];
                             }
