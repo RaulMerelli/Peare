@@ -38,6 +38,11 @@
             this.mnu_Open = new System.Windows.Forms.MenuItem();
             this.menuItem1 = new System.Windows.Forms.MenuItem();
             this.mnu_Exit = new System.Windows.Forms.MenuItem();
+            this.mnu_Resource = new System.Windows.Forms.MenuItem();
+            this.mnu_ExportOriginal = new System.Windows.Forms.MenuItem();
+            this.mnu_ExportConverted = new System.Windows.Forms.MenuItem();
+            this.mnu_ResourceSeparator = new System.Windows.Forms.MenuItem();
+            this.mnu_ExportAllResources = new System.Windows.Forms.MenuItem();
             this.mnu_View = new System.Windows.Forms.MenuItem();
             this.mnu_ExpandTreeview = new System.Windows.Forms.MenuItem();
             this.mnu_CollapseTreeview = new System.Windows.Forms.MenuItem();
@@ -85,6 +90,7 @@
             // 
             this.mainMenu1.MenuItems.AddRange(new System.Windows.Forms.MenuItem[] {
             this.mnu_File,
+            this.mnu_Resource,
             this.mnu_View,
             this.menuItem2});
             // 
@@ -114,9 +120,46 @@
             this.mnu_Exit.Text = "Exit";
             this.mnu_Exit.Click += new System.EventHandler(this.menuClick);
             // 
+            // mnu_Resource
+            // 
+            this.mnu_Resource.Enabled = false;
+            this.mnu_Resource.Index = 1;
+            this.mnu_Resource.MenuItems.AddRange(new System.Windows.Forms.MenuItem[] {
+            this.mnu_ExportOriginal,
+            this.mnu_ExportConverted,
+            this.mnu_ResourceSeparator,
+            this.mnu_ExportAllResources});
+            this.mnu_Resource.Text = "Resource";
+            // 
+            // mnu_ExportOriginal
+            // 
+            this.mnu_ExportOriginal.Enabled = false;
+            this.mnu_ExportOriginal.Index = 0;
+            this.mnu_ExportOriginal.Text = "Export original";
+            this.mnu_ExportOriginal.Click += new System.EventHandler(this.menuClick);
+            // 
+            // mnu_ExportConverted
+            // 
+            this.mnu_ExportConverted.Enabled = false;
+            this.mnu_ExportConverted.Index = 1;
+            this.mnu_ExportConverted.Text = "Export converted";
+            this.mnu_ExportConverted.Click += new System.EventHandler(this.menuClick);
+            // 
+            // mnu_ResourceSeparator
+            // 
+            this.mnu_ResourceSeparator.Index = 2;
+            this.mnu_ResourceSeparator.Text = "-";
+            // 
+            // mnu_ExportAllResources
+            // 
+            this.mnu_ExportAllResources.Enabled = false;
+            this.mnu_ExportAllResources.Index = 3;
+            this.mnu_ExportAllResources.Text = "Export all resources...";
+            this.mnu_ExportAllResources.Click += new System.EventHandler(this.menuClick);
+            // 
             // mnu_View
             // 
-            this.mnu_View.Index = 1;
+            this.mnu_View.Index = 2;
             this.mnu_View.MenuItems.AddRange(new System.Windows.Forms.MenuItem[] {
             this.mnu_ExpandTreeview,
             this.mnu_CollapseTreeview});
@@ -136,7 +179,7 @@
             // 
             // menuItem2
             // 
-            this.menuItem2.Index = 2;
+            this.menuItem2.Index = 3;
             this.menuItem2.MenuItems.AddRange(new System.Windows.Forms.MenuItem[] {
             this.mnu_OpenIssue,
             this.menuItem4,
@@ -195,6 +238,11 @@
         private System.Windows.Forms.MainMenu mainMenu1;
         private System.Windows.Forms.MenuItem mnu_File;
         private System.Windows.Forms.MenuItem mnu_Open;
+        private System.Windows.Forms.MenuItem mnu_Resource;
+        private System.Windows.Forms.MenuItem mnu_ExportOriginal;
+        private System.Windows.Forms.MenuItem mnu_ExportConverted;
+        private System.Windows.Forms.MenuItem mnu_ResourceSeparator;
+        private System.Windows.Forms.MenuItem mnu_ExportAllResources;
         private System.Windows.Forms.MenuItem mnu_View;
         private System.Windows.Forms.MenuItem mnu_ExpandTreeview;
         private System.Windows.Forms.MenuItem mnu_CollapseTreeview;

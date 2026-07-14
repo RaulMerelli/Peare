@@ -19,6 +19,14 @@ namespace Peare
     {
         public static string currentFilePath;
 
+        private ModuleResources.ModuleProperties currentModuleProperties;
+        private byte[] selectedResourceData;
+        private string selectedResourceType;
+        private string selectedResourceLabel;
+        private object selectedDecodedResource;
+        private ResourceFileFormat selectedOriginalFormat;
+        private List<string> selectedConversionExtensions = new List<string>();
+
         public MainForm()
         {
             InitializeComponent();
@@ -51,7 +59,10 @@ namespace Peare
             {
                 currentFilePath = ofd.FileName;
                 List<string[]> relations = ModuleResources.ListTypesAndRes(currentFilePath);
-                ModuleResources.ModuleProperties moduleProperties = ModuleResources.GetModuleProperties(currentFilePath);
+                currentModuleProperties = ModuleResources.GetModuleProperties(currentFilePath);
+                ModuleResources.ModuleProperties moduleProperties = currentModuleProperties;
+
+                ClearSelectedResource();
 
                 // Clean previous visualization
                 treeView1.Nodes.Clear();
@@ -111,6 +122,7 @@ namespace Peare
                     }
                 }
 
+                UpdateResourceMenu();
             }
         }
 
@@ -130,173 +142,211 @@ namespace Peare
 
         private void treeView1_AfterSelect(object sender, TreeViewEventArgs e)
         {
-            // Clean previous visualization
             flowLayoutPanel1.Controls.Clear();
             lbMessage.Text = "";
+            ClearSelectedResource();
 
             if (e.Node.Parent == null)
             {
-                // Resource type node, do not do anything
+                UpdateResourceMenu();
                 return;
             }
 
             string typeName = e.Node.Parent.Text;
             string resourceLabel = e.Node.Text;
-
             bool isNumericResource = resourceLabel.StartsWith("#");
             string targetResourceName = isNumericResource ? resourceLabel.Substring(1) : resourceLabel;
             string message = "";
             bool found = false;
 
-            ModuleResources.ModuleProperties moduleProperties = ModuleResources.GetModuleProperties(currentFilePath);
+            ModuleResources.ModuleProperties moduleProperties = currentModuleProperties ?? ModuleResources.GetModuleProperties(currentFilePath);
             byte[] resData = ModuleResources.OpenResource(moduleProperties, typeName, targetResourceName, out message, out found);
 
             if (found)
             {
-                if (typeName == "RT_FONTDIR")
+                selectedResourceData = resData;
+                selectedResourceType = typeName;
+                selectedResourceLabel = resourceLabel;
+
+                try
                 {
-                    string val = RT_FONTDIR.Get(resData, moduleProperties);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                }
-                else if (typeName == "RT_MENU")
-                {
-                    ModuleResources.DumpRaw(resData);
-                    string val = RT_MENU.Get(resData, moduleProperties);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                }
-                else if (typeName == "RT_FONT")
-                {
-                    flowLayoutPanel1.Controls.Add(GetPictureBox(RT_FONT.Get(resData, moduleProperties)));
-                }
-                else if (typeName == "RT_ICON")
-                {
-                    flowLayoutPanel1.Controls.Add(GetPictureBox(RT_ICON.Get(resData).Bitmap));
-                }
-                else if (typeName == "RT_CURSOR")
-                {
-                    flowLayoutPanel1.Controls.Add(GetPictureBox(RT_CURSOR.Get(resData).Bitmap));
-                }
-                else if (typeName == "RT_DISPLAYINFO")
-                {
-                    string val = RT_DISPLAYINFO.Get(resData);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                }
-                else if (typeName == "RT_HELPTABLE")
-                {
-                    string val = RT_HELPTABLE.Get(resData);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                }
-                else if (typeName == "RT_HELPSUBTABLE")
-                {
-                    string val = RT_HELPSUBTABLE.Get(resData);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                }
-                else if (typeName == "RT_DLGINCLUDE")
-                {
-                    string val = RT_DLGINCLUDE.Get(resData);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                }
-                else if (typeName == "RT_POINTER")
-                {
-                    bool result = false;
-                    foreach (Img img in RT_POINTER.Get(resData))
+                    if (typeName == "RT_FONTDIR")
                     {
-                        result = true;
-                        flowLayoutPanel1.Controls.Add(GetPictureBox(img.Bitmap));
-                    }
-                    if (!result)
-                    {
-                        string val = ModuleResources.DumpRaw(resData);
+                        string val = RT_FONTDIR.Get(resData, moduleProperties);
+                        selectedDecodedResource = val;
                         flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
-                }
-                else if (typeName == "RT_BITMAP")
-                {
-                    bool result = false;
-                    foreach (Img img in RT_BITMAP.Get(resData))
+                    else if (typeName == "RT_MENU")
                     {
-                        result = true;
-                        flowLayoutPanel1.Controls.Add(GetPictureBox(img.Bitmap));
-                    }
-                    if (!result)
-                    {
-                        string val = ModuleResources.DumpRaw(resData);
+                        ModuleResources.DumpRaw(resData);
+                        string val = RT_MENU.Get(resData, moduleProperties);
+                        selectedDecodedResource = val;
                         flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
-                }
-                else if (typeName == "RT_GROUP_ICON")
-                {
-                    List<Img> imgs = new List<Img>();
-                    string val = RT_GROUP_ICON.Get(resData, moduleProperties, out imgs);
-                    foreach (Img img in imgs)
+                    else if (typeName == "RT_FONT")
                     {
-                        flowLayoutPanel1.Controls.Add(GetPictureBox(img.Bitmap));
+                        Bitmap bitmap = RT_FONT.Get(resData, moduleProperties);
+                        selectedDecodedResource = bitmap;
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(bitmap));
                     }
-                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                }
-                else if (typeName == "RT_GROUP_CURSOR")
-                {
-                    List<Img> imgs = new List<Img>();
-                    string val = RT_GROUP_CURSOR.Get(resData, moduleProperties, out imgs);
-                    foreach (Img img in imgs)
+                    else if (typeName == "RT_ICON")
                     {
-                        flowLayoutPanel1.Controls.Add(GetPictureBox(img.Bitmap));
+                        Img image = RT_ICON.Get(resData);
+                        selectedDecodedResource = image;
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(image.Bitmap));
                     }
-                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                }
-                else if (typeName == "RT_VERSION")
-                {
-                    string val = RT_VERSION.Get(resData);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                }
-                else if (typeName == "RT_NAMETABLE")
-                {
-                    string val = RT_NAMETABLE.Get(resData);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    string dump = ModuleResources.DumpRaw(resData);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(dump));
-                }
-                else if (typeName == "RT_ACCELERATOR")
-                {
-                    string val = RT_ACCELERATOR.Get(resData, moduleProperties);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    string dump = ModuleResources.DumpRaw(resData);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(dump));
-                }
-                else if (typeName == "RT_ACCELTABLE")
-                {
-                    string val = RT_ACCELTABLE.Get(resData, moduleProperties);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                    string dump = ModuleResources.DumpRaw(resData);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(dump));
-                }
-                else if (typeName == "RT_MESSAGE" || typeName == "RT_MESSAGETABLE")
-                {
-                    string val = RT_MESSAGE.Get(resData, moduleProperties);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                }
-                else if (typeName == "RT_STRING")
-                {
-                    string val = RT_STRING.Get(resData, moduleProperties);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                }
-                else if (typeName == "RT_DIALOG")
-                {
-                    string val = RT_DIALOG.Get(resData, moduleProperties);
-                    flowLayoutPanel1.Controls.Add(GetTextbox(val));
-                }
-                else
-                {
-                    object rawResult = ModuleResources.RawDetect(resData, moduleProperties);
-                    if (!ShowRawResult(rawResult))
+                    else if (typeName == "RT_CURSOR")
                     {
-                        string val = ModuleResources.DumpRaw(resData, true);
+                        Img image = RT_CURSOR.Get(resData);
+                        selectedDecodedResource = image;
+                        flowLayoutPanel1.Controls.Add(GetPictureBox(image.Bitmap));
+                    }
+                    else if (typeName == "RT_DISPLAYINFO")
+                    {
+                        string val = RT_DISPLAYINFO.Get(resData);
+                        selectedDecodedResource = val;
                         flowLayoutPanel1.Controls.Add(GetTextbox(val));
                     }
+                    else if (typeName == "RT_HELPTABLE")
+                    {
+                        string val = RT_HELPTABLE.Get(resData);
+                        selectedDecodedResource = val;
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
+                    else if (typeName == "RT_HELPSUBTABLE")
+                    {
+                        string val = RT_HELPSUBTABLE.Get(resData);
+                        selectedDecodedResource = val;
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
+                    else if (typeName == "RT_DLGINCLUDE")
+                    {
+                        string val = RT_DLGINCLUDE.Get(resData);
+                        selectedDecodedResource = val;
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
+                    else if (typeName == "RT_POINTER")
+                    {
+                        List<Img> images = RT_POINTER.Get(resData);
+                        selectedDecodedResource = images;
+                        bool result = false;
+                        foreach (Img img in images)
+                        {
+                            result = true;
+                            flowLayoutPanel1.Controls.Add(GetPictureBox(img.Bitmap));
+                        }
+                        if (!result)
+                        {
+                            string val = ModuleResources.DumpRaw(resData);
+                            flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                        }
+                    }
+                    else if (typeName == "RT_BITMAP")
+                    {
+                        List<Img> images = RT_BITMAP.Get(resData);
+                        selectedDecodedResource = images;
+                        bool result = false;
+                        foreach (Img img in images)
+                        {
+                            result = true;
+                            flowLayoutPanel1.Controls.Add(GetPictureBox(img.Bitmap));
+                        }
+                        if (!result)
+                        {
+                            string val = ModuleResources.DumpRaw(resData);
+                            flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                        }
+                    }
+                    else if (typeName == "RT_GROUP_ICON")
+                    {
+                        List<Img> imgs = new List<Img>();
+                        string val = RT_GROUP_ICON.Get(resData, moduleProperties, out imgs);
+                        selectedDecodedResource = imgs.Count > 0 ? (object)imgs : val;
+                        foreach (Img img in imgs)
+                            flowLayoutPanel1.Controls.Add(GetPictureBox(img.Bitmap));
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
+                    else if (typeName == "RT_GROUP_CURSOR")
+                    {
+                        List<Img> imgs = new List<Img>();
+                        string val = RT_GROUP_CURSOR.Get(resData, moduleProperties, out imgs);
+                        selectedDecodedResource = imgs.Count > 0 ? (object)imgs : val;
+                        foreach (Img img in imgs)
+                            flowLayoutPanel1.Controls.Add(GetPictureBox(img.Bitmap));
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
+                    else if (typeName == "RT_VERSION")
+                    {
+                        string val = RT_VERSION.Get(resData);
+                        selectedDecodedResource = val;
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
+                    else if (typeName == "RT_NAMETABLE")
+                    {
+                        string val = RT_NAMETABLE.Get(resData);
+                        selectedDecodedResource = val;
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                        string dump = ModuleResources.DumpRaw(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(dump));
+                    }
+                    else if (typeName == "RT_ACCELERATOR")
+                    {
+                        string val = RT_ACCELERATOR.Get(resData, moduleProperties);
+                        selectedDecodedResource = val;
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                        string dump = ModuleResources.DumpRaw(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(dump));
+                    }
+                    else if (typeName == "RT_ACCELTABLE")
+                    {
+                        string val = RT_ACCELTABLE.Get(resData, moduleProperties);
+                        selectedDecodedResource = val;
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                        string dump = ModuleResources.DumpRaw(resData);
+                        flowLayoutPanel1.Controls.Add(GetTextbox(dump));
+                    }
+                    else if (typeName == "RT_MESSAGE" || typeName == "RT_MESSAGETABLE")
+                    {
+                        string val = RT_MESSAGE.Get(resData, moduleProperties);
+                        selectedDecodedResource = val;
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
+                    else if (typeName == "RT_STRING")
+                    {
+                        string val = RT_STRING.Get(resData, moduleProperties);
+                        selectedDecodedResource = val;
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
+                    else if (typeName == "RT_DIALOG")
+                    {
+                        string val = RT_DIALOG.Get(resData, moduleProperties);
+                        selectedDecodedResource = val;
+                        flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                    }
+                    else
+                    {
+                        object rawResult = ModuleResources.RawDetect(resData, moduleProperties);
+                        selectedDecodedResource = rawResult;
+                        if (!ShowRawResult(rawResult))
+                        {
+                            string val = ModuleResources.DumpRaw(resData, true);
+                            flowLayoutPanel1.Controls.Add(GetTextbox(val));
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    selectedDecodedResource = null;
+                    flowLayoutPanel1.Controls.Clear();
+                    string dump = ModuleResources.DumpRaw(resData, true);
+                    flowLayoutPanel1.Controls.Add(GetTextbox(dump));
+                    string decodeMessage = "Resource loaded, but preview failed: " + ex.Message;
+                    message = string.IsNullOrEmpty(message) ? decodeMessage : message + " " + decodeMessage;
                 }
             }
 
             lbMessage.Text = message.Replace("\n", " ");
+            UpdateResourceMenu();
         }
 
         private bool ShowRawResult(object rawResult)
@@ -341,6 +391,203 @@ namespace Peare
             }
 
             return false;
+        }
+
+        private void ClearSelectedResource()
+        {
+            selectedResourceData = null;
+            selectedResourceType = null;
+            selectedResourceLabel = null;
+            selectedDecodedResource = null;
+            selectedOriginalFormat = null;
+            selectedConversionExtensions.Clear();
+        }
+
+        private void UpdateResourceMenu()
+        {
+            bool hasContainer = !string.IsNullOrEmpty(currentFilePath) && currentModuleProperties != null;
+            mnu_Resource.Enabled = hasContainer;
+            mnu_ExportAllResources.Enabled = hasContainer && treeView1.Nodes.Count > 0;
+
+            mnu_ExportConverted.MenuItems.Clear();
+            selectedConversionExtensions.Clear();
+
+            if (selectedResourceData == null)
+            {
+                mnu_ExportOriginal.Enabled = false;
+                mnu_ExportOriginal.Text = "Export original";
+                mnu_ExportConverted.Enabled = false;
+                mnu_ExportConverted.Text = "Export converted";
+                return;
+            }
+
+            selectedOriginalFormat = ResourceFormatDetector.Detect(selectedResourceType, selectedResourceData);
+            mnu_ExportOriginal.Enabled = true;
+            mnu_ExportOriginal.Text = "Export original (" + selectedOriginalFormat.Extension + ")";
+
+            selectedConversionExtensions = ResourceConversion.GetAvailableExtensions(selectedDecodedResource);
+            mnu_ExportConverted.Enabled = selectedConversionExtensions.Count > 0;
+
+            if (selectedConversionExtensions.Count == 0)
+            {
+                mnu_ExportConverted.Text = "Export converted";
+            }
+            else if (selectedConversionExtensions.Count == 1)
+            {
+                mnu_ExportConverted.Text = "Export converted (" + selectedConversionExtensions[0] + ")";
+            }
+            else
+            {
+                mnu_ExportConverted.Text = "Export converted";
+                foreach (string extension in selectedConversionExtensions)
+                {
+                    string capturedExtension = extension;
+                    MenuItem item = new MenuItem(extension.TrimStart('.').ToUpperInvariant() + " (" + extension + ")");
+                    item.Click += delegate { ExportSelectedConverted(capturedExtension); };
+                    mnu_ExportConverted.MenuItems.Add(item);
+                }
+            }
+        }
+
+        private string GetSelectedResourceBaseName()
+        {
+            string moduleName = Path.GetFileNameWithoutExtension(currentFilePath);
+            return ResourceConversion.SanitizeFileName(moduleName + "_" + selectedResourceType + "_" + selectedResourceLabel);
+        }
+
+        private void ExportSelectedOriginal()
+        {
+            if (selectedResourceData == null)
+                return;
+
+            ResourceFileFormat format = selectedOriginalFormat ?? ResourceFormatDetector.Detect(selectedResourceType, selectedResourceData);
+            string baseName = GetSelectedResourceBaseName();
+
+            using (SaveFileDialog dialog = new SaveFileDialog())
+            {
+                dialog.Title = "Export original resource";
+                dialog.FileName = baseName + format.Extension;
+                dialog.Filter = format.Description + " (*" + format.Extension + ")|*" + format.Extension + "|All files (*.*)|*.*";
+                dialog.DefaultExt = format.Extension.TrimStart('.');
+                dialog.AddExtension = true;
+
+                if (dialog.ShowDialog() == DialogResult.OK)
+                {
+                    File.WriteAllBytes(dialog.FileName, selectedResourceData);
+                    lbMessage.Text = "Exported original resource: " + dialog.FileName;
+                }
+            }
+        }
+
+        private void ExportSelectedConverted(string extension)
+        {
+            if (selectedDecodedResource == null)
+                return;
+
+            List<ConvertedResourceFile> files = ResourceConversion.Convert(selectedDecodedResource, extension, GetSelectedResourceBaseName());
+            if (files.Count == 0)
+            {
+                MessageBox.Show("The selected resource could not be converted.", "Export resource", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (files.Count == 1)
+            {
+                using (SaveFileDialog dialog = new SaveFileDialog())
+                {
+                    dialog.Title = "Export converted resource";
+                    dialog.FileName = files[0].FileName;
+                    dialog.Filter = extension.TrimStart('.').ToUpperInvariant() + " file (*" + extension + ")|*" + extension + "|All files (*.*)|*.*";
+                    dialog.DefaultExt = extension.TrimStart('.');
+                    dialog.AddExtension = true;
+
+                    if (dialog.ShowDialog() == DialogResult.OK)
+                    {
+                        File.WriteAllBytes(dialog.FileName, files[0].Data);
+                        lbMessage.Text = "Exported converted resource: " + dialog.FileName;
+                    }
+                }
+                return;
+            }
+
+            using (FolderBrowserDialog dialog = new FolderBrowserDialog())
+            {
+                dialog.Description = "Select the folder for the converted resource files";
+                if (dialog.ShowDialog() != DialogResult.OK)
+                    return;
+
+                int exported = 0;
+                foreach (ConvertedResourceFile file in files)
+                {
+                    string path = ResourceConversion.GetUniquePath(Path.Combine(dialog.SelectedPath, file.FileName));
+                    File.WriteAllBytes(path, file.Data);
+                    exported++;
+                }
+                lbMessage.Text = "Exported " + exported.ToString() + " converted resource files to " + dialog.SelectedPath;
+            }
+        }
+
+        private void ExportAllResources()
+        {
+            if (string.IsNullOrEmpty(currentFilePath) || currentModuleProperties == null)
+                return;
+
+            using (FolderBrowserDialog dialog = new FolderBrowserDialog())
+            {
+                dialog.Description = "Select the destination folder for all original resources";
+                if (dialog.ShowDialog() != DialogResult.OK)
+                    return;
+
+                string moduleName = ResourceConversion.SanitizeFileName(Path.GetFileNameWithoutExtension(currentFilePath));
+                string exportRoot = Path.Combine(dialog.SelectedPath, moduleName + "_resources");
+                Directory.CreateDirectory(exportRoot);
+
+                int exported = 0;
+                int failed = 0;
+
+                foreach (TreeNode typeNode in treeView1.Nodes)
+                {
+                    string typeName = typeNode.Text;
+                    string typeFolder = Path.Combine(exportRoot, ResourceConversion.SanitizeFileName(typeName));
+                    Directory.CreateDirectory(typeFolder);
+
+                    foreach (TreeNode resourceNode in typeNode.Nodes)
+                    {
+                        string resourceLabel = resourceNode.Text;
+                        string targetName = resourceLabel.StartsWith("#") ? resourceLabel.Substring(1) : resourceLabel;
+                        string message;
+                        bool found;
+
+                        try
+                        {
+                            byte[] data = ModuleResources.OpenResource(currentModuleProperties, typeName, targetName, out message, out found);
+                            if (!found || data == null)
+                            {
+                                failed++;
+                                continue;
+                            }
+
+                            ResourceFileFormat format = ResourceFormatDetector.Detect(typeName, data);
+                            string fileName = ResourceConversion.SanitizeFileName(resourceLabel) + format.Extension;
+                            string path = ResourceConversion.GetUniquePath(Path.Combine(typeFolder, fileName));
+                            File.WriteAllBytes(path, data);
+                            exported++;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine("Failed to export " + typeName + " " + resourceLabel + ": " + ex.Message);
+                            failed++;
+                        }
+                    }
+                }
+
+                string summary = "Exported " + exported.ToString() + " original resources to " + exportRoot;
+                if (failed > 0)
+                    summary += ". Failed: " + failed.ToString();
+                lbMessage.Text = summary;
+                MessageBox.Show(summary, "Export all resources", MessageBoxButtons.OK,
+                    failed == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            }
         }
 
         PictureBox GetPictureBox(Bitmap bitmap)
@@ -393,6 +640,19 @@ namespace Peare
 
                 case var _ when sender == mnu_Open:
                     Open();
+                    break;
+
+                case var _ when sender == mnu_ExportOriginal:
+                    ExportSelectedOriginal();
+                    break;
+
+                case var _ when sender == mnu_ExportConverted:
+                    if (selectedConversionExtensions.Count == 1)
+                        ExportSelectedConverted(selectedConversionExtensions[0]);
+                    break;
+
+                case var _ when sender == mnu_ExportAllResources:
+                    ExportAllResources();
                     break;
 
                 case var _ when sender == mnu_Exit:
