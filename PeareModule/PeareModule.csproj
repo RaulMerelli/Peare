@@ -55,6 +55,7 @@
     <Compile Include="PE\PeResources.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Resources\ModuleResources.cs" />
+    <Compile Include="Resources\WSZ\WszDecoder.cs" />
     <Compile Include="Resources\RT_ACCELTABLE\RT_ACCELTABLE.cs" />
     <Compile Include="Resources\RT_ACCELERATOR\RT_ACCELERATOR.cs" />
     <Compile Include="Resources\RT_BITMAP\ImageProperties.cs" />
@@ -71,6 +72,7 @@
     <Compile Include="Resources\RT_FONT\DecodedFont.cs" />
     <Compile Include="Resources\RT_FONT\RT_FONT.cs" />
     <Compile Include="Resources\RT_FONT\OS2_RT_FONT.cs" />
+    <Compile Include="Resources\RT_FONT\OS2OutlineDecoder.cs" />
     <Compile Include="Resources\RT_GROUP_CURSOR\RT_GROUP_CURSOR.cs" />
     <Compile Include="Resources\RT_GROUP_ICON\RT_GROUP_ICON.cs" />
     <Compile Include="Resources\RT_HELPSUBTABLE\RT_HELPSUBTABLE.cs" />
@@ -84,6 +86,9 @@
     <Compile Include="Resources\RT_STRING\RT_STRING.cs" />
     <Compile Include="Resources\RT_VERSION\RT_VERSION.cs" />
   </ItemGroup>
-  <ItemGroup />
+  <ItemGroup>
+    <None Include="Resources\WSZ\LICENSE-Apache-2.0.txt" />
+    <None Include="Resources\WSZ\NOTICE.txt" />
+  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

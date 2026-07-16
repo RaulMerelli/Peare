@@ -61,6 +61,15 @@ namespace PeareModule
             if ((long)cellArrayOffset + (long)characterCount * cellSize > resData.Length)
                 throw new InvalidOperationException("Invalid OS/2 font data: truncated cell table.");
 
+            // In FOCA outline resources usLastChar is used as the cell count.
+            // For the common first-character value 1 this equals the normal
+            // inclusive range calculation, but keeping it separate also handles
+            // outline resources whose first code is not 1.
+            int outlineCharacterCount = rawLastCharacter;
+            if (outlineCharacterCount <= 0 || outlineCharacterCount > MaximumCells ||
+                (long)cellArrayOffset + (long)outlineCharacterCount * cellSize > resData.Length)
+                outlineCharacterCount = characterCount;
+
             // fsDefn is not a reliable raster/outline discriminator across old
             // OS/2 font producers. Prefer the actual cell table: bitmap entries
             // must point to enough bytes for width x height monochrome data.
@@ -76,21 +85,18 @@ namespace PeareModule
                     defaultCellWidth, defaultCellIncrement, defaultASpace, defaultBSpace, defaultCSpace);
             }
 
-            return DecodeOutlineMetadata(resData, metricsOffset,
-                rawFirstCharacter, rawLastCharacter, rawDefaultCharacter, rawBreakCharacter,
+            int definitionRecordSize = ReadPositiveInt32(
+                resData, definitionOffset + 4, resData.Length - definitionOffset);
+            return DecodeOutlineFont(resData, metricsOffset, definitionOffset,
+                definitionRecordSize, cellArrayOffset, cellSize, outlineCharacterCount,
+                rawFirstCharacter, rawDefaultCharacter, rawBreakCharacter,
                 codePage, rawCellHeight, emUnits, ascentUnits, descentUnits,
-                nominalPointTenths, definitionFlags);
+                nominalPointTenths, definitionFlags,
+                defaultCellWidth, defaultCellIncrement,
+                defaultASpace, defaultBSpace, defaultCSpace);
         }
 
-        private static bool LooksLikeBitmapFont(
-            byte[] data,
-            int cellArrayOffset,
-            int cellSize,
-            int characterCount,
-            int cellHeight,
-            int defaultCellWidth,
-            int defaultCellIncrement,
-            int defaultBSpace)
+        private static bool LooksLikeBitmapFont(byte[] data, int cellArrayOffset, int cellSize, int characterCount, int cellHeight, int defaultCellWidth, int defaultCellIncrement, int defaultBSpace)
         {
             if (cellHeight <= 0 || cellHeight > 4096)
                 return false;
@@ -106,9 +112,7 @@ namespace PeareModule
                     break;
 
                 uint glyphOffset = BitConverter.ToUInt32(data, entry);
-                int width = cellSize == 6
-                    ? BitConverter.ToUInt16(data, entry + 4)
-                    : BitConverter.ToUInt16(data, entry + 6);
+                int width = BitConverter.ToUInt16(data, entry + ((cellSize == 6) ? 4 : 6));
 
                 if (width == 0 || width == 0x8000)
                 {
@@ -133,48 +137,149 @@ namespace PeareModule
             return plausible * 4 >= nonEmpty * 3;
         }
 
-        private static DecodedFont DecodeOutlineMetadata(
-            byte[] data,
-            int metricsOffset,
-            int firstCharacter,
-            int lastCharacter,
-            int defaultCharacter,
-            int breakCharacter,
-            int codePage,
-            int cellHeightUnits,
-            int emUnits,
-            int ascentUnits,
-            int descentUnits,
-            int nominalPointTenths,
-            int definitionFlags)
+        private static DecodedFont DecodeOutlineFont(
+            byte[] data, int metricsOffset, int definitionOffset, int definitionRecordSize,
+            int cellArrayOffset, int cellSize, int characterCount,
+            int firstCharacter, int defaultCharacterOffset, int breakCharacterOffset, int codePage,
+            int cellHeightUnits, int emUnits, int ascentUnits, int descentUnits,
+            int nominalPointTenths, int definitionFlags,
+            int defaultCellWidth, int defaultCellIncrement,
+            int defaultASpace, int defaultBSpace, int defaultCSpace)
         {
+            if (cellSize != 6 && cellSize != 10)
+                throw new InvalidOperationException("Unsupported OS/2 outline cell size: " + cellSize.ToString());
+
             int baseHeight = nominalPointTenths > 0
                 ? Math.Max(12, Math.Min(32, (nominalPointTenths + 5) / 10 + 4))
                 : 16;
-            double unitScale = (double)baseHeight / Math.Max(1, cellHeightUnits);
+            int designHeight = cellHeightUnits > 0
+                ? cellHeightUnits
+                : Math.Max(1, ascentUnits + descentUnits);
+            if (designHeight <= 0)
+                designHeight = emUnits > 0 ? emUnits : 1000;
+            double unitScale = (double)baseHeight / designHeight;
 
+            int lastCharacter = firstCharacter + characterCount - 1;
             DecodedFont font = CreateFontHeader(data, metricsOffset, codePage,
-                firstCharacter + 1, lastCharacter + 1,
-                defaultCharacter + 1, breakCharacter + 1);
-            font.FormatName = "OS/2 FNT outline";
+                firstCharacter, lastCharacter,
+                firstCharacter + defaultCharacterOffset,
+                firstCharacter + breakCharacterOffset);
+            font.FormatName = "OS/2 GPI outline";
             font.PixelHeight = baseHeight;
             font.Ascent = Math.Max(1, ScaleUnit(ascentUnits, unitScale));
             font.Descent = Math.Max(0, ScaleUnit(descentUnits, unitScale));
             font.LineHeight = Math.Max(baseHeight, font.Ascent + font.Descent);
             font.IsVector = true;
-            font.DeclaredGlyphCount = Math.Max(0, lastCharacter - firstCharacter + 1);
-            font.PreviewMessage =
-                "OS/2 outline font recognized. Glyph rendering is disabled because " +
-                "the FOCA command stream is not decoded reliably yet.";
+            font.DeclaredGlyphCount = characterCount;
+
+            int definitionEnd = definitionOffset + definitionRecordSize;
+            if (definitionEnd < definitionOffset || definitionEnd > data.Length)
+                definitionEnd = data.Length;
+
+            int[] glyphOffsets = new int[characterCount];
+            int[] advances = new int[characterCount];
+            List<int> sortedOffsets = new List<int>();
+
+            for (int i = 0; i < characterCount; i++)
+            {
+                int cellOffset = cellArrayOffset + i * cellSize;
+                uint rawOffset = BitConverter.ToUInt32(data, cellOffset);
+                int glyphOffset = rawOffset <= int.MaxValue ? (int)rawOffset : 0;
+                glyphOffsets[i] = glyphOffset;
+                if (glyphOffset > 0 && glyphOffset < definitionEnd && !sortedOffsets.Contains(glyphOffset))
+                    sortedOffsets.Add(glyphOffset);
+
+                int aSpace = 0;
+                int bSpace;
+                int cSpace = 0;
+                if (cellSize == 6)
+                {
+                    bSpace = BitConverter.ToUInt16(data, cellOffset + 4);
+                    if (bSpace <= 0 || bSpace == 0x8000)
+                        bSpace = defaultCellWidth > 0 ? defaultCellWidth : defaultCellIncrement;
+                }
+                else
+                {
+                    aSpace = BitConverter.ToInt16(data, cellOffset + 4);
+                    bSpace = BitConverter.ToUInt16(data, cellOffset + 6);
+                    cSpace = BitConverter.ToInt16(data, cellOffset + 8);
+                    if (aSpace == short.MinValue)
+                        aSpace = defaultASpace == short.MinValue ? 0 : defaultASpace;
+                    if (bSpace == 0 || bSpace == 0x8000)
+                    {
+                        bSpace = defaultBSpace;
+                        if (bSpace == 0 || bSpace == 0x8000)
+                            bSpace = defaultCellWidth > 0 ? defaultCellWidth : defaultCellIncrement;
+                    }
+                    if (cSpace == short.MinValue)
+                        cSpace = defaultCSpace == short.MinValue ? 0 : defaultCSpace;
+                }
+
+                int advanceUnits = aSpace + bSpace + cSpace;
+                if (advanceUnits <= 0)
+                    advanceUnits = defaultCellIncrement > 0 ? defaultCellIncrement : Math.Max(1, bSpace);
+                advances[i] = Math.Max(1, ScaleUnit(advanceUnits, unitScale));
+            }
+            sortedOffsets.Sort();
+
+            int failedGlyphs = 0;
+            for (int i = 0; i < characterCount; i++)
+            {
+                int glyphStart = glyphOffsets[i];
+                int glyphEnd = definitionEnd;
+                if (glyphStart > 0)
+                {
+                    for (int offsetIndex = 0; offsetIndex < sortedOffsets.Count; offsetIndex++)
+                    {
+                        if (sortedOffsets[offsetIndex] > glyphStart)
+                        {
+                            glyphEnd = sortedOffsets[offsetIndex];
+                            break;
+                        }
+                    }
+                }
+
+                List<FontOutlineContour> contours = new List<FontOutlineContour>();
+                if (glyphStart > 0 && glyphStart < glyphEnd && glyphEnd <= data.Length)
+                {
+                    try
+                    {
+                        contours = OS2OutlineDecoder.DecodeGlyph(data, glyphStart, glyphEnd - glyphStart, unitScale, ascentUnits);
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        failedGlyphs++;
+                    }
+                }
+
+                font.Glyphs.Add(new FontGlyph
+                {
+                    CharacterCode = firstCharacter + i,
+                    Width = advances[i],
+                    Height = font.LineHeight,
+                    AdvanceX = advances[i],
+                    OffsetX = 0,
+                    OffsetY = 0,
+                    OutlineContours = contours
+                });
+            }
+
+            if (failedGlyphs > 0)
+            {
+                font.PreviewMessage = failedGlyphs.ToString() +
+                    " outline glyph(s) contained unsupported or malformed commands.";
+            }
+            else if ((definitionFlags & 0x0001) != 0)
+            {
+                font.PreviewMessage =
+                    "OS/2 FOCA outline decoded with line and rational conic commands.";
+            }
             return font;
         }
 
         private static DecodedFont DecodeBitmapFont(
-            byte[] data, int metricsOffset, int cellArrayOffset, int cellSize,
-            int firstCharacter, int lastCharacter, int defaultCharacter, int breakCharacter,
-            int codePage, int cellHeight, int ascent, int descent,
-            int defaultCellWidth, int defaultCellIncrement,
-            int defaultASpace, int defaultBSpace, int defaultCSpace)
+            byte[] data, int metricsOffset, int cellArrayOffset, int cellSize, int firstCharacter, int lastCharacter, int defaultCharacter, int breakCharacter,
+            int codePage, int cellHeight, int ascent, int descent, int defaultCellWidth, int defaultCellIncrement, int defaultASpace, int defaultBSpace, int defaultCSpace)
         {
             if (cellHeight > 1024)
                 throw new InvalidOperationException("Invalid OS/2 bitmap font cell height: " + cellHeight.ToString());
@@ -239,11 +344,12 @@ namespace PeareModule
             return font;
         }
 
-        private static DecodedFont CreateFontHeader(byte[] data, int metricsOffset, int codePage,
-            int firstCharacter, int lastCharacter, int defaultCharacter, int breakCharacter)
+        private static DecodedFont CreateFontHeader(byte[] data, int metricsOffset, int codePage, int firstCharacter, int lastCharacter, int defaultCharacter, int breakCharacter)
         {
-            DecodedFont font = new DecodedFont();
-            font.FaceName = ReadFixedString(data, metricsOffset + 40, 32, codePage);
+            DecodedFont font = new DecodedFont
+            {
+                FaceName = ReadFixedString(data, metricsOffset + 40, 32, codePage)
+            };
             if (string.IsNullOrEmpty(font.FaceName))
                 font.FaceName = "OS/2 font";
             font.FirstCharacter = firstCharacter;
@@ -321,27 +427,53 @@ namespace PeareModule
             {
                 if (font.Glyphs.Count == 0)
                     return null;
-                int width = 1;
-                int height = Math.Max(1, font.LineHeight * font.Glyphs.Count);
-                for (int i = 0; i < font.Glyphs.Count; i++)
+
+                List<Bitmap> rendered = new List<Bitmap>();
+                List<Point> offsets = new List<Point>();
+                int minimumX = 0;
+                int maximumX = 1;
+                int rowHeight = Math.Max(1, font.LineHeight);
+
+                try
                 {
-                    FontGlyph glyph = font.Glyphs[i];
-                    if (glyph != null && glyph.Bitmap != null)
-                        width = Math.Max(width, glyph.Bitmap.Width);
-                }
-                Bitmap strip = new Bitmap(width, height, PixelFormat.Format32bppArgb);
-                using (Graphics graphics = Graphics.FromImage(strip))
-                {
-                    graphics.Clear(Color.Transparent);
                     for (int i = 0; i < font.Glyphs.Count; i++)
                     {
                         FontGlyph glyph = font.Glyphs[i];
-                        if (glyph != null && glyph.Bitmap != null)
-                            graphics.DrawImageUnscaled(glyph.Bitmap, Math.Max(0, glyph.OffsetX), i * font.LineHeight + Math.Max(0, glyph.OffsetY));
+                        int offsetX;
+                        int offsetY;
+                        Bitmap bitmap = RT_FONT.RenderGlyph(glyph, 1, out offsetX, out offsetY);
+                        rendered.Add(bitmap);
+                        offsets.Add(new Point(offsetX, offsetY));
+                        minimumX = Math.Min(minimumX, offsetX);
+                        maximumX = Math.Max(maximumX, offsetX + bitmap.Width);
+                        rowHeight = Math.Max(rowHeight, offsetY + bitmap.Height);
                     }
+
+                    Bitmap strip = new Bitmap(
+                        Math.Max(1, maximumX - minimumX),
+                        Math.Max(1, rowHeight * font.Glyphs.Count),
+                        PixelFormat.Format32bppArgb);
+                    using (Graphics graphics = Graphics.FromImage(strip))
+                    {
+                        graphics.Clear(Color.Transparent);
+                        for (int i = 0; i < rendered.Count; i++)
+                        {
+                            Point offset = offsets[i];
+                            graphics.DrawImageUnscaled(
+                                rendered[i],
+                                offset.X - minimumX,
+                                i * rowHeight + offset.Y);
+                        }
+                    }
+                    return strip;
                 }
-                return strip;
+                finally
+                {
+                    for (int i = 0; i < rendered.Count; i++)
+                        rendered[i].Dispose();
+                }
             }
         }
+
     }
 }

@@ -3,9 +3,6 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
-using System.IO;
-using System.Linq;
-using System.Runtime.InteropServices;
 using System.Text;
 
 namespace PeareModule
@@ -30,12 +27,12 @@ namespace PeareModule
                 throw new InvalidOperationException("Invalid Windows FNT character range.");
 
             bool isVectorFont = (header.dfType & 0x0001) != 0;
-            int glyphHeight = isVectorFont
-                ? Math.Max(1, header.dfPixHeight + header.dfAscent)
-                : Math.Max(1, (int)header.dfPixHeight);
+            int glyphHeight = isVectorFont ? Math.Max(1, header.dfPixHeight + header.dfAscent) : Math.Max(1, (int)header.dfPixHeight);
 
-            DecodedFont font = new DecodedFont();
-            font.FaceName = ReadNullTerminatedAnsi(resData, (int)header.dfFace);
+            DecodedFont font = new DecodedFont
+            {
+                FaceName = ReadNullTerminatedAnsi(resData, (int)header.dfFace)
+            };
             if (string.IsNullOrEmpty(font.FaceName))
                 font.FaceName = "Windows FNT";
             font.FormatName = "Windows FNT " + (header.dfVersion / 256).ToString() + "." + (header.dfVersion & 0xFF).ToString("D2");
@@ -98,19 +95,12 @@ namespace PeareModule
             return font;
         }
 
-        private static void DecodeWindowsVectorGlyphs(
-            byte[] resData,
-            FONTINFO16 header,
-            DecodedFont font,
-            int[] glyphWidths,
-            int characterCount)
+        private static void DecodeWindowsVectorGlyphs(byte[] resData, FONTINFO16 header, DecodedFont font, int[] glyphWidths, int characterCount)
         {
             int[] glyphOffsets = ReadVectorGlyphOffsets(resData, header, characterCount);
             bool coords2Byte = header.dfPixHeight > 128 || header.dfMaxWidth > 128;
             int yOffset = header.dfPixHeight - header.dfAscent;
-            int dataLength = header.dfBitsOffset < resData.Length
-                ? resData.Length - (int)header.dfBitsOffset
-                : 0;
+            int dataLength = header.dfBitsOffset < resData.Length ? resData.Length - (int)header.dfBitsOffset : 0;
 
             for (int i = 0; i < characterCount; i++)
             {
@@ -125,12 +115,7 @@ namespace PeareModule
                 int strokeDataStart = (int)header.dfBitsOffset + currentOffset;
                 int strokeLength = nextOffset - currentOffset;
 
-                List<FontVectorSegment> segments = ParseVectorSegments(
-                    resData,
-                    strokeDataStart,
-                    strokeLength,
-                    coords2Byte,
-                    yOffset);
+                List<FontVectorSegment> segments = ParseVectorSegments(resData, strokeDataStart, strokeLength, coords2Byte, yOffset);
 
                 FontGlyph glyph = new FontGlyph
                 {
@@ -178,12 +163,7 @@ namespace PeareModule
             return offsets;
         }
 
-        private static List<FontVectorSegment> ParseVectorSegments(
-            byte[] data,
-            int start,
-            int length,
-            bool coords2Byte,
-            int yOffset)
+        private static List<FontVectorSegment> ParseVectorSegments(byte[] data, int start, int length, bool coords2Byte, int yOffset)
         {
             List<FontVectorSegment> segments = new List<FontVectorSegment>();
             if (data == null || length <= 0 || start < 0 || start >= data.Length || start + length > data.Length)
@@ -270,6 +250,8 @@ namespace PeareModule
             if (scale < 1)
                 scale = 1;
 
+            if (glyph.HasFilledOutline)
+                return RenderFilledOutlineGlyph(glyph, scale, out offsetX, out offsetY);
             if (glyph.HasVectorOutline)
                 return RenderVectorGlyph(glyph, scale, out offsetX, out offsetY);
 
@@ -293,6 +275,98 @@ namespace PeareModule
                     GraphicsUnit.Pixel);
             }
             return result;
+        }
+
+        private static Bitmap RenderFilledOutlineGlyph(FontGlyph glyph, int scale, out int offsetX, out int offsetY)
+        {
+            List<FontOutlineContour> contours = glyph.OutlineContours;
+            if (contours == null || contours.Count == 0)
+            {
+                offsetX = 0;
+                offsetY = 0;
+                return new Bitmap(
+                    Math.Max(1, glyph.AdvanceX * scale),
+                    Math.Max(1, glyph.Height * scale),
+                    System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            }
+
+            float minimumX = float.MaxValue;
+            float minimumY = float.MaxValue;
+            float maximumX = float.MinValue;
+            float maximumY = float.MinValue;
+            int drawableContours = 0;
+
+            for (int contourIndex = 0; contourIndex < contours.Count; contourIndex++)
+            {
+                FontOutlineContour contour = contours[contourIndex];
+                if (contour == null || contour.Points == null || contour.Points.Count < 3)
+                    continue;
+
+                drawableContours++;
+                for (int pointIndex = 0; pointIndex < contour.Points.Count; pointIndex++)
+                {
+                    PointF point = contour.Points[pointIndex];
+                    minimumX = Math.Min(minimumX, point.X);
+                    minimumY = Math.Min(minimumY, point.Y);
+                    maximumX = Math.Max(maximumX, point.X);
+                    maximumY = Math.Max(maximumY, point.Y);
+                }
+            }
+
+            if (drawableContours == 0)
+            {
+                offsetX = 0;
+                offsetY = 0;
+                return new Bitmap(
+                    Math.Max(1, glyph.AdvanceX * scale),
+                    Math.Max(1, glyph.Height * scale),
+                    System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            }
+
+            const int margin = 1;
+            int left = (int)Math.Floor(minimumX * scale) - margin;
+            int top = (int)Math.Floor(minimumY * scale) - margin;
+            int right = (int)Math.Ceiling(maximumX * scale) + margin;
+            int bottom = (int)Math.Ceiling(maximumY * scale) + margin;
+            int width = Math.Max(1, right - left + 1);
+            int height = Math.Max(1, bottom - top + 1);
+
+            Bitmap bitmap = new Bitmap(
+                width, height,
+                System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (Graphics graphics = Graphics.FromImage(bitmap))
+            using (System.Drawing.Drawing2D.GraphicsPath path =
+                new System.Drawing.Drawing2D.GraphicsPath(
+                    System.Drawing.Drawing2D.FillMode.Alternate))
+            {
+                graphics.Clear(Color.Transparent);
+                graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                graphics.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighQuality;
+                graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+
+                for (int contourIndex = 0; contourIndex < contours.Count; contourIndex++)
+                {
+                    FontOutlineContour contour = contours[contourIndex];
+                    if (contour == null || contour.Points == null || contour.Points.Count < 3)
+                        continue;
+
+                    PointF[] points = new PointF[contour.Points.Count];
+                    for (int pointIndex = 0; pointIndex < contour.Points.Count; pointIndex++)
+                    {
+                        PointF source = contour.Points[pointIndex];
+                        points[pointIndex] = new PointF(
+                            source.X * scale - left,
+                            source.Y * scale - top);
+                    }
+                    path.AddPolygon(points);
+                }
+
+                graphics.FillPath(Brushes.Black, path);
+            }
+
+            offsetX = left;
+            offsetY = top;
+            return bitmap;
         }
 
         private static Bitmap RenderVectorGlyph(FontGlyph glyph, int scale, out int offsetX, out int offsetY)
@@ -466,6 +540,7 @@ namespace PeareModule
                 return Encoding.ASCII.GetString(data, offset, end - offset).Trim();
             }
         }
+
         public static Bitmap Get(byte[] resData, ModuleResources.ModuleProperties properties)
         {
             if (properties != null &&
@@ -516,9 +591,7 @@ namespace PeareModule
             uint bitmapDataLength = 0;
             if (dfBitsOffset < resData.Length)
             {
-                bitmapDataLength = totalSize > dfBitsOffset
-                    ? totalSize - dfBitsOffset
-                    : (uint)resData.Length - dfBitsOffset;
+                bitmapDataLength = totalSize > dfBitsOffset ? totalSize - dfBitsOffset : (uint)resData.Length - dfBitsOffset;
                 if (dfBitsOffset + bitmapDataLength > resData.Length)
                     bitmapDataLength = (uint)resData.Length - dfBitsOffset;
             }

@@ -76,7 +76,7 @@ namespace PeareModule
 
             // Fonts have a sufficiently distinctive header and must be tried before
             // generic binary/image detection.
-            if (IsOS2Font(resData))
+            if (IsOS2Fnt(resData))
             {
                 try
                 {
@@ -94,11 +94,13 @@ namespace PeareModule
                 {
                     // The header identifies a Windows FNT even when it is stored in
                     // a module targeting another platform. Force the Windows parser.
-                    ModuleProperties fontProperties = new ModuleProperties();
-                    fontProperties.Description = properties == null ? null : properties.Description;
-                    fontProperties.filePath = properties == null ? null : properties.filePath;
-                    fontProperties.headerType = HeaderType.PE;
-                    fontProperties.versionType = VersionType.Windows;
+                    ModuleProperties fontProperties = new ModuleProperties
+                    {
+                        Description = properties == null ? null : properties.Description,
+                        filePath = properties == null ? null : properties.filePath,
+                        headerType = HeaderType.PE,
+                        versionType = VersionType.Windows
+                    };
                     return RT_FONT.Decode(resData, fontProperties);
                 }
                 catch (Exception ex)
@@ -106,6 +108,12 @@ namespace PeareModule
                     Console.WriteLine("Header matched a Windows font, but decoding failed: " + ex.Message);
                 }
             }
+
+            // Windows Media Player stores its internal skins as binary WSZ trees.
+            // Decode these before generic image/text detection.
+            string wszText;
+            if (WszDecoder.TryDecode(resData, out wszText))
+                return wszText;
 
             // Complete image files (PNG, JPEG, GIF, BMP, TIFF, ICO/CUR, WMF/EMF)
             // can be decoded directly by GDI+ without knowing the resource type name.
@@ -152,14 +160,13 @@ namespace PeareModule
             return null;
         }
 
-        private static bool IsOS2Font(byte[] data)
+        private static bool IsOS2Fnt(byte[] data)
         {
             // The signature is nine characters. Depending on the producer it is
             // followed by NUL, a space or additional header data. Requiring the
             // tenth byte to be a space caused valid standalone OS/2 fonts to be
             // missed by RawDetect.
-            return data.Length >= 17 &&
-                   Encoding.ASCII.GetString(data, 8, 9) == "OS/2 FONT";
+            return data.Length >= 17 && Encoding.ASCII.GetString(data, 8, 9) == "OS/2 FONT";
         }
 
         private static bool IsWindowsFnt(byte[] data)
@@ -556,10 +563,12 @@ namespace PeareModule
         // Read the header and check file type
         public static ModuleProperties GetModuleProperties(string path)
         {
-            ModuleProperties result = new ModuleProperties();
-            result.filePath = path;
-            result.versionType = VersionType.Unknown;
-            result.headerType = HeaderType.Error;
+            ModuleProperties result = new ModuleProperties
+            {
+                filePath = path,
+                versionType = VersionType.Unknown,
+                headerType = HeaderType.Error
+            };
             try
             {
                 using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read))
@@ -612,7 +621,30 @@ namespace PeareModule
                         switch (targetOS)
                         {
                             case 0x00:
-                                version = " for unkwown OS";
+                                if (signature == 0x454E)
+                                {
+                                    result.versionType =
+                                        DetectUnknownNeTarget(br, fs, headerOffset);
+
+                                    switch (result.versionType)
+                                    {
+                                        case VersionType.OS2:
+                                            version = " for OS/2";
+                                            break;
+
+                                        case VersionType.MSDOS4:
+                                            version = " for MS-DOS 4.x";
+                                            break;
+
+                                        default:
+                                            version = " for unknown OS";
+                                            break;
+                                    }
+                                }
+                                else
+                                {
+                                    version = " for unknown OS";
+                                }
                                 break;
                             case 0x01:
                                 result.versionType = VersionType.OS2;
@@ -703,5 +735,61 @@ namespace PeareModule
             return result;
         }
 
+        private static VersionType DetectUnknownNeTarget(BinaryReader br, Stream fs, int neHeaderOffset)
+        {
+            // Byte 2 header NE: linker major version
+            fs.Seek(neHeaderOffset + 0x02, SeekOrigin.Begin);
+            byte linkerMajor = br.ReadByte();
+
+            // MT-DOS 4.x uses linker NE 4.x.
+            if (linkerMajor == 4)
+                return VersionType.MSDOS4;
+
+            // Number of refs to imported modules: ne_cmod
+            fs.Seek(neHeaderOffset + 0x1E, SeekOrigin.Begin);
+            ushort moduleCount = br.ReadUInt16();
+
+            // Module Reference Table: ne_modtab
+            fs.Seek(neHeaderOffset + 0x28, SeekOrigin.Begin);
+            ushort moduleTableOffset = br.ReadUInt16();
+
+            // Imported Names Table: ne_imptab
+            ushort importedNamesOffset = br.ReadUInt16();
+
+            long moduleTablePosition = neHeaderOffset + moduleTableOffset;
+
+            long importedNamesPosition =  neHeaderOffset + importedNamesOffset;
+
+            string[] os2Modules = { "DOSCALLS", "KBDCALLS", "VIOCALLS", "MOUCALLS", "NLS", "QUECALLS" };
+
+            for (int i = 0; i < moduleCount; i++)
+            {
+                long referencePosition = moduleTablePosition + i * 2L;
+
+                if (referencePosition + 2 > fs.Length)
+                    break;
+
+                fs.Seek(referencePosition, SeekOrigin.Begin);
+                ushort nameOffset = br.ReadUInt16();
+
+                long namePosition = importedNamesPosition + nameOffset;
+
+                if (namePosition >= fs.Length)
+                    continue;
+
+                fs.Seek(namePosition, SeekOrigin.Begin);
+                byte nameLength = br.ReadByte();
+
+                if (nameLength == 0 || namePosition + 1 + nameLength > fs.Length)
+                    continue;
+
+                string moduleName = Encoding.ASCII.GetString(br.ReadBytes(nameLength)).ToUpperInvariant();
+
+                if (os2Modules.Contains(moduleName))
+                    return VersionType.OS2;
+            }
+
+            return VersionType.Unknown;
+        }
     }
 }

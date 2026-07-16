@@ -36,7 +36,7 @@ What is currently (at least partially) implemented right now:
 		- RT_HELPTABLE *(1)
 		- RT_HELPSUBTABLE *(1)
 		- RT_FONT *(2)
-		- RT_FONTDIR
+		- RT_FONTDIR *(2)
 		- RT_DIALOG *(2)
 
 	- LX (OS/2)
@@ -88,6 +88,8 @@ What is currently (at least partially) implemented right now:
 		- RT_MESSAGETABLE
 		- RT_STRING
 		- RT_BITMAP
+		- RT_FONTDIR
+		- RT_FONT
 		- RT_GROUP_ICON
 		- RT_ICON
 		- RT_VERSION
@@ -96,6 +98,7 @@ What is currently (at least partially) implemented right now:
 		- RT_MENU
 		- RT_ACCELERATOR
 
+	- Detect and open some formats (TXT, HTML, JS, JPG, PNG, GIF,...)
 	- Fallback to ASCII text and raw bytes (All the formats)
 
 |Ref|  |
@@ -120,6 +123,7 @@ RT_FONT support is handcrafted, this is what is supported:
 - OS/2 Fnt
 	- monospace raster fonts
 	- variable width raster fonts
+	- GPI outline
 
 
 ## DLL

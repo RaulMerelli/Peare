@@ -12,6 +12,11 @@ namespace PeareModule
         internal int Y2;
     }
 
+    internal sealed class FontOutlineContour
+    {
+        internal List<PointF> Points { get; set; }
+    }
+
     public sealed class FontGlyph
     {
         public int CharacterCode { get; set; }
@@ -23,10 +28,20 @@ namespace PeareModule
         public Bitmap Bitmap { get; set; }
 
         internal List<FontVectorSegment> VectorSegments { get; set; }
+        internal List<FontOutlineContour> OutlineContours { get; set; }
+
+        public bool HasFilledOutline
+        {
+            get { return OutlineContours != null && OutlineContours.Count > 0; }
+        }
 
         public bool HasVectorOutline
         {
-            get { return VectorSegments != null && VectorSegments.Count > 0; }
+            get
+            {
+                return HasFilledOutline ||
+                    (VectorSegments != null && VectorSegments.Count > 0);
+            }
         }
     }
 
@@ -66,6 +81,16 @@ namespace PeareModule
                 }
                 if (glyph != null && glyph.VectorSegments != null)
                     glyph.VectorSegments.Clear();
+                if (glyph != null && glyph.OutlineContours != null)
+                {
+                    for (int contourIndex = 0; contourIndex < glyph.OutlineContours.Count; contourIndex++)
+                    {
+                        FontOutlineContour contour = glyph.OutlineContours[contourIndex];
+                        if (contour != null && contour.Points != null)
+                            contour.Points.Clear();
+                    }
+                    glyph.OutlineContours.Clear();
+                }
             }
             Glyphs.Clear();
         }

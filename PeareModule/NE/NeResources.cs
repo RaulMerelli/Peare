@@ -90,10 +90,11 @@ namespace PeareModule
             {
                 throw new Exception("File too short to determine target OS from NE header.");
             }
-            byte osType = fileBytes[neHeaderOffset + 0x36];
+            byte osType = fileBytes[neHeaderOffset + 0x36]; // cannot be always trusted. 0x00 may be OS/2 os MT/MS-DOS
 
-            bool isOS2 = (osType == 0x01); // OS/2
-            bool isWindows = !(osType == 0x01); // Can 0x00 (unknown) be also OS/2?
+            ModuleResources.ModuleProperties properties = ModuleResources.GetModuleProperties(filePath);
+            bool isOS2 = properties.versionType == ModuleResources.VersionType.OS2;
+            bool isWindows = properties.versionType == ModuleResources.VersionType.Windows;
 
             Console.WriteLine($"[DEBUG] Detected OS Type: 0x{osType:X} ({(isOS2 ? "OS/2" : (isWindows ? "Windows" : "Unknown"))})");
 
@@ -359,7 +360,7 @@ namespace PeareModule
             }
             else
             {
-                throw new Exception($"Unsupported NE target OS type: 0x{osType:X}. Only Windows (0x02, 0x03, 0x05, 0x08) and OS/2 (0x01) are supported for resource parsing.");
+                Console.WriteLine($"Unsupported NE target OS type: 0x{osType:X}. Only Windows (0x02, 0x03, 0x05, 0x08) and OS/2 (0x01) are supported for resource parsing.");
             }
 
             return relations;
@@ -375,7 +376,7 @@ namespace PeareModule
             int neHeaderOffset = BitConverter.ToInt32(fileBytes, 0x3C);
             byte neExeType = fileBytes[neHeaderOffset + 0x36]; // 0x36 = ne_exetyp
 
-            if (neExeType == 1) // OS/2 NE
+            if (properties.versionType == ModuleResources.VersionType.OS2) // OS/2 NE
             {
                 ushort resourceOffset = BitConverter.ToUInt16(fileBytes, neHeaderOffset + 0x24);
                 ushort segmentTableOffset = BitConverter.ToUInt16(fileBytes, neHeaderOffset + 0x22);
@@ -439,7 +440,7 @@ namespace PeareModule
                 message = $"OS/2 Resource {typeName} {targetResourceName} not found.";
                 return result.ToArray();
             }
-            else // Windows NE
+            else if (properties.versionType == ModuleResources.VersionType.Windows) // Windows NE
             {
                 int resourceTableOffset = BitConverter.ToUInt16(fileBytes, neHeaderOffset + 0x24);
                 int resourceTablePos = neHeaderOffset + resourceTableOffset;
@@ -540,6 +541,12 @@ namespace PeareModule
                 {
                     message = $"Resource {typeName} {targetResourceName} not found.";
                 }
+                return result.ToArray();
+            }
+            else
+            {
+                message = $"Unsupported NE target: {properties.versionType}.";
+
                 return result.ToArray();
             }
         }

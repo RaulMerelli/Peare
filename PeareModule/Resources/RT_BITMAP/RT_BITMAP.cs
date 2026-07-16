@@ -13,7 +13,7 @@ namespace PeareModule
     public static class RT_BITMAP
     {
         // This is an entrypoint also for RT_POINTER. A bitmap array can be the base for both the types.
-        // This return as list of Bitmap for compatibility with OS/2 Bitmap Array
+        // This return as list of Img for compatibility with OS/2 Bitmap Array
         public static List<Img> Get(byte[] resData)
         {
             // We'll use ConcurrentBag<Tuple<int, Bitmap>> to store the index and bitmap
@@ -385,12 +385,8 @@ namespace PeareModule
                 {
                     int biSize = BitConverter.ToInt32(bmpData, 0);
                     ushort bitCount = BitConverter.ToUInt16(bmpData, 14);
-                    uint colorsUsed = biSize >= 40 && bmpData.Length >= 36
-                        ? BitConverter.ToUInt32(bmpData, 32)
-                        : 0;
-                    int paletteEntries = bitCount <= 8
-                        ? (colorsUsed != 0 ? (int)colorsUsed : (1 << bitCount))
-                        : 0;
+                    uint colorsUsed = biSize >= 40 && bmpData.Length >= 36 ? BitConverter.ToUInt32(bmpData, 32) : 0;
+                    int paletteEntries = bitCount <= 8 ? (colorsUsed != 0 ? (int)colorsUsed : (1 << bitCount)) : 0;
                     int bfOffBits = 14 + biSize + paletteEntries * 4;
                     int bfSize = 14 + bmpData.Length;
 
@@ -407,10 +403,12 @@ namespace PeareModule
                         Console.WriteLine("Data was bitmap. Decoded after adding a Windows BMP file header.");
                         Bitmap bmp = new Bitmap(ms);
 
-                        Img img = new Img();
-                        img.BitCount = Image.GetPixelFormatSize(bmp.PixelFormat);
-                        img.Size = new Size(bmp.Width, bmp.Height);
-                        img.Bitmap = bmp;
+                        Img img = new Img
+                        {
+                            BitCount = Image.GetPixelFormatSize(bmp.PixelFormat),
+                            Size = new Size(bmp.Width, bmp.Height),
+                            Bitmap = bmp
+                        };
                         return img;
                     }
                 }
@@ -1601,10 +1599,12 @@ namespace PeareModule
             }
 
             bmp.UnlockBits(bmpData);
-            Img img = new Img();
-            img.BitCount = bitCount;
-            img.Size = new Size((int)width, (int)height);
-            img.Bitmap = bmp;
+            Img img = new Img
+            {
+                BitCount = bitCount,
+                Size = new Size((int)width, (int)height),
+                Bitmap = bmp
+            };
             return img;
         }
 
