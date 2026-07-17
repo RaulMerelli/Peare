@@ -8,6 +8,18 @@ namespace PeareModule
     {
         public static Img Get(byte[] resData)
         {
+            if (resData == null || resData.Length < 14)
+                return EmptyImage();
+
+            Img legacyImage;
+            if (Win12MonochromeResource.TryDecode(
+                resData,
+                0,
+                out legacyImage))
+            {
+                return legacyImage;
+            }
+
             if (resData.Length > 4 &&
                 resData[0] == 0x89 && resData[1] == 0x50 &&
                 resData[2] == 0x4E && resData[3] == 0x47)
@@ -25,6 +37,9 @@ namespace PeareModule
                     return img;
                 }
             }
+
+            if (resData.Length < 20)
+                return EmptyImage();
 
             // Skip first 4 bytes (hotspotX + hotspotY)
             const int hotspotOffset = 4;
@@ -45,7 +60,16 @@ namespace PeareModule
             if (width <= 0 || height <= 0 || bitCount == 0)
             {
                 Console.WriteLine("Invalid bitmap dimensions or bit count.");
-                return RT_ICON.Get_ICON_Win1_Win2(resData);
+                Img legacyFallback;
+                if (Win12MonochromeResource.TryDecode(
+                    resData,
+                    0,
+                    out legacyFallback))
+                {
+                    return legacyFallback;
+                }
+
+                return EmptyImage();
             }
 
             long pixelDataOffset = hotspotOffset + biSize + paletteEntries * 4;
@@ -80,6 +104,16 @@ namespace PeareModule
             RT_BITMAP.CopyLarge(resData, maskDataOffset, maskData, 0, maskDataLength);
 
             return RT_BITMAP.GenerateBitmapFromData(pixelData, maskData, width, height, bitCount, palette);
+        }
+
+        private static Img EmptyImage()
+        {
+            return new Img
+            {
+                BitCount = 0,
+                Size = new Size(0, 0),
+                Bitmap = new Bitmap(1, 1)
+            };
         }
     }
 }

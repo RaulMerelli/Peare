@@ -106,6 +106,9 @@ namespace PeareModule
                 catch (Exception ex)
                 {
                     Console.WriteLine("Header matched a Windows font, but decoding failed: " + ex.Message);
+                    // A recognized binary font must not fall through to strict UTF-8
+                    // probing, which only produces a misleading DecoderFallbackException.
+                    return null;
                 }
             }
 
@@ -120,6 +123,30 @@ namespace PeareModule
             Bitmap standardImage = TryDecodeStandardImage(resData);
             if (standardImage != null)
                 return standardImage;
+
+            // Windows 1.x/2.x monochrome icon/cursor resources have a
+            // 14-byte header followed by AND and XOR masks, not a DIB header.
+            if (Win12MonochromeResource.LooksLike(resData))
+            {
+                try
+                {
+                    Img legacyImage;
+                    byte figure = resData[0];
+                    if (Win12MonochromeResource.TryDecode(
+                        resData,
+                        figure,
+                        out legacyImage))
+                    {
+                        return legacyImage;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(
+                        "Header matched a Windows 1.x/2.x icon/cursor, " +
+                        "but decoding failed: " + ex.Message);
+                }
+            }
 
             // A cursor resource is a DIB preceded by hotspot X/Y values.
             if (IsDibHeader(resData, 4))
@@ -628,6 +655,10 @@ namespace PeareModule
 
                                     switch (result.versionType)
                                     {
+                                        case VersionType.Windows:
+                                            version = " for Windows";
+                                            break;
+
                                         case VersionType.OS2:
                                             version = " for OS/2";
                                             break;
@@ -762,6 +793,8 @@ namespace PeareModule
 
             string[] os2Modules = { "DOSCALLS", "KBDCALLS", "VIOCALLS", "MOUCALLS", "NLS", "QUECALLS" };
 
+            string[] windowsModules = { "GDI", "KERNEL" };
+
             for (int i = 0; i < moduleCount; i++)
             {
                 long referencePosition = moduleTablePosition + i * 2L;
@@ -787,7 +820,13 @@ namespace PeareModule
 
                 if (os2Modules.Contains(moduleName))
                     return VersionType.OS2;
+
+                if (windowsModules.Contains(moduleName))
+                    return VersionType.Windows;
             }
+
+            if (moduleCount == 0)
+                return VersionType.Windows;
 
             return VersionType.Unknown;
         }

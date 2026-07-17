@@ -63,17 +63,17 @@ namespace PeareModule
                 for (int i = 0; i < characterCount; i++)
                 {
                     int width = glyphWidths[i];
-                    if (width <= 0)
+                    if (width < 0)
                         width = header.dfPixWidth > 0 ? header.dfPixWidth : header.dfAvgWidth;
-                    if (width <= 0)
+                    if (width < 0)
                         width = 8;
-                    width = Math.Min(width, strip.Width);
+                    int bitmapWidth = Math.Max(1, Math.Min(width, strip.Width));
 
                     int sourceY = i * glyphHeight;
                     if (sourceY >= strip.Height)
                         break;
                     int sourceHeight = Math.Min(glyphHeight, strip.Height - sourceY);
-                    Bitmap glyphBitmap = CopyGlyph(strip, width, sourceY, sourceHeight);
+                    Bitmap glyphBitmap = CopyGlyph(strip, bitmapWidth, sourceY, sourceHeight);
 
                     font.Glyphs.Add(new FontGlyph
                     {
@@ -432,9 +432,11 @@ namespace PeareModule
         private static int[] ReadGlyphWidths(byte[] resData, FONTINFO16 header, int characterCount, bool isVectorFont)
         {
             int[] widths = new int[characterCount];
+            bool[] widthWasRead = new bool[characterCount];
             int version = header.dfVersion;
             int headerSize = version < 0x0200 ? 117 : (version < 0x0300 ? 118 : 148);
             bool isMonospace = (header.dfPitchAndFamily & 1) == 0;
+            bool preserveExplicitZeroWidth = version == 0x0100 && !isVectorFont && !isMonospace;
 
             if (version >= 0x0300)
             {
@@ -444,6 +446,7 @@ namespace PeareModule
                     if (entryOffset + 6 > resData.Length)
                         break;
                     widths[i] = BitConverter.ToUInt16(resData, entryOffset);
+                    widthWasRead[i] = true;
                 }
             }
             else if (isMonospace)
@@ -454,7 +457,10 @@ namespace PeareModule
                 if (width <= 0)
                     width = 8;
                 for (int i = 0; i < characterCount; i++)
+                {
                     widths[i] = width;
+                    widthWasRead[i] = true;
+                }
                 return widths;
             }
             else if (version == 0x0100)
@@ -467,6 +473,7 @@ namespace PeareModule
                         if (entryOffset + 4 > resData.Length)
                             break;
                         widths[i] = BitConverter.ToUInt16(resData, entryOffset + 2);
+                        widthWasRead[i] = true;
                     }
                 }
                 else
@@ -481,7 +488,10 @@ namespace PeareModule
                         offsets[i] = BitConverter.ToUInt16(resData, entryOffset);
                     }
                     for (int i = 0; i < characterCount; i++)
+                    {
                         widths[i] = Math.Max(0, offsets[i + 1] - offsets[i]);
+                        widthWasRead[i] = true;
+                    }
                 }
             }
             else
@@ -492,6 +502,7 @@ namespace PeareModule
                     if (entryOffset + 4 > resData.Length)
                         break;
                     widths[i] = BitConverter.ToUInt16(resData, entryOffset);
+                    widthWasRead[i] = true;
                 }
             }
 
@@ -504,7 +515,7 @@ namespace PeareModule
                 fallback = 8;
             for (int i = 0; i < widths.Length; i++)
             {
-                if (widths[i] <= 0)
+                if (!widthWasRead[i] || (!preserveExplicitZeroWidth && widths[i] <= 0))
                     widths[i] = fallback;
             }
 
@@ -940,10 +951,10 @@ namespace PeareModule
                 Bitmap[] glyphBitmaps = new Bitmap[charCount];
                 for (int i = 0; i < charCount; i++)
                 {
-                    int glyphWidth = glyphWidths[i];          // glyph width in bit
+                    int glyphWidth = glyphWidths[i];          // glyph width in bit; zero is valid for an empty glyph
                     int glyphOffset = glyphOffsets[i];        // absolute offset in bit
 
-                    Bitmap bmpChar = new Bitmap(glyphWidth, dfPixHeight);
+                    Bitmap bmpChar = new Bitmap(Math.Max(1, glyphWidth), Math.Max(1, (int)dfPixHeight));
                     for (int y = 0; y < dfPixHeight; y++)
                     {
                         for (int x = 0; x < glyphWidth; x++)

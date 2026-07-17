@@ -9,6 +9,18 @@ namespace PeareModule
     {
         public static Img Get(byte[] resData)
         {
+            if (resData == null || resData.Length < 14)
+                return EmptyImage();
+
+            Img legacyImage;
+            if (Win12MonochromeResource.TryDecode(
+                resData,
+                0,
+                out legacyImage))
+            {
+                return legacyImage;
+            }
+
             if (resData.Length > 4 &&
                 resData[0] == 0x89 && resData[1] == 0x50 &&
                 resData[2] == 0x4E && resData[3] == 0x47)
@@ -25,6 +37,9 @@ namespace PeareModule
                     return img;
                 }
             }
+
+            if (resData.Length < 16)
+                return EmptyImage();
 
             int biSize = BitConverter.ToInt32(resData, 0);
             int width = BitConverter.ToInt32(resData, 4);
@@ -90,137 +105,27 @@ namespace PeareModule
 
         public static Img Get_ICON_Win1_Win2(byte[] resData)
         {
-            Img img = new Img();
-            if (resData == null || resData.Length < 14) // Minimum for the common header
+            Img image;
+            if (Win12MonochromeResource.TryDecode(
+                resData,
+                0,
+                out image))
             {
-                Console.WriteLine("Error: Windows 1.0 resource data too short for header.");
-                Bitmap bmp = new Bitmap(1, 1);
-
-                img.BitCount = 0;
-                img.Size = new Size(0, 0);
-                img.Bitmap = bmp;
-                return img;
+                return image;
             }
 
-            // 1. Read the common header (14 bytes)
-            UInt32 resourceId = BitConverter.ToUInt32(resData, 0);
+            Console.WriteLine("Error: data is not a valid Windows 1.x/2.x icon resource.");
+            return EmptyImage();
+        }
 
-            // Fields that are HotspotX/Y for cursors, or something else for icons
-            ushort fieldA = BitConverter.ToUInt16(resData, 2);
-            ushort fieldB = BitConverter.ToUInt16(resData, 4);
-
-            ushort width = BitConverter.ToUInt16(resData, 6);
-            ushort height = BitConverter.ToUInt16(resData, 8);
-            ushort bytesPerLine = BitConverter.ToUInt16(resData, 10); // Stride
-
-            Console.WriteLine($"Attempting to decode Win1.0 Resource: ID=0x{resourceId:X}, FieldA={fieldA}, FieldB={fieldB}, Width={width}, Height={height}, BytesPerLine={bytesPerLine}");
-
-            if (width == 0 || height == 0 || bytesPerLine == 0)
+        private static Img EmptyImage()
+        {
+            return new Img
             {
-                Console.WriteLine("Error: Invalid dimensions or bytesPerLine in Windows 1.0 resource.");
-                Bitmap bmp = new Bitmap(1, 1);
-
-                img.BitCount = 0;
-                img.Size = new Size(0, 0);
-                img.Bitmap = bmp;
-                return img;
-            }
-
-            int headerSize = 14; // Size of the header we've identified
-            long maskDataSize = (long)bytesPerLine * height;
-
-            // Verify there’s enough data for both masks
-            if (headerSize + maskDataSize * 2 > resData.Length)
-            {
-                Console.WriteLine($"Error: Truncated Windows 1.0 resource data. Expected {maskDataSize * 2} bytes for masks, got {resData.Length - headerSize}.");
-                Bitmap bmp = new Bitmap(1, 1);
-
-                img.BitCount = 0;
-                img.Size = new Size(0, 0);
-                img.Bitmap = bmp;
-                return img;
-            }
-
-            byte[] mask1Data = new byte[maskDataSize];
-            byte[] mask2Data = new byte[maskDataSize];
-
-            Buffer.BlockCopy(resData, headerSize, mask1Data, 0, (int)maskDataSize); // XOR Mask
-            Buffer.BlockCopy(resData, headerSize + (int)maskDataSize, mask2Data, 0, (int)maskDataSize); // AND Mask
-            byte[] xorMaskData = mask1Data;
-            byte[] andMaskData = mask2Data;
-
-            // 3. Generate the Bitmap
-            Bitmap resultBitmap = null;
-            try
-            {
-                resultBitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
-            }
-            catch (ArgumentException ex)
-            {
-                Console.WriteLine($"Error creating bitmap {width}x{height}: {ex.Message}");
-                Bitmap bmp = new Bitmap(1, 1);
-
-                img.BitCount = 0;
-                img.Size = new Size(0, 0);
-                img.Bitmap = bmp;
-                return img;
-            }
-
-            // Colors for monochrome cursor with transparency
-            Color black = Color.Black;
-            Color white = Color.White;
-            Color transparent = Color.FromArgb(0, 0, 0, 0); // Fully transparent
-
-            for (int y = 0; y < height; y++)
-            {
-                for (int x = 0; x < width; x++)
-                {
-                    int byteIndex = x / 8;
-                    int bitIndex = 7 - (x % 8); // Bits are stored MSB to LSB per byte in this format
-
-                    // Safety check to avoid IndexOutOfRangeException
-                    if (y * bytesPerLine + byteIndex >= xorMaskData.Length ||
-                        y * bytesPerLine + byteIndex >= andMaskData.Length)
-                    {
-                        Console.WriteLine($"Warning: Data out of bounds at Y={y}, X={x}. Skipping pixel.");
-                        continue;
-                    }
-
-                    byte andByte = andMaskData[y * bytesPerLine + byteIndex];
-                    byte xorByte = xorMaskData[y * bytesPerLine + byteIndex];
-
-                    bool andBit = ((andByte >> bitIndex) & 1) == 1; // 1 = opaque, 0 = transparent
-                    bool xorBit = ((xorByte >> bitIndex) & 1) == 1; // 1 = white, 0 = black (if opaque)
-
-                    Color pixelColor;
-
-                    // Logic for combining AND/XOR for Windows 1.0/2.0 monochrome bitmaps
-                    // This is the formula: (P_screen AND (NOT A)) XOR X
-                    // For displaying on an RGB bitmap, we simplify:
-                    // If the AND bit is 0, the pixel is transparent (regardless of XOR)
-                    if (!andBit) // AND bit is 0 -> transparent
-                    {
-                        pixelColor = transparent;
-                    }
-                    else // AND bit is 1 -> opaque (color is determined by XOR)
-                    {
-                        if (!xorBit) // XOR bit is 0 -> black
-                        {
-                            pixelColor = black;
-                        }
-                        else // XOR bit is 1 -> white
-                        {
-                            pixelColor = white;
-                        }
-                    }
-                    resultBitmap.SetPixel(x, y, pixelColor);
-                }
-            }
-
-            img.BitCount = Image.GetPixelFormatSize(resultBitmap.PixelFormat);
-            img.Size = new Size(resultBitmap.Width, resultBitmap.Height);
-            img.Bitmap = resultBitmap;
-            return img;
+                BitCount = 0,
+                Size = new Size(0, 0),
+                Bitmap = new Bitmap(1, 1, PixelFormat.Format32bppArgb)
+            };
         }
     }
 }
