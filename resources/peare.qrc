@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/peare">
+    <file alias="logo.png">peare.png</file>
+    <file alias="icon.ico">peare.ico</file>
+  </qresource>
+</RCC>
