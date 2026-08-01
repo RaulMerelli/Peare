@@ -191,6 +191,8 @@ add_library(PeareOpener SHARED
     src/opener/fs/Iso9660Reader.cpp
     src/opener/fs/peare_fs.h
     src/opener/fs/FsApi.cpp
+    src/opener/modules/IsoModule.h
+    src/opener/modules/IsoModule.cpp
 )
 target_compile_definitions(PeareOpener PRIVATE PEARE_OPENER_BUILD)
 target_include_directories(PeareOpener

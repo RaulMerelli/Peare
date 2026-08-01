@@ -19,7 +19,8 @@ enum class ModuleFormat {
     OS2_PACK,
     SZDD,
     SIEMENS_IMG,
-    SIEMENS_FWF
+    SIEMENS_FWF,
+    ISO9660
 };
 
 struct ModuleFormatInfo {

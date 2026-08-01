@@ -2,6 +2,8 @@
 
 #include <QFile>
 
+#include <cstring>
+
 namespace peare {
 namespace {
 
@@ -38,6 +40,14 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
     const QByteArray data = file.readAll();
     if (data.size() < 2) {
         return {ModuleFormat::Unknown, 0, {}, QStringLiteral("File troppo piccolo")};
+    }
+
+    // ISO 9660: the first volume descriptor carries "CD001" at sector 16 + 1
+    // (byte 0x8001). Checked before the loose Siemens FWF heuristic so a data
+    // disc is never mistaken for firmware.
+    if (data.size() >= 0x8001 + 5 &&
+        std::memcmp(data.constData() + 0x8001, "CD001", 5) == 0) {
+        return {ModuleFormat::ISO9660, 0, QStringLiteral("ISO 9660 image"), {}};
     }
 
     if (data.size() >= 64 && readLe32(data, data.size() - 4) == 0x03031998U) {
@@ -150,6 +160,7 @@ QString ModuleFormatDetector::formatName(ModuleFormat format)
     case ModuleFormat::SZDD: return QStringLiteral("SZDD");
     case ModuleFormat::SIEMENS_IMG: return QStringLiteral("Siemens IMG");
     case ModuleFormat::SIEMENS_FWF: return QStringLiteral("Siemens FWF");
+    case ModuleFormat::ISO9660: return QStringLiteral("ISO 9660");
     case ModuleFormat::Unknown: return QStringLiteral("Unknown");
     }
     return QStringLiteral("Unknown");

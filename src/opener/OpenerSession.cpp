@@ -221,7 +221,16 @@ OpenedResource OpenerSession::openResource(int resourceIndex) const
 
     resource.session = this;
     resource.resourceIndex = resourceIndex;
-    resource.payload = entry->data;
+    if (entry->content) {
+        // Layer-backed: materialise this resource's bytes on demand, now that it
+        // is actually being opened (never at enumeration). The common ABI sees
+        // an ordinary payload and cannot tell it came from a lazy fs stack.
+        const std::vector<std::uint8_t> bytes = entry->content->readAll();
+        resource.payload = QByteArray(reinterpret_cast<const char*>(bytes.data()),
+                                      static_cast<int>(bytes.size()));
+    } else {
+        resource.payload = entry->data;
+    }
     resource.context = contextFor(*entry, info_, resourceIndex);
     return resource;
 }

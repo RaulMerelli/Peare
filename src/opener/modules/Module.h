@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ModuleFormat.h"
+#include "../fs/DiscStore.h"
 
 #include <QByteArray>
 #include <QString>
@@ -32,6 +33,11 @@ struct ResourceEntry {
     int baseId = 0;
     QStringList hierarchyPath;
     QByteArray data;
+    // Lazy, layer-backed content (DiscUtils-compatible fs stack). When set it is
+    // the authoritative content, read on demand when the resource is opened;
+    // otherwise `data` (the flat array) is used. This single seam is what lets
+    // the common opener ABI hide whether a resource is array- or layer-backed.
+    peare::fs::ByteStorePtr content;
 };
 
 class IModule {

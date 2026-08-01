@@ -15,6 +15,7 @@
 #include "SzddModule.h"
 #include "SiemensImgModule.h"
 #include "SiemensFwfModule.h"
+#include "IsoModule.h"
 
 #include <QFile>
 #include <QTemporaryFile>
@@ -76,6 +77,7 @@ ModulePtr ModuleFactory::open(const QString& filePath)
     if (info.format == ModuleFormat::SZDD) return SzddModule::open(filePath);
     if (info.format == ModuleFormat::SIEMENS_IMG) return SiemensImgModule::open(filePath);
     if (info.format == ModuleFormat::SIEMENS_FWF) return SiemensFwfModule::open(filePath);
+    if (info.format == ModuleFormat::ISO9660) return IsoModule::open(filePath);
     return peare::makeUnique<DetectedModule>(std::move(info));
 }
 
