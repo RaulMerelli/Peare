@@ -39,6 +39,10 @@ struct ModuleFormatInfo {
 class ModuleFormatDetector final {
 public:
     static ModuleFormatInfo detectFile(const QString &filePath);
+    // Header-based detection over an in-memory buffer (a resource's first bytes).
+    // Used for the cheap is-container peek; recognises formats identifiable from
+    // a header (MZ/PE/NE/LE/LX, XBE/XEX/XUIZ, STFS, OS/2 PACK, SZDD, ISO).
+    static ModuleFormatInfo detectBuffer(const QByteArray &data);
     static QString formatName(ModuleFormat format);
 };
 

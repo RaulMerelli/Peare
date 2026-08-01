@@ -33,6 +33,14 @@ struct ResourceEntry {
     int baseId = 0;
     QStringList hierarchyPath;
     QByteArray data;
+    // Module-declared: this resource is a whole embedded file (an OS2 pack
+    // member, an ISO file, ...), i.e. a candidate to be opened as a nested
+    // container. Sub-resources (RT_* icons, sections) leave it false so they are
+    // never probed. Not a heuristic — the module states it.
+    bool isEmbeddedFile = false;
+    // Computed by the session for isEmbeddedFile resources: a cheap header peek
+    // recognised an openable format, so the consumer may offer to expand it.
+    bool isContainer = false;
     // Lazy, layer-backed content (DiscUtils-compatible fs stack). When set it is
     // the authoritative content, read on demand when the resource is opened;
     // otherwise `data` (the flat array) is used. This single seam is what lets

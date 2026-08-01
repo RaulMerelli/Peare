@@ -31,6 +31,7 @@ void walk(const fs::IDiscFileSystem& fs, const std::string& dir,
             entry.language = QStringLiteral("neutral");
             entry.dataSize = quint64(e.length);
             entry.format = ModuleFormat::ISO9660;
+            entry.isEmbeddedFile = true;  // a whole file: nested-open candidate
             // hierarchyPath is the containing directory only; the file's own name
             // is the leaf. (Putting the name here too would create a fictitious
             // folder sharing the file's name.)

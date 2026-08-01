@@ -31,6 +31,7 @@ struct ResourceContext {
     quint64 dataSize = 0;
     int baseId = 0;
     int resourceIndex = -1;
+    bool isContainer = false;  // a header peek recognised an openable format
 };
 
 struct ResourceFolder {

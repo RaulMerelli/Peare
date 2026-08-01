@@ -75,6 +75,7 @@ peare_status fillSnapshotItem(const peare::OpenedResource& opened,
     item->context.data_size = source.dataSize;
     item->context.base_id = source.baseId;
     item->context.resource_index = source.resourceIndex;
+    item->context.is_container = source.isContainer ? 1 : 0;
     status = copyUtf8(source.sourceName, &item->context.source_name_utf8);
     if (status == PEARE_STATUS_OK) status = copyUtf8(source.type, &item->context.type_utf8);
     if (status == PEARE_STATUS_OK) status = copyUtf8(source.identifier, &item->context.identifier_utf8);
@@ -518,6 +519,7 @@ peare_status peare_resource_get_context(peare_resource_handle resource,
     out_context->data_size = source.data_size;
     out_context->base_id = source.base_id;
     out_context->resource_index = source.resource_index;
+    out_context->is_container = source.is_container;
     peare_status status = copyBytes(reinterpret_cast<const char*>(source.source_name_utf8.bytes), source.source_name_utf8.length, &out_context->source_name_utf8);
     if (status == PEARE_STATUS_OK) status = copyBytes(reinterpret_cast<const char*>(source.type_utf8.bytes), source.type_utf8.length, &out_context->type_utf8);
     if (status == PEARE_STATUS_OK) status = copyBytes(reinterpret_cast<const char*>(source.identifier_utf8.bytes), source.identifier_utf8.length, &out_context->identifier_utf8);

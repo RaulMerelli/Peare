@@ -154,6 +154,7 @@ typedef struct peare_resource_context {
     uint64_t data_size;
     int64_t base_id;
     int64_t resource_index;
+    int32_t is_container;  /* nonzero: openable as a nested container */
 } peare_resource_context;
 
 

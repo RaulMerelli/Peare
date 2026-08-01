@@ -129,6 +129,7 @@ ResourceContext contextFor(const ResourceEntry& entry,
     context.dataSize = entry.dataSize;
     context.baseId = entry.baseId;
     context.resourceIndex = resourceIndex;
+    context.isContainer = entry.isContainer;
     return context;
 }
 
@@ -286,6 +287,24 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
             if (currentFormat != ModuleFormat::Unknown)
                 resources_[entryIndex].format = currentFormat;
         }
+    }
+    // Cheap is-container hint: only for whole embedded files the module declared,
+    // peek the first 4 KiB (from the lazy store or the array) and see whether a
+    // known openable format is recognised. Sub-resources are skipped, so this
+    // stays fast even for resource-heavy modules; ISO files read 4 KiB via mmap.
+    for (ResourceEntry& entry : resources_) {
+        entry.isContainer = false;
+        if (!entry.isEmbeddedFile)
+            continue;
+        QByteArray header;
+        if (entry.content) {
+            const std::vector<std::uint8_t> h = entry.content->readRange(0, 4096);
+            header = QByteArray(reinterpret_cast<const char*>(h.data()), static_cast<int>(h.size()));
+        } else {
+            header = entry.data.left(4096);
+        }
+        entry.isContainer = !header.isEmpty() &&
+            ModuleFormatDetector::detectBuffer(header).format != ModuleFormat::Unknown;
     }
     rebuildFolders();
     return info_.isValid();

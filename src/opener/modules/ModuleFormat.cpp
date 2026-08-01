@@ -149,6 +149,46 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
     return info;
 }
 
+ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
+{
+    if (data.size() >= 0x8001 + 5 &&
+        std::memcmp(data.constData() + 0x8001, "CD001", 5) == 0)
+        return {ModuleFormat::ISO9660, 0, QStringLiteral("ISO 9660 image"), {}};
+
+    if (data.size() >= 8 && data.left(8) == QByteArray("SZDD\x88\xF0\x27\x33", 8))
+        return {ModuleFormat::SZDD, 0, QStringLiteral("Microsoft Compress SZDD archive"), {}};
+
+    if (data.size() >= 4) {
+        const auto* p = reinterpret_cast<const unsigned char*>(data.constData());
+        if (p[0] == 0xA5 && p[1] == 0x96 &&
+            ((p[2] == 0x0A && p[3] == 0x00) || (p[2] == 0x0A && p[3] == 0x0A) ||
+             (p[2] == 0x00 && p[3] == 0x14) || (p[2] == 0x14 && p[3] == 0x0A) ||
+             (p[2] == 0xFF && p[3] == 0xFF) || (p[2] == 0xFE && p[3] == 0xFF)))
+            return {ModuleFormat::OS2_PACK, 0, QStringLiteral("IBM/Microsoft OS/2 PACK archive"), {}};
+        const QByteArray magic = data.left(4);
+        if (magic == QByteArrayLiteral("XBEH")) return {ModuleFormat::XBE, 0, QStringLiteral("Original Xbox Executable (XBE)"), {}};
+        if (magic == QByteArrayLiteral("XEX1") || magic == QByteArrayLiteral("XEX2")) return {ModuleFormat::XEX, 0, QStringLiteral("Xbox 360 Executable (XEX)"), {}};
+        if (magic == QByteArrayLiteral("XUIZ")) return {ModuleFormat::XUIZ, 0, QStringLiteral("Xbox 360 XUIZ archive"), {}};
+        if (magic == QByteArrayLiteral("LIVE") || magic == QByteArrayLiteral("PIRS")) return {ModuleFormat::LIVE_PIRS, 0, QStringLiteral("Xbox 360 STFS LIVE/PIRS container"), {}};
+        if (magic == QByteArrayLiteral("CON ")) return {ModuleFormat::CON, 0, QStringLiteral("Xbox 360 STFS CON container"), {}};
+    }
+
+    if (readLe16(data, 0) == 0x5A4D && data.size() >= 0x40) {
+        const quint32 nh = readLe32(data, 0x3C);
+        if (nh + 2 <= quint32(data.size())) {
+            const quint16 sig = readLe16(data, nh);
+            if (sig == 0x454E) return {ModuleFormat::NE, nh, QStringLiteral("New Executable (NE)"), {}};
+            if (sig == 0x454C) return {ModuleFormat::LE, nh, QStringLiteral("Linear Executable (LE)"), {}};
+            if (sig == 0x584C) return {ModuleFormat::LX, nh, QStringLiteral("Linear Executable (LX)"), {}};
+            if (nh + 4 <= quint32(data.size()) && readLe32(data, nh) == 0x00004550)
+                return {ModuleFormat::PE, nh, QStringLiteral("Portable Executable (PE)"), {}};
+        }
+        return {ModuleFormat::DosMZ, nh, QStringLiteral("DOS MZ executable"), {}};
+    }
+
+    return {ModuleFormat::Unknown, 0, {}, QStringLiteral("No recognised header")};
+}
+
 QString ModuleFormatDetector::formatName(ModuleFormat format)
 {
     switch (format) {

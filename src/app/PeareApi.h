@@ -27,6 +27,7 @@ struct ResourceContext {
     quint32 codepage = 0;
     quint64 dataOffset = 0;
     quint64 dataSize = 0;
+    bool isContainer = false;
 };
 
 class Resource final {
