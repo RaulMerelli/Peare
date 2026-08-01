@@ -147,7 +147,10 @@ void peare_opener_destroy(peare_opener_handle opener)
 
 // ---- Unified open --------------------------------------------------------
 
-peare_status peare_source_from_file(const char* path_utf8, peare_source_handle* out_source)
+// Internal only: building a file source is not part of the public ABI (external
+// callers open files by path via peare_opener_open_file). Kept as a helper for
+// that shim.
+static peare_status makeFileSource(const char* path_utf8, peare_source_handle* out_source)
 {
     if (!out_source) return PEARE_STATUS_INVALID_ARGUMENT;
     *out_source = nullptr;
@@ -222,28 +225,10 @@ void peare_source_destroy(peare_source_handle source)
 peare_status peare_opener_open_file(peare_opener_handle opener, const char* path_utf8)
 {
     peare_source_handle src = nullptr;
-    peare_status st = peare_source_from_file(path_utf8, &src);
+    peare_status st = makeFileSource(path_utf8, &src);
     if (st != PEARE_STATUS_OK) return st;
     st = peare_opener_open(opener, src);
     peare_source_destroy(src);
-    return st;
-}
-
-peare_status peare_opener_open_buffer(peare_opener_handle opener,
-                                      const uint8_t* bytes,
-                                      size_t length,
-                                      const char* source_name_utf8)
-{
-    if (!opener || !opener->state)
-        return PEARE_STATUS_INVALID_HANDLE;
-    if ((!bytes && length != 0) || length > static_cast<size_t>(INT_MAX))
-        return PEARE_STATUS_INVALID_ARGUMENT;
-    auto* s = new (std::nothrow) peare_source_handle_s{};
-    if (!s) return PEARE_STATUS_ALLOCATION_FAILED;
-    s->bytes = QByteArray(reinterpret_cast<const char*>(bytes), static_cast<int>(length));
-    s->name = source_name_utf8 ? QString::fromUtf8(source_name_utf8) : QStringLiteral("memory.bin");
-    const peare_status st = peare_opener_open(opener, s);
-    peare_source_destroy(s);
     return st;
 }
 

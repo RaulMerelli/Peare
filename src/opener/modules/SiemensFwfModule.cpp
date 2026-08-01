@@ -48,6 +48,7 @@ void addResource(QVector<ResourceEntry>& resources, const QString& type,
     entry.hierarchyPath = path;
     entry.hierarchyPath << name;
     entry.data = data;
+    entry.isEmbeddedFile = true;
     resources.push_back(entry);
 }
 

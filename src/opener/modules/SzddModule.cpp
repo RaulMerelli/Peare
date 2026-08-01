@@ -118,6 +118,7 @@ std::unique_ptr<SzddModule> SzddModule::open(const QByteArray& data, const QStri
 
     ResourceEntry entry;
     entry.type = QStringLiteral("SZDD_FILE");
+    entry.isEmbeddedFile = true;
     QString payloadName = QFileInfo(logicalName).fileName();
     if (payloadName.isEmpty())
         payloadName = QStringLiteral("SZDD");

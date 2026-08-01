@@ -61,7 +61,6 @@ public:
     Session& operator=(const Session&) = delete;
 
     bool openFile(const QString& path, QString* error = nullptr);
-    bool openBuffer(const QByteArray& data, const QString& sourceName, QString* error = nullptr);
     void close();
     bool isOpen() const { return open_; }
     peare_container_format containerFormat() const;

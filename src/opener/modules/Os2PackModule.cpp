@@ -347,6 +347,7 @@ std::unique_ptr<Os2PackModule> Os2PackModule::open(const QByteArray& data, const
         }
         ResourceEntry entry;
         entry.type = QStringLiteral("OS2_PACK_FILE");
+        entry.isEmbeddedFile = true;
         entry.name = safeLeafName(member.fileName, index);
         entry.language = QStringLiteral("neutral");
         entry.dataOffset = quint64(member.compressedOffset);

@@ -732,6 +732,7 @@ std::unique_ptr<XexModule> XexModule::open(const QString& filePath)
 
             ResourceEntry peModule;
             peModule.type = QStringLiteral("PE_MODULE");
+            peModule.isEmbeddedFile = true;
             peModule.name = embeddedName;
             peModule.language = QStringLiteral("neutral");
             peModule.dataOffset = 0;

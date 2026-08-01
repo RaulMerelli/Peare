@@ -117,6 +117,7 @@ std::unique_ptr<XuizModule> XuizModule::open(const QByteArray& data, const QStri
     for (const xuiz::Entry& source : archive.entries) {
         ResourceEntry entry;
         entry.type = QStringLiteral("XUIZ_FILE");
+        entry.isEmbeddedFile = true;
         entry.name = leafName(source.path);
         entry.language = QStringLiteral("neutral");
         entry.dataOffset = source.offset;

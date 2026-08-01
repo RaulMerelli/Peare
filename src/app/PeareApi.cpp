@@ -179,19 +179,6 @@ bool Session::openFile(const QString& path, QString* error)
     if (!open_ && error) *error = statusText(status);
     return open_;
 }
-bool Session::openBuffer(const QByteArray& data, const QString& sourceName, QString* error)
-{
-    if (!handle_ && peare_opener_create(&handle_) != PEARE_STATUS_OK) return false;
-    const QByteArray sourceUtf8 = sourceName.toUtf8();
-    const peare_status status = peare_opener_open_buffer(
-        handle_,
-        reinterpret_cast<const uint8_t*>(data.constData()),
-        static_cast<size_t>(data.size()),
-        sourceUtf8.constData());
-    open_ = status == PEARE_STATUS_OK;
-    if (!open_ && error) *error = statusText(status);
-    return open_;
-}
 void Session::close() { if (handle_) peare_opener_close(handle_); open_ = false; }
 peare_container_format Session::containerFormat() const
 {

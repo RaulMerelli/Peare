@@ -45,73 +45,6 @@ ResourcePlatform platformFor(const ResourceEntry& entry)
 }
 
 
-QStringList normalizedEmbeddedPath(const ResourceEntry& parent,
-                                   const ResourceEntry& child)
-{
-    QStringList prefix = parent.hierarchyPath;
-    if (prefix.isEmpty() || prefix.last() != parent.name)
-        prefix.push_back(parent.name);
-
-    QStringList suffix = child.hierarchyPath;
-    while (!suffix.isEmpty() && suffix.first() == parent.name)
-        suffix.removeFirst();
-    prefix.append(suffix);
-    return prefix;
-}
-
-bool isStructuralEntry(const ResourceEntry& entry)
-{
-    // Header/area entries are byte ranges belonging to the current module, not
-    // independent embedded files. Synthetic whole-container roots are likewise
-    // navigation nodes and must not reopen the file below itself.
-    return entry.type.endsWith(QStringLiteral("_HEADERS")) ||
-           entry.type.endsWith(QStringLiteral("_AREA")) ||
-           entry.type == QStringLiteral("XUIZ_CONTAINER") ||
-           entry.type == QStringLiteral("STFS_CONTAINER");
-}
-
-ModuleFormat appendEmbeddedResources(QVector<ResourceEntry>& destination,
-                                     const ResourceEntry& parent,
-                                     int depth,
-                                     QSet<QByteArray>& ancestry)
-{
-    if (depth >= 8 || parent.data.isEmpty() || isStructuralEntry(parent))
-        return ModuleFormat::Unknown;
-
-    const QByteArray digest = QCryptographicHash::hash(parent.data, QCryptographicHash::Sha256);
-    if (ancestry.contains(digest))
-        return ModuleFormat::Unknown;
-
-    ModulePtr embedded = ModuleFactory::open(parent.data, parent.name);
-    if (!embedded || !embedded->info().isValid())
-        return ModuleFormat::Unknown;
-
-    const ModuleFormat currentFormat = embedded->info().format;
-    const auto* container = dynamic_cast<const IResourceContainer*>(embedded.get());
-    if (!container)
-        return currentFormat;
-
-    ancestry.insert(digest);
-    const QVector<ResourceEntry>& children = container->resources();
-    for (const ResourceEntry& source : children) {
-        // Do not reproduce a module's synthetic self-wrapper below the file node.
-        if (source.data == parent.data &&
-            (source.name == parent.name || source.type.endsWith(QStringLiteral("_MODULE")) ||
-             source.type.endsWith(QStringLiteral("_CONTAINER"))))
-            continue;
-
-        ResourceEntry child = source;
-        child.hierarchyPath = normalizedEmbeddedPath(parent, source);
-        const int childIndex = destination.size();
-        destination.push_back(child);
-        const ModuleFormat childFormat =
-            appendEmbeddedResources(destination, child, depth + 1, ancestry);
-        if (childFormat != ModuleFormat::Unknown)
-            destination[childIndex].format = childFormat;
-    }
-    ancestry.remove(digest);
-    return currentFormat;
-}
 
 ResourceContext contextFor(const ResourceEntry& entry,
                            const ModuleInfo& moduleInfo,
@@ -275,19 +208,12 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
     info_.filePath = displayPath;
     resourceContainer_ = dynamic_cast<const IResourceContainer*>(module_.get());
     resources_.clear();
-    if (resourceContainer_) {
-        const QVector<ResourceEntry>& original = resourceContainer_->resources();
-        resources_.reserve(original.size());
-        for (const ResourceEntry& entry : original) {
-            const int entryIndex = resources_.size();
-            resources_.push_back(entry);
-            QSet<QByteArray> ancestry;
-            const ModuleFormat currentFormat =
-                appendEmbeddedResources(resources_, entry, 0, ancestry);
-            if (currentFormat != ModuleFormat::Unknown)
-                resources_[entryIndex].format = currentFormat;
-        }
-    }
+    if (resourceContainer_)
+        resources_ = resourceContainer_->resources();
+    // Nested containers are no longer expanded eagerly here. Every module exposes
+    // only its own resources; a resource that is itself a container is opened on
+    // demand by the consumer (peare_resource_get_source + peare_opener_open) when
+    // it is navigated into. The is-container hint below marks such resources.
     // Cheap is-container hint: only for whole embedded files the module declared,
     // peek the first 4 KiB (from the lazy store or the array) and see whether a
     // known openable format is recognised. Sub-resources are skipped, so this
