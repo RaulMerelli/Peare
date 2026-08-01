@@ -37,18 +37,24 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         return {ModuleFormat::Unknown, 0, {}, file.errorString()};
     }
 
+    // ISO 9660 first, cheaply: the first volume descriptor carries "CD001" at
+    // sector 16 + 1 (byte 0x8001). Checked with a 5-byte positioned read so a
+    // multi-GB disc image is never fully loaded just to sniff it, and never
+    // mistaken for firmware by the loose FWF heuristic below.
+    if (file.size() >= 0x8001 + 5) {
+        char magic[5];
+        if (file.seek(0x8001) && file.read(magic, 5) == 5 &&
+            std::memcmp(magic, "CD001", 5) == 0) {
+            return {ModuleFormat::ISO9660, 0, QStringLiteral("ISO 9660 image"), {}};
+        }
+        file.seek(0);
+    }
+
     const QByteArray data = file.readAll();
     if (data.size() < 2) {
         return {ModuleFormat::Unknown, 0, {}, QStringLiteral("File troppo piccolo")};
     }
 
-    // ISO 9660: the first volume descriptor carries "CD001" at sector 16 + 1
-    // (byte 0x8001). Checked before the loose Siemens FWF heuristic so a data
-    // disc is never mistaken for firmware.
-    if (data.size() >= 0x8001 + 5 &&
-        std::memcmp(data.constData() + 0x8001, "CD001", 5) == 0) {
-        return {ModuleFormat::ISO9660, 0, QStringLiteral("ISO 9660 image"), {}};
-    }
 
     if (data.size() >= 64 && readLe32(data, data.size() - 4) == 0x03031998U) {
         return {ModuleFormat::SIEMENS_IMG, 0, QStringLiteral("Siemens ProSave IMG firmware container"), {}};

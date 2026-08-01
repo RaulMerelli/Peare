@@ -45,14 +45,28 @@ ModulePtr IsoModule::open(const QString& filePath) {
     module->info_.format = ModuleFormat::ISO9660;
     module->info_.description = QStringLiteral("ISO 9660 image");
 
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly)) {
-        module->info_.error = file.errorString();
+    // Memory-map the image so opening reads only the directory metadata; file
+    // content is paged in lazily by the OS on access, never loaded up front.
+    // The QFile is kept alive by the disc store (and thus by every file window
+    // over it), so the mapping outlives this module if a resource is still open.
+    auto holder = std::make_shared<QFile>(filePath);
+    if (!holder->open(QIODevice::ReadOnly)) {
+        module->info_.error = holder->errorString();
         return ModulePtr(std::move(module));
     }
-    const QByteArray bytes = file.readAll();
-    fs::ByteStorePtr disc = std::make_shared<fs::MemoryStore>(
-        reinterpret_cast<const std::uint8_t*>(bytes.constData()), std::size_t(bytes.size()));
+    const qint64 size = holder->size();
+    fs::ByteStorePtr disc;
+    uchar* mapped = size > 0 ? holder->map(0, size) : nullptr;
+    if (mapped) {
+        disc = std::make_shared<fs::ExternalStore>(
+            reinterpret_cast<const std::uint8_t*>(mapped), std::int64_t(size),
+            std::static_pointer_cast<void>(holder));
+    } else {
+        // Fallback for the rare case mapping is unavailable: read it in.
+        const QByteArray bytes = holder->readAll();
+        disc = std::make_shared<fs::MemoryStore>(
+            reinterpret_cast<const std::uint8_t*>(bytes.constData()), std::size_t(bytes.size()));
+    }
     auto reader = std::make_shared<fs::Iso9660Reader>(disc);
     if (!reader->valid()) {
         module->info_.error = QString::fromStdString(reader->error());

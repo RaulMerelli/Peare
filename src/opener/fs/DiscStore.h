@@ -95,6 +95,31 @@ private:
     std::vector<std::uint8_t> data_;
 };
 
+// References externally-owned memory without copying it (e.g. a memory-mapped
+// file). `owner` (type-erased) is held so the backing stays alive for as long as
+// this store — or any window over it — exists. Reads are just pointer copies;
+// when the backing is an mmap, the OS pages data in lazily on access.
+class ExternalStore : public IByteStore {
+public:
+    ExternalStore(const std::uint8_t* data, std::int64_t length, std::shared_ptr<void> owner)
+        : data_(data), length_(length), owner_(std::move(owner)) {}
+
+    std::int64_t capacity() const override { return length_; }
+
+    int read(std::int64_t pos, std::uint8_t* dst, int count) const override {
+        if (!data_ || pos < 0 || count <= 0 || pos >= length_) return 0;
+        const std::int64_t avail = length_ - pos;
+        const int n = count < avail ? count : static_cast<int>(avail);
+        std::copy(data_ + pos, data_ + pos + n, dst);
+        return n;
+    }
+
+private:
+    const std::uint8_t* data_;
+    std::int64_t length_;
+    std::shared_ptr<void> owner_;
+};
+
 // A [start, start+length) window over a parent store == DiscUtils SubStream /
 // SubBuffer. Zero-copy: forwards positioned reads to the parent.
 class SubStore : public IByteStore {
