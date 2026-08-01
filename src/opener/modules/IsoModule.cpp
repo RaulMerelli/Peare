@@ -19,18 +19,22 @@ void walk(const fs::IDiscFileSystem& fs, const std::string& dir,
     const std::vector<fs::DiscEntry> entries = fs.list(dir);
     for (const fs::DiscEntry& e : entries) {
         const std::string full = dir.empty() ? e.name : dir + "/" + e.name;
-        QStringList path = prefix;
-        path << QString::fromUtf8(e.name.c_str());
+        const QString name = QString::fromUtf8(e.name.c_str());
         if (e.isDirectory) {
-            walk(fs, full, path, out);
+            QStringList sub = prefix;
+            sub << name;
+            walk(fs, full, sub, out);
         } else {
             ResourceEntry entry;
             entry.type = QStringLiteral("ISO_FILE");
-            entry.name = QString::fromUtf8(e.name.c_str());
+            entry.name = name;
             entry.language = QStringLiteral("neutral");
             entry.dataSize = quint64(e.length);
             entry.format = ModuleFormat::ISO9660;
-            entry.hierarchyPath = path;
+            // hierarchyPath is the containing directory only; the file's own name
+            // is the leaf. (Putting the name here too would create a fictitious
+            // folder sharing the file's name.)
+            entry.hierarchyPath = prefix;
             entry.content = fs.openFile(full);  // lazy window over the image
             out.push_back(std::move(entry));
         }

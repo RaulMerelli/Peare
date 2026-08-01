@@ -39,6 +39,8 @@ void freeSnapshotItem(peare_resource_snapshot_item* item)
     std::free(item->context.type_utf8.bytes);
     std::free(item->context.identifier_utf8.bytes);
     std::free(item->context.language_utf8.bytes);
+    delete static_cast<peare::fs::ByteStorePtr*>(item->lazy_content);
+    item->lazy_content = nullptr;
     item->context = {};
 }
 
@@ -49,6 +51,11 @@ peare_status fillSnapshotItem(const peare::OpenedResource& opened,
     *item = {};
     peare_status status = copyByteArray(opened.payload, &item->payload);
     if (status != PEARE_STATUS_OK) return status;
+    // Layer-backed content is not read here: keep only the store, so building
+    // this item (and the whole sibling list) costs nothing in bytes. The content
+    // is materialised on demand in peare_resource_get_payload.
+    if (opened.contentStore)
+        item->lazy_content = new (std::nothrow) peare::fs::ByteStorePtr(opened.contentStore);
     const auto& source = opened.context;
     item->context.container_format = toCFormat(source.containerFormat);
     item->context.platform = toCPlatform(source.platform);
@@ -353,6 +360,16 @@ peare_status peare_resource_get_payload(peare_resource_handle resource, peare_bl
     if (!out_payload) return PEARE_STATUS_INVALID_ARGUMENT;
     out_payload->bytes = nullptr; out_payload->length = 0;
     if (!peare_resource_snapshot_valid(resource)) return PEARE_STATUS_INVALID_HANDLE;
+    // Layer-backed: read the content now (this is the only place a file's bytes
+    // are materialised — one file, on demand, when the consumer asks for it).
+    if (resource->primary.lazy_content) {
+        auto* store = static_cast<peare::fs::ByteStorePtr*>(resource->primary.lazy_content);
+        if (store && *store) {
+            const std::vector<std::uint8_t> bytes = (*store)->readAll();
+            return copyBytes(reinterpret_cast<const char*>(bytes.data()),
+                             bytes.size(), out_payload);
+        }
+    }
     return copyBytes(reinterpret_cast<const char*>(resource->primary.payload.bytes),
                      resource->primary.payload.length, out_payload);
 }

@@ -44,6 +44,11 @@ struct OpenedResource {
     const OpenerSession* session = nullptr;
     int resourceIndex = -1;
     QByteArray payload;
+    // Layer-backed content, when the resource is served by the fs stack. It is
+    // NOT read here: the bytes are materialised only when the payload is actually
+    // requested (peare_resource_get_payload), so opening/enumerating a resource
+    // never pays for its content.
+    peare::fs::ByteStorePtr contentStore;
     ResourceContext context;
     QString error;
 
