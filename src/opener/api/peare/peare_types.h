@@ -20,6 +20,11 @@ extern "C" {
 
 typedef struct peare_opener_handle_s *peare_opener_handle;
 typedef struct peare_resource_handle_s *peare_resource_handle;
+/* A byte source to be opened. Created from a file path or from a resource's
+ * content; both feed the single peare_opener_open entry point. Opaque; the
+ * caller cannot tell whether it is a file, an in-memory array, or a lazy
+ * layer-backed store. */
+typedef struct peare_source_handle_s *peare_source_handle;
 
 typedef enum peare_status {
     PEARE_STATUS_OK = 0,

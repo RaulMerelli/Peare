@@ -12,6 +12,17 @@
 struct SessionState { peare::OpenerSession session; };
 struct peare_opener_handle_s { std::shared_ptr<SessionState> state; };
 
+// A source to be opened. Exactly one backing is used: a file path, a lazy
+// layer-backed store (a resource's content window), or an in-memory array.
+// peare_opener_open consumes it; the caller cannot tell which backing it holds.
+struct peare_source_handle_s {
+    bool isFile = false;
+    QString filePath;
+    peare::fs::ByteStorePtr store;
+    QByteArray bytes;
+    QString name;
+};
+
 namespace {
 peare_status copyBytes(const char* data, size_t length, peare_blob* out) {
     if (!out) return PEARE_STATUS_INVALID_ARGUMENT;
@@ -149,20 +160,88 @@ void peare_opener_destroy(peare_opener_handle opener)
     delete opener;
 }
 
-peare_status peare_opener_open_file(peare_opener_handle opener, const char* path_utf8)
+// ---- Unified open --------------------------------------------------------
+
+peare_status peare_source_from_file(const char* path_utf8, peare_source_handle* out_source)
 {
-    if (!opener || !opener->state)
-        return PEARE_STATUS_INVALID_HANDLE;
-    if (!path_utf8)
-        return PEARE_STATUS_INVALID_ARGUMENT;
+    if (!out_source) return PEARE_STATUS_INVALID_ARGUMENT;
+    *out_source = nullptr;
+    if (!path_utf8) return PEARE_STATUS_INVALID_ARGUMENT;
+    auto* s = new (std::nothrow) peare_source_handle_s{};
+    if (!s) return PEARE_STATUS_ALLOCATION_FAILED;
+    s->isFile = true;
+    s->filePath = QString::fromUtf8(path_utf8);
+    s->name = s->filePath;
+    *out_source = s;
+    return PEARE_STATUS_OK;
+}
+
+peare_status peare_resource_get_source(peare_resource_handle resource, peare_source_handle* out_source)
+{
+    if (!out_source) return PEARE_STATUS_INVALID_ARGUMENT;
+    *out_source = nullptr;
+    if (!peare_resource_snapshot_valid(resource)) return PEARE_STATUS_INVALID_HANDLE;
+    auto* s = new (std::nothrow) peare_source_handle_s{};
+    if (!s) return PEARE_STATUS_ALLOCATION_FAILED;
+    const peare_resource_snapshot_item& it = resource->primary;
+    // Prefer the lazy store (no materialisation here); fall back to the array.
+    if (it.lazy_content) {
+        auto* store = static_cast<peare::fs::ByteStorePtr*>(it.lazy_content);
+        if (store) s->store = *store;
+    }
+    if (!s->store)
+        s->bytes = QByteArray(reinterpret_cast<const char*>(it.payload.bytes),
+                              static_cast<int>(it.payload.length));
+    s->name = it.context.identifier_utf8.bytes
+        ? QString::fromUtf8(reinterpret_cast<const char*>(it.context.identifier_utf8.bytes),
+                            static_cast<int>(it.context.identifier_utf8.length))
+        : QStringLiteral("resource.bin");
+    *out_source = s;
+    return PEARE_STATUS_OK;
+}
+
+peare_status peare_opener_open(peare_opener_handle opener, peare_source_handle source)
+{
+    if (!opener || !opener->state) return PEARE_STATUS_INVALID_HANDLE;
+    if (!source) return PEARE_STATUS_INVALID_ARGUMENT;
     try {
         auto next = std::make_shared<SessionState>();
-        const bool opened = next->session.openFile(QString::fromUtf8(path_utf8));
+        bool opened = false;
+        if (source->isFile) {
+            opened = next->session.openFile(source->filePath);
+        } else if (source->store) {
+            // Layer-backed content is materialised here, only when the source is
+            // actually opened — the recursion point where a nested container is
+            // navigated into.
+            const std::vector<std::uint8_t> raw = source->store->readAll();
+            const QByteArray data(reinterpret_cast<const char*>(raw.data()),
+                                  static_cast<int>(raw.size()));
+            opened = next->session.openBuffer(data, source->name);
+        } else {
+            opened = next->session.openBuffer(source->bytes, source->name);
+        }
         opener->state = std::move(next);
         return opened ? PEARE_STATUS_OK : PEARE_STATUS_OPEN_FAILED;
     } catch (...) {
         return PEARE_STATUS_INTERNAL_ERROR;
     }
+}
+
+void peare_source_destroy(peare_source_handle source)
+{
+    delete source;
+}
+
+// ---- Convenience shims over the unified path -----------------------------
+
+peare_status peare_opener_open_file(peare_opener_handle opener, const char* path_utf8)
+{
+    peare_source_handle src = nullptr;
+    peare_status st = peare_source_from_file(path_utf8, &src);
+    if (st != PEARE_STATUS_OK) return st;
+    st = peare_opener_open(opener, src);
+    peare_source_destroy(src);
+    return st;
 }
 
 peare_status peare_opener_open_buffer(peare_opener_handle opener,
@@ -174,18 +253,13 @@ peare_status peare_opener_open_buffer(peare_opener_handle opener,
         return PEARE_STATUS_INVALID_HANDLE;
     if ((!bytes && length != 0) || length > static_cast<size_t>(INT_MAX))
         return PEARE_STATUS_INVALID_ARGUMENT;
-    try {
-        const QByteArray data(reinterpret_cast<const char*>(bytes), static_cast<int>(length));
-        const QString source = source_name_utf8
-            ? QString::fromUtf8(source_name_utf8)
-            : QStringLiteral("memory.bin");
-        auto next = std::make_shared<SessionState>();
-        const bool opened = next->session.openBuffer(data, source);
-        opener->state = std::move(next);
-        return opened ? PEARE_STATUS_OK : PEARE_STATUS_OPEN_FAILED;
-    } catch (...) {
-        return PEARE_STATUS_INTERNAL_ERROR;
-    }
+    auto* s = new (std::nothrow) peare_source_handle_s{};
+    if (!s) return PEARE_STATUS_ALLOCATION_FAILED;
+    s->bytes = QByteArray(reinterpret_cast<const char*>(bytes), static_cast<int>(length));
+    s->name = source_name_utf8 ? QString::fromUtf8(source_name_utf8) : QStringLiteral("memory.bin");
+    const peare_status st = peare_opener_open(opener, s);
+    peare_source_destroy(s);
+    return st;
 }
 
 peare_status peare_opener_close(peare_opener_handle opener)

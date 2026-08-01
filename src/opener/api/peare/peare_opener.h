@@ -16,6 +16,21 @@ extern "C" {
 
 PEARE_OPENER_API peare_status peare_opener_create(peare_opener_handle *out_opener);
 PEARE_OPENER_API void peare_opener_destroy(peare_opener_handle opener);
+/* ---- Unified open ------------------------------------------------------- *
+ * There is a single way to open anything: build a source, then open it. A
+ * source comes either from a file path or from a resource inside an already
+ * open opener; both are opened by the same peare_opener_open. This is what makes
+ * nesting recursive and uniform — a resource's content is just another source.
+ */
+PEARE_OPENER_API peare_status peare_source_from_file(const char *path_utf8,
+                                                     peare_source_handle *out_source);
+PEARE_OPENER_API peare_status peare_resource_get_source(peare_resource_handle resource,
+                                                        peare_source_handle *out_source);
+PEARE_OPENER_API peare_status peare_opener_open(peare_opener_handle opener,
+                                                peare_source_handle source);
+PEARE_OPENER_API void peare_source_destroy(peare_source_handle source);
+
+/* Convenience shims over the unified path (kept for existing callers). */
 PEARE_OPENER_API peare_status peare_opener_open_file(peare_opener_handle opener, const char *path_utf8);
 PEARE_OPENER_API peare_status peare_opener_open_buffer(peare_opener_handle opener,
                                                 const uint8_t *bytes,
