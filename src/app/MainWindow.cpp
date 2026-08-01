@@ -507,6 +507,19 @@ void MainWindow::expandContainerItem(QTreeWidgetItem* item)
     pearegui::Session* childPtr = child.get();
     childSessions_.push_back(std::move(child));
     populateFromSession(childPtr, item);
+
+    // Normalise folder icons in the freshly built subtree (the top-level build
+    // does this too, but that pass does not reach lazily-expanded children):
+    // any node with children is a folder, e.g. the .rsrc / RT_* grouping nodes.
+    std::function<void(QTreeWidgetItem*)> normalize = [&](QTreeWidgetItem* node) {
+        if (!node) return;
+        if (node->childCount() > 0)
+            node->setIcon(0, settingsIcons_.folderCloseIcon());
+        for (int i = 0; i < node->childCount(); ++i)
+            normalize(node->child(i));
+    };
+    for (int i = 0; i < item->childCount(); ++i)
+        normalize(item->child(i));
     item->setIcon(0, settingsIcons_.folderOpenIcon());
 }
 
