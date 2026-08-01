@@ -8,6 +8,8 @@
 #include <QStringList>
 #include <QVector>
 
+#include <memory>
+
 namespace pearegui {
 
 QString blobToString(const peare_blob& blob);
@@ -68,6 +70,11 @@ public:
     size_t resourceCount(size_t folder) const;
     Resource openResource(size_t folder, size_t resource) const;
     Resource findResource(const QString& type, const QString& identifier, const QString& language = {}) const;
+
+    // Open the content of one of this session's resources as a nested child
+    // session (a container inside a container). Returns null if it does not open
+    // as a navigable container. Uses the unified source+open path.
+    std::unique_ptr<Session> openNested(size_t folder, size_t resource) const;
 
 private:
     peare_opener_handle handle_ = nullptr;

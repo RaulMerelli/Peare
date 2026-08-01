@@ -37,7 +37,9 @@ enum ItemRole {
     SizeRole,
     CodePageRole,
     FolderIndexRole,
-    ResourceIndexRole
+    ResourceIndexRole,
+    SessionRole,   // pearegui::Session* that owns this item's folder/resource index
+    PendingRole    // true: a lazy container whose children are not populated yet
 };
 
 bool hasVisibleLanguage(const QString& language)
@@ -213,6 +215,7 @@ void MainWindow::buildCentralUi()
             this, &MainWindow::showSelectedResource);
     connect(treeView_, &QTreeWidget::itemExpanded, this,
             [this](QTreeWidgetItem* item) {
+                expandContainerItem(item);  // lazily open a nested container
                 if (item && item->childCount() > 0)
                     item->setIcon(0, settingsIcons_.folderOpenIcon());
             });
@@ -321,75 +324,12 @@ void MainWindow::showModuleSummary(const QString& sourceName, const QByteArray& 
         return;
     }
 
-    size_t totalResources = 0;
+    childSessions_.clear();
     const peare_container_format format = currentSession_.containerFormat();
-    const size_t folders = currentSession_.folderCount();
-    QHash<QString, QTreeWidgetItem*> hierarchyItems;
-    auto ensurePath = [&](const QStringList& path) -> QTreeWidgetItem* {
-        QTreeWidgetItem* parent = nullptr;
-        QString key;
-        for (const QString& segment : path) {
-            if (!key.isEmpty()) key += QLatin1Char('/');
-            key += segment;
-            auto* existing = hierarchyItems.value(key, nullptr);
-            if (!existing) {
-                existing = parent ? new QTreeWidgetItem(parent, QStringList(segment))
-                                  : new QTreeWidgetItem(treeView_, QStringList(segment));
-                existing->setIcon(0, settingsIcons_.folderCloseIcon());
-                hierarchyItems.insert(key, existing);
-            }
-            parent = existing;
-        }
-        return parent;
-    };
-    for (size_t folderIndex = 0; folderIndex < folders; ++folderIndex) {
-        const QString folderType = currentSession_.folderType(folderIndex);
-        const size_t resources = currentSession_.resourceCount(folderIndex);
-        totalResources += resources;
-        for (size_t resourceIndex = 0; resourceIndex < resources; ++resourceIndex) {
-            pearegui::Resource resource = currentSession_.openResource(folderIndex, resourceIndex);
-            if (!resource.isValid()) continue;
-            const pearegui::ResourceContext context = resource.context();
-            QString label = context.identifier;
-            if (hasVisibleLanguage(context.language))
-                label += QStringLiteral(" [%1]").arg(context.language);
-            QStringList hierarchyPath = folderType.split(QChar(0x1f), Qt::SkipEmptyParts);
-            if (hierarchyPath.isEmpty())
-                hierarchyPath << context.type;
-            auto* typeItem = ensurePath(hierarchyPath);
-            QTreeWidgetItem* child = nullptr;
-            if (context.type == QStringLiteral("PE_MODULE") ||
-                context.type == QStringLiteral("PE_HEADERS") ||
-                context.type == QStringLiteral("PE_SECTION") ||
-                context.type == QStringLiteral("XBE_SECTION") ||
-                context.type == QStringLiteral("NE_HEADERS") ||
-                context.type == QStringLiteral("NE_AREA") ||
-                context.type == QStringLiteral("LE_HEADERS") ||
-                context.type == QStringLiteral("LE_AREA") ||
-                context.type == QStringLiteral("LX_HEADERS") ||
-                context.type == QStringLiteral("LX_AREA") ||
-                context.type == QStringLiteral("XUIZ_CONTAINER") ||
-                context.type == QStringLiteral("XUIZ_FILE") ||
-                context.type == QStringLiteral("OS2_PACK_FILE") ||
-                context.type == QStringLiteral("SZDD_FILE") ||
-                context.type == QStringLiteral("SIEMENS_IMG_FILE") ||
-                context.type == QStringLiteral("SIEMENS_FWF_FILE")) {
-                child = typeItem;
-                child->setText(0, label);
-            } else {
-                child = new QTreeWidgetItem(typeItem, QStringList(label));
-            }
-            child->setIcon(0, settingsIcons_.resourceIcon(context.type));
-            child->setData(0, TypeRole, context.type);
-            child->setData(0, NameRole, context.identifier);
-            child->setData(0, LanguageRole, context.language);
-            child->setData(0, OffsetRole, QVariant::fromValue<qulonglong>(context.dataOffset));
-            child->setData(0, SizeRole, QVariant::fromValue<qulonglong>(context.dataSize));
-            child->setData(0, CodePageRole, context.codepage);
-            child->setData(0, FolderIndexRole, QVariant::fromValue<qulonglong>(folderIndex));
-            child->setData(0, ResourceIndexRole, QVariant::fromValue<qulonglong>(resourceIndex));
-        }
-    }
+    size_t totalResources = 0;
+    for (size_t f = 0; f < currentSession_.folderCount(); ++f)
+        totalResources += currentSession_.resourceCount(f);
+    populateFromSession(&currentSession_, nullptr);
 
     // Every expandable native container uses folder icons consistently.
     // Leaf sections/resources keep their file/type icon.
@@ -411,7 +351,7 @@ void MainWindow::showModuleSummary(const QString& sourceName, const QByteArray& 
     summary->setAlignment(Qt::AlignTop | Qt::AlignLeft);
     summary->setText(QStringLiteral("<b>%1</b><br><br>File: %2<br>Size: %3 bytes<br>Resource types: %4<br>Resource entries: %5")
         .arg(pearegui::containerName(format).toHtmlEscaped(), fi.absoluteFilePath().toHtmlEscaped(),
-             QString::number(fi.size()), QString::number(folders), QString::number(totalResources)));
+             QString::number(fi.size()), QString::number(currentSession_.folderCount()), QString::number(totalResources)));
     layout->addWidget(summary);
     messageLabel_->setText(totalResources == 0 ? QStringLiteral("No resources found")
                                                : QStringLiteral("%1 resources found").arg(totalResources));
@@ -470,6 +410,118 @@ QImage MainWindow::buildFontGlyphMap(const pearegui::Resource& resource, const Q
     return result;
 }
 
+pearegui::Session* MainWindow::sessionOf(QTreeWidgetItem* item) const
+{
+    for (; item; item = item->parent()) {
+        const QVariant v = item->data(0, SessionRole);
+        if (v.isValid())
+            return reinterpret_cast<pearegui::Session*>(static_cast<quintptr>(v.toULongLong()));
+    }
+    return const_cast<pearegui::Session*>(&currentSession_);
+}
+
+void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem* parentBase)
+{
+    const quintptr sid = reinterpret_cast<quintptr>(session);
+    QHash<QString, QTreeWidgetItem*> hierarchyItems;
+    auto ensurePath = [&](const QStringList& path) -> QTreeWidgetItem* {
+        QTreeWidgetItem* parent = parentBase;
+        QString key;
+        for (const QString& segment : path) {
+            if (!key.isEmpty()) key += QLatin1Char('/');
+            key += segment;
+            auto* existing = hierarchyItems.value(key, nullptr);
+            if (!existing) {
+                existing = parent ? new QTreeWidgetItem(parent, QStringList(segment))
+                                  : new QTreeWidgetItem(treeView_, QStringList(segment));
+                existing->setIcon(0, settingsIcons_.folderCloseIcon());
+                existing->setData(0, SessionRole, QVariant::fromValue<qulonglong>(sid));
+                hierarchyItems.insert(key, existing);
+            }
+            parent = existing;
+        }
+        return parent ? parent : parentBase;
+    };
+    const size_t folders = session->folderCount();
+    for (size_t folderIndex = 0; folderIndex < folders; ++folderIndex) {
+        const QString folderType = session->folderType(folderIndex);
+        const size_t resources = session->resourceCount(folderIndex);
+        for (size_t resourceIndex = 0; resourceIndex < resources; ++resourceIndex) {
+            pearegui::Resource resource = session->openResource(folderIndex, resourceIndex);
+            if (!resource.isValid()) continue;
+            const pearegui::ResourceContext context = resource.context();
+            QString label = context.identifier;
+            if (hasVisibleLanguage(context.language))
+                label += QStringLiteral(" [%1]").arg(context.language);
+            QStringList hierarchyPath = folderType.split(QChar(0x1f), Qt::SkipEmptyParts);
+            if (hierarchyPath.isEmpty())
+                hierarchyPath << context.type;
+            auto* typeItem = ensurePath(hierarchyPath);
+            QTreeWidgetItem* child = nullptr;
+            if (context.type == QStringLiteral("PE_MODULE") ||
+                context.type == QStringLiteral("PE_HEADERS") ||
+                context.type == QStringLiteral("PE_SECTION") ||
+                context.type == QStringLiteral("XBE_SECTION") ||
+                context.type == QStringLiteral("NE_HEADERS") ||
+                context.type == QStringLiteral("NE_AREA") ||
+                context.type == QStringLiteral("LE_HEADERS") ||
+                context.type == QStringLiteral("LE_AREA") ||
+                context.type == QStringLiteral("LX_HEADERS") ||
+                context.type == QStringLiteral("LX_AREA") ||
+                context.type == QStringLiteral("XUIZ_CONTAINER") ||
+                context.type == QStringLiteral("XUIZ_FILE") ||
+                context.type == QStringLiteral("OS2_PACK_FILE") ||
+                context.type == QStringLiteral("SZDD_FILE") ||
+                context.type == QStringLiteral("SIEMENS_IMG_FILE") ||
+                context.type == QStringLiteral("SIEMENS_FWF_FILE")) {
+                child = typeItem;
+                child->setText(0, label);
+            } else {
+                child = new QTreeWidgetItem(typeItem, QStringList(label));
+            }
+            child->setIcon(0, settingsIcons_.resourceIcon(context.type));
+            child->setData(0, TypeRole, context.type);
+            child->setData(0, NameRole, context.identifier);
+            child->setData(0, LanguageRole, context.language);
+            child->setData(0, OffsetRole, QVariant::fromValue<qulonglong>(context.dataOffset));
+            child->setData(0, SizeRole, QVariant::fromValue<qulonglong>(context.dataSize));
+            child->setData(0, CodePageRole, context.codepage);
+            child->setData(0, FolderIndexRole, QVariant::fromValue<qulonglong>(folderIndex));
+            child->setData(0, ResourceIndexRole, QVariant::fromValue<qulonglong>(resourceIndex));
+            child->setData(0, SessionRole, QVariant::fromValue<qulonglong>(sid));
+            if (context.isContainer) {
+                // Nested container: mark expandable with a placeholder child that
+                // is replaced by real content the first time it is expanded.
+                child->setData(0, PendingRole, true);
+                child->setIcon(0, settingsIcons_.folderCloseIcon());
+                new QTreeWidgetItem(child, QStringList(QStringLiteral("...")));
+            }
+        }
+    }
+}
+
+void MainWindow::expandContainerItem(QTreeWidgetItem* item)
+{
+    if (!item || !item->data(0, PendingRole).toBool())
+        return;
+    item->setData(0, PendingRole, false);  // handled (also prevents recursion)
+    qDeleteAll(item->takeChildren());       // drop the placeholder
+
+    pearegui::Session* parent = sessionOf(item);
+    const size_t folder = item->data(0, FolderIndexRole).toULongLong();
+    const size_t index = item->data(0, ResourceIndexRole).toULongLong();
+    std::unique_ptr<pearegui::Session> child = parent ? parent->openNested(folder, index) : nullptr;
+    if (!child) {
+        // Not actually a navigable container after all: leave it as a leaf.
+        item->setData(0, SizeRole, item->data(0, SizeRole));
+        return;
+    }
+    pearegui::Session* childPtr = child.get();
+    childSessions_.push_back(std::move(child));
+    populateFromSession(childPtr, item);
+    item->setIcon(0, settingsIcons_.folderOpenIcon());
+}
+
 void MainWindow::showSelectedResource()
 {
     const auto items=treeView_->selectedItems(); if(items.isEmpty())return; QTreeWidgetItem* item=items.first();
@@ -477,13 +529,14 @@ void MainWindow::showSelectedResource()
     const QString type=item->data(0,TypeRole).toString(), name=item->data(0,NameRole).toString();
     const size_t folder=item->data(0,FolderIndexRole).toULongLong(), index=item->data(0,ResourceIndexRole).toULongLong();
     auto* layout=qobject_cast<QVBoxLayout*>(contentWidget_->layout());
-    pearegui::Resource resource=currentSession_.openResource(folder,index); const bool valid=resource.isValid();
+    pearegui::Session* itemSession=sessionOf(item);
+    pearegui::Resource resource=itemSession->openResource(folder,index); const bool valid=resource.isValid();
     const pearegui::ResourceContext selectedContext = valid ? resource.context() : pearegui::ResourceContext{};
     const QString displayedType = valid && item->childCount() > 0 &&
             selectedContext.containerFormat != PEARE_CONTAINER_UNKNOWN
         ? pearegui::containerName(selectedContext.containerFormat)
         : type;
-    pearegui::Preview preview=pearegui::decode(resource,&currentSession_);
+    pearegui::Preview preview=pearegui::decode(resource,itemSession);
     quint64 fontFirst=0;
     QString effectiveResourceType = type;
     bool isFontResource = valid && pearegui::getUnsigned(
@@ -585,7 +638,7 @@ void MainWindow::exportSelectedOriginal()
 {
     const auto items=treeView_->selectedItems();if(items.isEmpty()||!items.first()->data(0,TypeRole).isValid())return;
     const size_t folder=items.first()->data(0,FolderIndexRole).toULongLong(),index=items.first()->data(0,ResourceIndexRole).toULongLong();
-    pearegui::Resource resource=currentSession_.openResource(folder,index);if(!resource.isValid())return;
+    pearegui::Resource resource=sessionOf(items.first())->openResource(folder,index);if(!resource.isValid())return;
     const pearegui::ResourceContext context=resource.context();const QByteArray payload=resource.payload();const QString ext=pearegui::originalExtension(context.type,payload);
     const QString base=pearegui::sanitizeFileName(QFileInfo(currentFilePath_).completeBaseName()+QStringLiteral("_")+context.type+QStringLiteral("_")+context.identifier);
     const QString path=QFileDialog::getSaveFileName(this,QStringLiteral("Export original resource"),QDir::home().filePath(base+ext),QStringLiteral("Resource (*%1);;All files (*.*)").arg(ext));if(path.isEmpty())return;
@@ -597,7 +650,7 @@ void MainWindow::exportSelectedConverted(const QString& extension)
     const auto items=treeView_->selectedItems();if(items.isEmpty()||!items.first()->data(0,TypeRole).isValid())return;
     const QString base=pearegui::sanitizeFileName(QFileInfo(currentFilePath_).completeBaseName()+QStringLiteral("_")+items.first()->data(0,TypeRole).toString()+QStringLiteral("_")+items.first()->data(0,NameRole).toString());
     const size_t folder=items.first()->data(0,FolderIndexRole).toULongLong(), index=items.first()->data(0,ResourceIndexRole).toULongLong();
-    pearegui::Resource resource=currentSession_.openResource(folder,index);
+    pearegui::Resource resource=sessionOf(items.first())->openResource(folder,index);
     QVector<QByteArray> files = resource.isValid() ? resource.convert(extension) : QVector<QByteArray>();
     if(files.isEmpty()) files = extension==QStringLiteral(".png")?currentPreview_.pngs:currentPreview_.texts;
     if(files.isEmpty())return;

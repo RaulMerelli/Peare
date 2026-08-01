@@ -149,6 +149,25 @@ ResourceContext Resource::context() const
     return result;
 }
 
+std::unique_ptr<Session> Session::openNested(size_t folder, size_t resource) const
+{
+    if (!handle_) return nullptr;
+    peare_resource_handle rh = nullptr;
+    if (peare_opener_open_resource_at(handle_, folder, resource, &rh) != PEARE_STATUS_OK || !rh)
+        return nullptr;
+    peare_source_handle src = nullptr;
+    std::unique_ptr<Session> child(new Session());
+    if (peare_resource_get_source(rh, &src) == PEARE_STATUS_OK && src) {
+        child->open_ = (peare_opener_open(child->handle_, src) == PEARE_STATUS_OK);
+        peare_source_destroy(src);
+    }
+    peare_resource_destroy(rh);
+    // Only surface it if it actually opened as something navigable.
+    if (!child->open_ || child->folderCount() == 0)
+        return nullptr;
+    return child;
+}
+
 Session::Session() { peare_opener_create(&handle_); }
 Session::~Session() { if (handle_) peare_opener_destroy(handle_); }
 bool Session::openFile(const QString& path, QString* error)

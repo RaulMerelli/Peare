@@ -6,6 +6,11 @@
 #include <QMainWindow>
 #include <QString>
 
+#include <memory>
+#include <vector>
+
+class QTreeWidgetItem;
+
 class QAction;
 class QLabel;
 class QMenu;
@@ -25,6 +30,9 @@ private:
     void showAbout();
     void showModuleSummary(const QString& sourceName, const QByteArray& data);
     void showSelectedResource();
+    void populateFromSession(pearegui::Session* session, QTreeWidgetItem* parentBase);
+    void expandContainerItem(QTreeWidgetItem* item);
+    pearegui::Session* sessionOf(QTreeWidgetItem* item) const;
     void exportSelectedOriginal();
     void exportSelectedConverted(const QString& extension);
     void exportAllResources();
@@ -45,6 +53,8 @@ private:
 
     QString currentFilePath_;
     pearegui::Session currentSession_;
+    // Nested container sessions, kept alive as long as their subtree exists.
+    std::vector<std::unique_ptr<pearegui::Session>> childSessions_;
     pearegui::Preview currentPreview_;
     SettingsIcons settingsIcons_;
 };
