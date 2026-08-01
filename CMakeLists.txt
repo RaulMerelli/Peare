@@ -184,6 +184,13 @@ add_library(PeareOpener SHARED
     src/opener/modules/LeModule.cpp
     src/opener/modules/PeResources.h
     src/opener/modules/PeResources.cpp
+    src/opener/fs/DiscStore.h
+    src/opener/fs/BlockDecompressor.h
+    src/opener/fs/DiscFileSystem.h
+    src/opener/fs/Iso9660Reader.h
+    src/opener/fs/Iso9660Reader.cpp
+    src/opener/fs/peare_fs.h
+    src/opener/fs/FsApi.cpp
 )
 target_compile_definitions(PeareOpener PRIVATE PEARE_OPENER_BUILD)
 target_include_directories(PeareOpener
