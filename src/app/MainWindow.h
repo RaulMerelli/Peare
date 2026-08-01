@@ -28,7 +28,7 @@ private:
     void buildCentralUi();
     void openFile();
     void showAbout();
-    void showModuleSummary(const QString& sourceName, const QByteArray& data);
+    void showModuleSummary(const QString& filePath);
     void showSelectedResource();
     void populateFromSession(pearegui::Session* session, QTreeWidgetItem* parentBase);
     void expandContainerItem(QTreeWidgetItem* item);

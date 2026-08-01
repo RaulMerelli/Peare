@@ -286,36 +286,25 @@ void MainWindow::openFile()
         return;
 
     const QUrl url = urls.first();
-    const QString sourceName = url.fileName().isEmpty() ? url.toString() : url.fileName();
-    QFile file(url.isLocalFile() ? url.toLocalFile() : url.toString());
-    if (!file.open(QIODevice::ReadOnly)) {
-        QMessageBox::warning(this,
-                             QStringLiteral("Open module"),
-                             QStringLiteral("Cannot read the selected file: %1")
-                                 .arg(file.errorString()));
-        return;
-    }
-
-    const QByteArray fileContent = file.readAll();
-    currentFilePath_ = sourceName;
-    showModuleSummary(sourceName, fileContent);
+    const QString localPath = url.isLocalFile() ? url.toLocalFile() : url.toString();
+    currentFilePath_ = localPath;
+    showModuleSummary(localPath);
 }
 
-void MainWindow::showModuleSummary(const QString& sourceName, const QByteArray& data)
+void MainWindow::showModuleSummary(const QString& filePath)
 {
     QString error;
-    const QFileInfo fi(sourceName);
-    treeView_->clear(); currentPreview_ = {}; clearContent(); messageLabel_->clear();
+    const QFileInfo fi(filePath);
+    const QString sourceName = fi.fileName().isEmpty() ? filePath : fi.fileName();
+    // Reset all previous state (tree + any nested child sessions) before the new
+    // file is opened, so nothing from a prior document can survive.
+    treeView_->clear(); childSessions_.clear();
+    currentPreview_ = {}; clearContent(); messageLabel_->clear();
     resourceMenu_->setEnabled(false);
 
-    if (data.isEmpty()) {
-        error = QStringLiteral("The selected file is empty.");
-    } else {
-        currentSession_.openBuffer(
-            data,
-            sourceName.isEmpty() ? QStringLiteral("selected-module") : sourceName,
-            &error);
-    }
+    // Open by path: the module memory-maps the file (no whole-file read, no temp
+    // copy), so even multi-hundred-MB images open instantly.
+    currentSession_.openFile(filePath, &error);
 
     if (!currentSession_.isOpen()) {
         setWindowTitle(QStringLiteral("Peare"));
@@ -324,7 +313,6 @@ void MainWindow::showModuleSummary(const QString& sourceName, const QByteArray& 
         return;
     }
 
-    childSessions_.clear();
     const peare_container_format format = currentSession_.containerFormat();
     size_t totalResources = 0;
     for (size_t f = 0; f < currentSession_.folderCount(); ++f)
