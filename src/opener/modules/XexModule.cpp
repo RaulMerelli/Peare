@@ -792,9 +792,11 @@ std::unique_ptr<XexModule> XexModule::open(const QString& filePath)
                     entry.dataSize = size;
                     entry.data = resourceData;
 
-                    // Expose the payload exactly once. OpenerSession is the only
-                    // component allowed to detect and expand nested modules.
+                    // A whole embedded resource (often a XUIZ archive): a
+                    // nested-open candidate. The session's header peek decides
+                    // whether it is an openable container.
                     entry.type = QStringLiteral("XEX_RESOURCE");
+                    entry.isEmbeddedFile = true;
                     entry.format = ModuleFormat::Unknown;
                     entry.hierarchyPath = QStringList();
                     module->resources_.push_back(std::move(entry));
