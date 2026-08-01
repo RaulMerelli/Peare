@@ -34,6 +34,7 @@ QString containerName(peare_container_format format)
     case PEARE_CONTAINER_SZDD: return QStringLiteral("SZDD");
     case PEARE_CONTAINER_SIEMENS_IMG: return QStringLiteral("Siemens IMG");
     case PEARE_CONTAINER_SIEMENS_FWF: return QStringLiteral("Siemens FWF");
+    case PEARE_CONTAINER_ISO9660: return QStringLiteral("ISO 9660");
     default: return QStringLiteral("Unknown");
     }
 }
