@@ -303,8 +303,14 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
         } else {
             header = entry.data.left(4096);
         }
-        entry.isContainer = !header.isEmpty() &&
-            ModuleFormatDetector::detectBuffer(header).format != ModuleFormat::Unknown;
+        const ModuleFormatInfo detected =
+            header.isEmpty() ? ModuleFormatInfo{} : ModuleFormatDetector::detectBuffer(header);
+        entry.isContainer = detected.format != ModuleFormat::Unknown;
+        if (entry.isContainer)
+            // Report the resource's *own* recognised format (e.g. PE) rather than
+            // the containing module's (e.g. ISO 9660), so a selected nested file
+            // is labelled by what it actually is.
+            entry.format = detected.format;
     }
     rebuildFolders();
     return info_.isValid();

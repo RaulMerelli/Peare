@@ -110,29 +110,13 @@ peare_status makeResourceHandle(const std::shared_ptr<SessionState>& state,
     handle->magic = PEARE_RESOURCE_SNAPSHOT_MAGIC;
     handle->version = PEARE_RESOURCE_SNAPSHOT_VERSION;
 
-    peare_status status = fillSnapshotItem(primary, &handle->primary);
+    const peare_status status = fillSnapshotItem(primary, &handle->primary);
     if (status != PEARE_STATUS_OK) {
         destroySnapshot(handle); delete handle; return status;
     }
-
-    const int count = state->session.resourceCount();
-    if (count > 1) {
-        handle->related = static_cast<peare_resource_snapshot_item*>(
-            std::calloc(static_cast<size_t>(count - 1), sizeof(peare_resource_snapshot_item)));
-        if (!handle->related) {
-            destroySnapshot(handle); delete handle; return PEARE_STATUS_ALLOCATION_FAILED;
-        }
-        for (int i = 0; i < count; ++i) {
-            if (i == resourceIndex) continue;
-            const peare::OpenedResource opened = state->session.openResource(i);
-            if (!opened.isValid()) continue;
-            status = fillSnapshotItem(opened, &handle->related[handle->related_count]);
-            if (status != PEARE_STATUS_OK) {
-                destroySnapshot(handle); delete handle; return status;
-            }
-            ++handle->related_count;
-        }
-    }
+    // The sibling ("related") snapshot was built here for every resource open but
+    // is exposed by no public function — pure O(N) waste per open, i.e. O(N^2)
+    // when a consumer walks every resource (e.g. building a tree). Dropped.
     *out_resource = handle;
     return PEARE_STATUS_OK;
 }
