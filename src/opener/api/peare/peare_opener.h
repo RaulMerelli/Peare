@@ -50,11 +50,6 @@ PEARE_OPENER_API peare_status peare_opener_open_resource_at(peare_opener_handle 
                                                      size_t folder_index,
                                                      size_t resource_index,
                                                      peare_resource_handle *out_resource);
-PEARE_OPENER_API peare_status peare_opener_open_resource(peare_opener_handle opener,
-                                                  size_t folder_index,
-                                                  const char *identifier_utf8,
-                                                  const char *preferred_language_utf8,
-                                                  peare_resource_handle *out_resource);
 PEARE_OPENER_API peare_status peare_opener_find_resource(peare_opener_handle opener,
                                                   const char *type_utf8,
                                                   const char *identifier_utf8,

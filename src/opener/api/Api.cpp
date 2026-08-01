@@ -347,38 +347,6 @@ peare_status peare_opener_open_resource_at(peare_opener_handle opener,
     }
 }
 
-peare_status peare_opener_open_resource(peare_opener_handle opener,
-                                             size_t folder_index,
-                                             const char* identifier_utf8,
-                                             const char* preferred_language_utf8,
-                                             peare_resource_handle* out_resource)
-{
-    if (!out_resource || !identifier_utf8)
-        return PEARE_STATUS_INVALID_ARGUMENT;
-    *out_resource = nullptr;
-    if (!opener || !opener->state)
-        return PEARE_STATUS_INVALID_HANDLE;
-
-    const auto& folders = opener->state->session.folders();
-    if (folder_index >= static_cast<size_t>(folders.size()))
-        return PEARE_STATUS_OUT_OF_RANGE;
-
-    try {
-        const QString& folder_type = folders.at(static_cast<int>(folder_index)).type;
-        const int index = opener->state->session.findResource(
-            folder_type,
-            QString::fromUtf8(identifier_utf8),
-            preferred_language_utf8 ? QString::fromUtf8(preferred_language_utf8) : QString());
-        if (index < 0)
-            return PEARE_STATUS_NOT_FOUND;
-        return makeResourceHandle(opener->state, index, out_resource);
-    } catch (const std::bad_alloc&) {
-        return PEARE_STATUS_ALLOCATION_FAILED;
-    } catch (...) {
-        return PEARE_STATUS_INTERNAL_ERROR;
-    }
-}
-
 peare_status peare_opener_find_resource(peare_opener_handle opener,
                                         const char* type_utf8,
                                         const char* identifier_utf8,
