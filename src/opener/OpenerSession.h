@@ -68,6 +68,9 @@ public:
 
     bool openFile(const QString& filePath);
     bool openBuffer(const QByteArray& data, const QString& sourceName = QStringLiteral("memory.bin"));
+    // Open over a positioned byte source without materialising it (filesystem
+    // formats read straight from the source).
+    bool openStore(const peare::fs::ByteStorePtr& store, const QString& sourceName);
     void close();
 
     bool isOpen() const noexcept;

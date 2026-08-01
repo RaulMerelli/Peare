@@ -79,6 +79,12 @@ bool OpenerSession::openFile(const QString& filePath)
     return adoptModule(ModuleFactory::open(filePath), filePath);
 }
 
+bool OpenerSession::openStore(const peare::fs::ByteStorePtr& store, const QString& sourceName)
+{
+    close();
+    return adoptModule(ModuleFactory::open(store, sourceName), sourceName);
+}
+
 bool OpenerSession::openBuffer(const QByteArray& data, const QString& sourceName)
 {
     close();

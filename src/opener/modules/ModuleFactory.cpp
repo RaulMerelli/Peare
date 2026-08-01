@@ -113,6 +113,27 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
     return SzddModule::open(data, logicalName);
 }
 
+ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourceName)
+{
+    if (!disc) {
+        ModuleInfo info;
+        info.filePath = sourceName;
+        info.error = QStringLiteral("Null byte source");
+        return peare::makeUnique<DetectedModule>(std::move(info));
+    }
+    // Cheap header peek (covers ISO's descriptor at 0x8001 and other magics).
+    const std::vector<std::uint8_t> head = disc->readRange(0, 0x9000);
+    const QByteArray header(reinterpret_cast<const char*>(head.data()),
+                            static_cast<int>(head.size()));
+    const ModuleFormatInfo detected = ModuleFormatDetector::detectBuffer(header);
+    if (detected.format == ModuleFormat::ISO9660) return IsoModule::open(disc, sourceName);
+    if (detected.format == ModuleFormat::WIM) return WimModule::open(disc, sourceName);
+    // Non-filesystem formats need the whole content: materialise once.
+    const std::vector<std::uint8_t> all = disc->readAll();
+    return open(QByteArray(reinterpret_cast<const char*>(all.data()),
+                           static_cast<int>(all.size())), sourceName);
+}
+
 ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName)
 {
     QTemporaryFile temporary;

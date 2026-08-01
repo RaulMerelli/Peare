@@ -198,13 +198,10 @@ peare_status peare_opener_open(peare_opener_handle opener, peare_source_handle s
         if (source->isFile) {
             opened = next->session.openFile(source->filePath);
         } else if (source->store) {
-            // Layer-backed content is materialised here, only when the source is
-            // actually opened — the recursion point where a nested container is
-            // navigated into.
-            const std::vector<std::uint8_t> raw = source->store->readAll();
-            const QByteArray data(reinterpret_cast<const char*>(raw.data()),
-                                  static_cast<int>(raw.size()));
-            opened = next->session.openBuffer(data, source->name);
+            // Open straight from the positioned source — no materialisation. A
+            // filesystem (ISO/WIM) reads only what it needs; a big nested image
+            // is never copied. This is the recursion point for nested containers.
+            opened = next->session.openStore(source->store, source->name);
         } else {
             opened = next->session.openBuffer(source->bytes, source->name);
         }
