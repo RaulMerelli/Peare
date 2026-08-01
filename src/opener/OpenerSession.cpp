@@ -270,7 +270,8 @@ void OpenerSession::rebuildFolders()
             entry.type == QStringLiteral("SZDD_FILE") ||
             entry.type == QStringLiteral("SIEMENS_IMG_FILE") ||
             entry.type == QStringLiteral("SIEMENS_FWF_FILE") ||
-            entry.type == QStringLiteral("ISO_FILE");
+            entry.type == QStringLiteral("ISO_FILE") ||
+            entry.type == QStringLiteral("WIM_FILE");
         if (!selectableContainer && (path.isEmpty() || path.last() != entry.type))
             path.push_back(entry.type);
         const QString type = path.join(QChar(0x1f));

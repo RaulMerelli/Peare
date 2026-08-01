@@ -189,8 +189,14 @@ add_library(PeareOpener SHARED
     src/opener/fs/DiscFileSystem.h
     src/opener/fs/Iso9660Reader.h
     src/opener/fs/Iso9660Reader.cpp
+    src/opener/fs/BlockDecompressor.h
+    src/opener/fs/XpressHuffman.cpp
+    src/opener/fs/WimReader.h
+    src/opener/fs/WimReader.cpp
     src/opener/modules/IsoModule.h
     src/opener/modules/IsoModule.cpp
+    src/opener/modules/WimModule.h
+    src/opener/modules/WimModule.cpp
 )
 target_compile_definitions(PeareOpener PRIVATE PEARE_OPENER_BUILD)
 target_include_directories(PeareOpener

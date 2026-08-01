@@ -72,6 +72,10 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         return {ModuleFormat::SZDD, 0, QStringLiteral("Microsoft Compress SZDD archive"), {}};
     }
 
+    if (data.size() >= 8 && std::memcmp(data.constData(), "MSWIM\0\0\0", 8) == 0) {
+        return {ModuleFormat::WIM, 0, QStringLiteral("Windows Imaging (WIM) image"), {}};
+    }
+
     if (data.size() >= 4) {
         const QByteArray magic = data.left(4);
         const unsigned char* signature = reinterpret_cast<const unsigned char*>(magic.constData());
@@ -158,6 +162,9 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
     if (data.size() >= 8 && data.left(8) == QByteArray("SZDD\x88\xF0\x27\x33", 8))
         return {ModuleFormat::SZDD, 0, QStringLiteral("Microsoft Compress SZDD archive"), {}};
 
+    if (data.size() >= 8 && std::memcmp(data.constData(), "MSWIM\0\0\0", 8) == 0)
+        return {ModuleFormat::WIM, 0, QStringLiteral("Windows Imaging (WIM) image"), {}};
+
     if (data.size() >= 4) {
         const auto* p = reinterpret_cast<const unsigned char*>(data.constData());
         if (p[0] == 0xA5 && p[1] == 0x96 &&
@@ -207,6 +214,7 @@ QString ModuleFormatDetector::formatName(ModuleFormat format)
     case ModuleFormat::SIEMENS_IMG: return QStringLiteral("Siemens IMG");
     case ModuleFormat::SIEMENS_FWF: return QStringLiteral("Siemens FWF");
     case ModuleFormat::ISO9660: return QStringLiteral("ISO 9660");
+    case ModuleFormat::WIM: return QStringLiteral("WIM");
     case ModuleFormat::Unknown: return QStringLiteral("Unknown");
     }
     return QStringLiteral("Unknown");

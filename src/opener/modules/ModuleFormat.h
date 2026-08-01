@@ -20,7 +20,8 @@ enum class ModuleFormat {
     SZDD,
     SIEMENS_IMG,
     SIEMENS_FWF,
-    ISO9660
+    ISO9660,
+    WIM
 };
 
 struct ModuleFormatInfo {

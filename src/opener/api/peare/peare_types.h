@@ -58,7 +58,8 @@ typedef enum peare_container_format {
     PEARE_CONTAINER_SZDD,
     PEARE_CONTAINER_SIEMENS_IMG,
     PEARE_CONTAINER_SIEMENS_FWF,
-    PEARE_CONTAINER_ISO9660
+    PEARE_CONTAINER_ISO9660,
+    PEARE_CONTAINER_WIM
 } peare_container_format;
 
 typedef enum peare_platform {

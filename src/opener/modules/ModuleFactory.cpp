@@ -16,6 +16,7 @@
 #include "SiemensImgModule.h"
 #include "SiemensFwfModule.h"
 #include "IsoModule.h"
+#include "WimModule.h"
 
 #include <QFile>
 #include <QTemporaryFile>
@@ -78,6 +79,7 @@ ModulePtr ModuleFactory::open(const QString& filePath)
     if (info.format == ModuleFormat::SIEMENS_IMG) return SiemensImgModule::open(filePath);
     if (info.format == ModuleFormat::SIEMENS_FWF) return SiemensFwfModule::open(filePath);
     if (info.format == ModuleFormat::ISO9660) return IsoModule::open(filePath);
+    if (info.format == ModuleFormat::WIM) return WimModule::open(filePath);
     return peare::makeUnique<DetectedModule>(std::move(info));
 }
 
