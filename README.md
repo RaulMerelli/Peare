@@ -90,7 +90,7 @@ The GUI opens files, builds the resource tree, displays decoded results, compose
 The stateful Opener:
 
 - opens PE, NE, LE, LX, XBE, XEX, XUIZ, LIVE, PIRS, CON executables, OS/2 PACK and
-  SZDD archives, Siemens firmware, SDI and XVA deployment images, Linux swap, LVM, MD RAID and Windows Dynamic Disk/LDM, ISO 9660 / WIM / FAT / exFAT / NTFS / ext / XFS / Btrfs / SquashFS / HFS+ / UDF disc images, and DMG / VMDK / VHD / VDI / VHDX virtual disks â€”
+  SZDD archives, Siemens firmware, SDI and XVA deployment images, Linux swap, LVM, MD RAID and Windows Dynamic Disk/LDM, ISO 9660 / WIM / FAT / exFAT / NTFS / ext / XFS / Btrfs / SquashFS / HFS+ / UDF disc images, and DMG / VMDK / VHD / VDI / VHDX virtual disks —
   from a file path or any byte source, through one entry point;
 - opens Microsoft CAB archives, including uncompressed, MSZIP and LZX folders;
 - opens ZIP and TAR archives as virtual filesystems;
@@ -200,12 +200,12 @@ The matrix below preserves the compatibility declarations of the verified C# imp
 
 Legend:
 
-- **Yes** â€” implemented;
-- **No** â€” Not yet implemented;
-- **N/A** â€” not known to exist
-- **(1)** â€” known limitations or resources that may not decode correctly;
-- **(2)** â€” implementation exists, but no suitable sample was available for verification;
-- **(3)** â€” known incompatibility with Windows 1.x or 2.x resources.
+- **Yes** — implemented;
+- **No** — Not yet implemented;
+- **N/A** — not known to exist
+- **(1)** — known limitations or resources that may not decode correctly;
+- **(2)** — implementation exists, but no suitable sample was available for verification;
+- **(3)** — known incompatibility with Windows 1.x or 2.x resources.
 
 | Resource | NE OS/2 | LX OS/2 | LE OS/2 | NE Windows | PE Windows |
 |---|---:|---:|---:|---:|---:|
@@ -218,18 +218,18 @@ Legend:
 | `RT_MENU` | Yes | Yes | Yes | Yes (3) | Yes |
 | `RT_ACCELTABLE` | Yes | Yes | Yes | N/A | N/A |
 | `RT_ACCELERATOR` | N/A | N/A | N/A | Yes | Yes |
-| `RT_DLGINCLUDE` | Yes | Yes | Yes | â€” | â€” |
-| `RT_HELPTABLE` | Yes (2) | Yes | Yes | â€” | â€” |
-| `RT_HELPSUBTABLE` | Yes (2) | Yes | Yes | â€” | â€” |
+| `RT_DLGINCLUDE` | Yes | Yes | Yes | — | — |
+| `RT_HELPTABLE` | Yes (2) | Yes | Yes | — | — |
+| `RT_HELPSUBTABLE` | Yes (2) | Yes | Yes | — | — |
 | `RT_FONT` | Yes | Yes | Yes | Yes | Yes |
 | `RT_FONTDIR` | Yes (1) | Yes (1) | Yes (1) | Yes (1) | Yes (1) |
 | `RT_DIALOG` | Yes (1) | Yes (1) | Yes (1) | No | No |
-| `RT_NAMETABLE` | â€” | â€” | â€” | Yes (3) | â€” |
-| `RT_GROUP_ICON` | â€” | â€” | â€” | Yes | Yes |
-| `RT_ICON` | â€” | â€” | â€” | Yes | Yes |
-| `RT_VERSION` | â€” | â€” | â€” | Yes | Yes |
-| `RT_GROUP_CURSOR` | â€” | â€” | â€” | Yes | Yes |
-| `RT_CURSOR` | â€” | â€” | â€” | Yes | Yes |
+| `RT_NAMETABLE` | — | — | — | Yes (3) | — |
+| `RT_GROUP_ICON` | — | — | — | Yes | Yes |
+| `RT_ICON` | — | — | — | Yes | Yes |
+| `RT_VERSION` | — | — | — | Yes | Yes |
+| `RT_GROUP_CURSOR` | — | — | — | Yes | Yes |
+| `RT_CURSOR` | — | — | — | Yes | Yes |
 
 OS/2 pointer and bitmap resources may contain `BA`, `BM`, `IC`, `CI`, `CP`, or `PT` structures and may produce multiple images.
 
@@ -400,7 +400,7 @@ Historical executable formats contain undocumented structures, vendor variations
 ## Copyright
 
 All format specifications, product names, and trademarks referenced or supported
-by Peare are the property of their respective owners â€” including, among others,
+by Peare are the property of their respective owners — including, among others,
 Microsoft Corporation, IBM Corporation, and Siemens AG. Peare provides
 independent, clean-room readers and is not affiliated with, authorized by, or
 endorsed by these companies.
