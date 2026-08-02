@@ -12,6 +12,25 @@
 
 Peare is a resource explorer, decoder, and future resource editor for historical executable formats and application packages.
 
+> **AI-authored project — read before relying on it.** Most of Peare is written
+> and maintained by AI (large language models), under human direction and review
+> rather than line-by-line human authorship. In particular, the entire
+> DiscUtils-compatible file-system and virtual-disk stack, and most format
+> readers, are clean-room ports produced by AI from reference implementations and
+> specifications. Consequences you should assume:
+>
+> - **Verify before trusting.** Do not rely on Peare for anything critical
+>   (forensics, data recovery, integrity verification) without independently
+>   checking the output.
+> - **"Byte-exact" means "matched the tests we ran"**, not a formal guarantee; many
+>   formats were validated against a single sample, and some against none.
+> - **Machine-generated bugs may be present** in ways that differ from typical
+>   hand-written code.
+>
+> The human maintainer directs the work, reviews changes, and is responsible for
+> the project; the bulk of the authoring is done by AI. Bug reports and fixes are
+> welcome.
+
 The project is inspired by **Resource Hacker** and **BCC Workshop**. Its current focus is understanding and preserving resources from classic Windows and OS/2 software, including formats that modern tools often ignore or only partially support.
 
 ## Why the name Peare?
@@ -400,10 +419,30 @@ Historical executable formats contain undocumented structures, vendor variations
 ## Copyright
 
 All format specifications, product names, and trademarks referenced or supported
-by Peare are the property of their respective owners — including, among others,
-Microsoft Corporation, IBM Corporation, and Siemens AG. Peare provides
-independent, clean-room readers and is not affiliated with, authorized by, or
-endorsed by these companies.
+by Peare are the property of their respective owners. Peare provides independent,
+clean-room readers and is not affiliated with, authorized by, or endorsed by any
+of them. Owners referenced include, among others:
+
+- **Microsoft Corporation** — Windows, MS-DOS, PE / NE / LE / LX consumers,
+  NTFS, exFAT, FAT, WIM, Microsoft Cabinet (CAB), Microsoft Compress (SZDD),
+  VHD and VHDX, the Windows registry hive, Boot Configuration Data (BCD),
+  System Deployment Image (SDI), and Xbox / Xbox 360 formats (XBE, XEX, XUIZ,
+  STFS: CON / LIVE / PIRS).
+- **IBM Corporation** — OS/2, the OS/2 PACK / UnPack format, HPFS, and JFS.
+- **Apple Inc.** — HFS+ / HFSX and the Apple Disk Image (DMG / UDIF) format.
+- **VMware, Inc.** — the Virtual Machine Disk (VMDK) format.
+- **Oracle Corporation** — the VirtualBox Virtual Disk Image (VDI) format.
+- **Citrix Systems / the Xen Project** — the Xen Virtual Appliance (XVA) format.
+- **Siemens AG** — the ProSave IMG and FWF firmware formats.
+- **OSTA, Ecma International, and ISO/IEC** — UDF and ISO 9660
+  (ECMA-119 / ECMA-167).
+- **PKWARE, Inc.** — the ZIP format.
+- The **Linux kernel community and other open-source authors** — ext2/3/4,
+  XFS (originally SGI), Btrfs, SquashFS, LVM2, Linux MD / RAID, the swap format,
+  and TAR.
+
+Trademarks are used only to identify the formats Peare reads; such use does not
+imply any endorsement.
 
 ## Documentation index
 
