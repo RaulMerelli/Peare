@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="resources/preview.gif" alt="Peare icon" width="192">
+  <img src="resources/preview.gif" alt="Peare icon">
 </p>
 
 Peare is a resource explorer, decoder, and future resource editor for historical executable formats and application packages.
