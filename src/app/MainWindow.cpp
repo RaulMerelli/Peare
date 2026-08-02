@@ -443,8 +443,36 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
             QString label = context.identifier;
             if (hasVisibleLanguage(context.language))
                 label += QStringLiteral(" [%1]").arg(context.language);
+            // Filesystem entries (files and directories from ISO/FAT/NTFS/ext/...
+            // listings) are shown flat by name directly under the container, never
+            // grouped under a synthetic "<FMT>_FILE"/"<FMT>_DIR" type node.
+            const bool filesystemEntry =
+                context.type.endsWith(QStringLiteral("_DIR")) ||
+                context.type == QStringLiteral("DISK_PARTITION") ||
+                context.type == QStringLiteral("ISO_FILE") ||
+                context.type == QStringLiteral("WIM_FILE") ||
+                context.type == QStringLiteral("FAT_FILE") ||
+                context.type == QStringLiteral("EXFAT_FILE") ||
+                context.type == QStringLiteral("NTFS_FILE") ||
+                context.type == QStringLiteral("EXT_FILE") ||
+                context.type == QStringLiteral("XFS_FILE") ||
+                context.type == QStringLiteral("SQUASHFS_FILE") ||
+                context.type == QStringLiteral("HFS_FILE") ||
+                context.type == QStringLiteral("BTRFS_FILE") ||
+                context.type == QStringLiteral("CAB_FILE") ||
+                context.type == QStringLiteral("ZIP_FILE") ||
+                context.type == QStringLiteral("TAR_FILE") ||
+                context.type == QStringLiteral("REG_KEY") ||
+                context.type == QStringLiteral("REG_VALUE") ||
+                context.type == QStringLiteral("BCD_OBJECT") ||
+                context.type == QStringLiteral("BCD_SUMMARY") ||
+                context.type == QStringLiteral("BCD_ELEMENT") ||
+                context.type == QStringLiteral("UDF_FILE") ||
+                context.type == QStringLiteral("LVM_LOGICAL_VOLUME") ||
+                context.type == QStringLiteral("LINUX_RAID_VOLUME") ||
+                context.type == QStringLiteral("LDM_VOLUME");
             QStringList hierarchyPath = folderType.split(QChar(0x1f), Qt::SkipEmptyParts);
-            if (hierarchyPath.isEmpty())
+            if (hierarchyPath.isEmpty() && !filesystemEntry)
                 hierarchyPath << context.type;
             auto* typeItem = ensurePath(hierarchyPath);
             QTreeWidgetItem* child = nullptr;
@@ -467,9 +495,16 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
                 child = typeItem;
                 child->setText(0, label);
             } else {
-                child = new QTreeWidgetItem(typeItem, QStringList(label));
+                if (typeItem)
+                    child = new QTreeWidgetItem(typeItem, QStringList(label));
+                else
+                    child = parentBase ? new QTreeWidgetItem(parentBase, QStringList(label))
+                                       : new QTreeWidgetItem(treeView_, QStringList(label));
             }
-            child->setIcon(0, settingsIcons_.resourceIcon(context.type));
+            // Filesystem files get an icon by their real extension; the folder
+            // icon for directories is applied by the is-container branch below.
+            child->setIcon(0, filesystemEntry ? settingsIcons_.iconForFileName(context.identifier)
+                                              : settingsIcons_.resourceIcon(context.type));
             child->setData(0, TypeRole, context.type);
             child->setData(0, NameRole, context.identifier);
             child->setData(0, LanguageRole, context.language);

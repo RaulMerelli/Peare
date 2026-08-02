@@ -52,6 +52,11 @@ struct OpenedResource {
     peare::fs::ByteStorePtr contentStore;
     ResourceContext context;
     QString error;
+    // Directory-level container: contentStore holds the whole filesystem image and
+    // subPath the directory within it. Navigating reopens the image at subPath
+    // instead of decoding byte content.
+    bool isDirectory = false;
+    QString subPath;
 
     bool isValid() const noexcept { return resourceIndex >= 0 && error.isEmpty(); }
 };
@@ -70,7 +75,8 @@ public:
     bool openBuffer(const QByteArray& data, const QString& sourceName = QStringLiteral("memory.bin"));
     // Open over a positioned byte source without materialising it (filesystem
     // formats read straight from the source).
-    bool openStore(const peare::fs::ByteStorePtr& store, const QString& sourceName);
+    bool openStore(const peare::fs::ByteStorePtr& store, const QString& sourceName,
+                   const QString& subPath = QString());
     void close();
 
     bool isOpen() const noexcept;

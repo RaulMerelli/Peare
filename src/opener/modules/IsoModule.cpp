@@ -1,63 +1,36 @@
 #include "IsoModule.h"
 #include "Compat.h"
+#include "FsLevel.h"
 
 #include "../fs/Iso9660Reader.h"
 
 #include <QFile>
 
-#include <string>
 #include <utility>
 
 namespace peare {
-namespace {
 
-// Walk the file-system tree, emitting one ResourceEntry per file. Only metadata
-// is produced here (names, sizes, hierarchy) — file content stays a lazy fs
-// window that is read on demand when the resource is opened.
-void walk(const fs::IDiscFileSystem& fs, const std::string& dir,
-          const QStringList& prefix, QVector<ResourceEntry>& out) {
-    const std::vector<fs::DiscEntry> entries = fs.list(dir);
-    for (const fs::DiscEntry& e : entries) {
-        const std::string full = dir.empty() ? e.name : dir + "/" + e.name;
-        const QString name = QString::fromUtf8(e.name.c_str());
-        if (e.isDirectory) {
-            QStringList sub = prefix;
-            sub << name;
-            walk(fs, full, sub, out);
-        } else {
-            ResourceEntry entry;
-            entry.type = QStringLiteral("ISO_FILE");
-            entry.name = name;
-            entry.language = QStringLiteral("neutral");
-            entry.dataSize = quint64(e.length);
-            entry.format = ModuleFormat::ISO9660;
-            entry.isEmbeddedFile = true;  // a whole file: nested-open candidate
-            // hierarchyPath is the containing directory only; the file's own name
-            // is the leaf. (Putting the name here too would create a fictitious
-            // folder sharing the file's name.)
-            entry.hierarchyPath = prefix;
-            entry.content = fs.openFile(full);  // lazy window over the image
-            out.push_back(std::move(entry));
-        }
-    }
-}
-
-}  // namespace
-
-ModulePtr IsoModule::open(const fs::ByteStorePtr& disc, const QString& sourceName) {
+ModulePtr IsoModule::open(const fs::ByteStorePtr& disc, const QString& sourceName,
+                          const QString& subPath) {
     auto module = peare::makeUnique<IsoModule>();
     module->info_.filePath = sourceName;
     module->info_.format = ModuleFormat::ISO9660;
     module->info_.description = QStringLiteral("ISO 9660 image");
 
-    auto reader = std::make_shared<fs::Iso9660Reader>(disc);
+    fs::ByteStorePtr content = disc;
+    if (content && !fs::Iso9660Reader::detect(*content) &&
+        fs::OpticalMode2Store::detectIso9660(*content))
+        content = std::make_shared<fs::OpticalMode2Store>(content);
+
+    auto reader = std::make_shared<fs::Iso9660Reader>(content);
     if (!reader->valid()) {
         module->info_.error = QString::fromStdString(reader->error());
         return ModulePtr(std::move(module));
     }
     module->fs_ = reader;
     module->info_.description = QString::fromStdString(reader->friendlyName());
-    walk(*reader, std::string(), QStringList(), module->resources_);
+    buildFsLevel(*reader, content, subPath.toStdString(), ModuleFormat::ISO9660,
+                 QStringLiteral("ISO_FILE"), QStringLiteral("ISO_DIR"), module->resources_);
     return ModulePtr(std::move(module));
 }
 

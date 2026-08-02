@@ -15,6 +15,11 @@ struct peare_resource_snapshot_item {
      * peare_resource_get_payload instead of being materialised up front. Freed
      * in freeSnapshotItem. Consumers never see or allocate this. */
     void *lazy_content;
+    /* Directory-level container: lazy_content holds the whole filesystem image
+     * store and sub_path the directory within it. get_source reopens the image at
+     * sub_path; get_payload yields nothing (a directory has no bytes). */
+    int is_directory;
+    char *sub_path; /* UTF-8, malloc'd; freed in freeSnapshotItem */
 };
 
 struct peare_resource_handle_s {

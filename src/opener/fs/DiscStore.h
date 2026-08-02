@@ -8,6 +8,7 @@
 //   MemoryStore  <-  in-memory buffer
 //   SubStore     <-  DiscUtils.Streams.SubStream / SubBuffer   (a window)
 //   ConcatStore  <-  DiscUtils.Streams.ConcatStream            (concatenation)
+//   StripedStore <-  DiscUtils.Streams.StripedStream           (RAID/LDM stripes)
 //   ZeroStore    <-  DiscUtils.Streams.ZeroStream              (implicit zeros)
 //
 // Only the read path is ported (Peare opens images read-only). The types are
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -145,6 +147,70 @@ private:
     std::int64_t length_;
 };
 
+// View over raw CD-ROM Mode 2/Form 1 style sectors. DiscUtils.OpticalDisk's
+// Mode2Buffer exposes a 2048-byte logical stream by skipping the 24-byte raw
+// sector prefix in every 2352-byte physical sector.
+class OpticalMode2Store : public IByteStore {
+public:
+    explicit OpticalMode2Store(ByteStorePtr parent) : parent_(std::move(parent)) {}
+
+    std::int64_t capacity() const override {
+        return parent_ ? (parent_->capacity() / kRawSectorSize) * kLogicalSectorSize : 0;
+    }
+
+    int read(std::int64_t pos, std::uint8_t* dst, int count) const override {
+        const std::int64_t total = capacity();
+        if (!parent_ || pos < 0 || count <= 0 || pos >= total) return 0;
+        const std::int64_t avail = total - pos;
+        int want = count < avail ? count : static_cast<int>(avail);
+        int produced = 0;
+        while (want > 0) {
+            const std::int64_t logical = pos + produced;
+            const std::int64_t sector = logical / kLogicalSectorSize;
+            const std::int64_t sectorOffset = logical - sector * kLogicalSectorSize;
+            const int n = static_cast<int>(std::min<std::int64_t>(
+                kLogicalSectorSize - sectorOffset, want));
+            const int got = parent_->read(sector * kRawSectorSize + kRawPrefixSize + sectorOffset,
+                                          dst + produced, n);
+            if (got <= 0) break;
+            produced += got;
+            want -= got;
+        }
+        return produced;
+    }
+
+    static bool detectIso9660(const IByteStore& raw) {
+        std::uint8_t id[5];
+        const std::int64_t pos = 16 * kRawSectorSize + kRawPrefixSize + 1;
+        return raw.read(pos, id, 5) == 5 && std::memcmp(id, "CD001", 5) == 0;
+    }
+
+    static bool detectUdf(const IByteStore& raw) {
+        std::uint8_t descriptor[6];
+        for (int i = 0; i < 64; ++i) {
+            const std::int64_t logicalSector = 16 + i;
+            const std::int64_t pos = logicalSector * kRawSectorSize + kRawPrefixSize;
+            if (pos + 6 > raw.capacity()) break;
+            if (raw.read(pos, descriptor, 6) != 6) break;
+            const char* id = reinterpret_cast<const char*>(descriptor + 1);
+            if (std::memcmp(id, "NSR02", 5) == 0 || std::memcmp(id, "NSR03", 5) == 0)
+                return true;
+            if (std::memcmp(id, "BEA01", 5) != 0 && std::memcmp(id, "BOOT2", 5) != 0 &&
+                std::memcmp(id, "CD001", 5) != 0 && std::memcmp(id, "CDW02", 5) != 0 &&
+                std::memcmp(id, "TEA01", 5) != 0)
+                break;
+        }
+        return false;
+    }
+
+private:
+    static const std::int64_t kLogicalSectorSize = 2048;
+    static const std::int64_t kRawSectorSize = 2352;
+    static const std::int64_t kRawPrefixSize = 24;
+
+    ByteStorePtr parent_;
+};
+
 // Concatenation of N stores presented as one contiguous store == DiscUtils
 // ConcatStream. A read that spans part boundaries is split across the covered
 // parts. The covering part for a position is found by binary search.
@@ -199,6 +265,48 @@ private:
 
     std::vector<ByteStorePtr> parts_;
     std::vector<std::int64_t> starts_;
+    std::int64_t total_ = 0;
+};
+
+// Interleaves fixed-size chunks from N stores == DiscUtils StripedStream. A
+// logical stripe 0 comes from part 0, stripe 1 from part 1, then wraps.
+class StripedStore : public IByteStore {
+public:
+    StripedStore(std::int64_t stripeSize, std::vector<ByteStorePtr> parts)
+        : stripeSize_(stripeSize), parts_(std::move(parts)) {
+        total_ = 0;
+        for (const ByteStorePtr& part : parts_)
+            total_ += part ? part->capacity() : 0;
+    }
+
+    std::int64_t capacity() const override { return total_; }
+
+    int read(std::int64_t pos, std::uint8_t* dst, int count) const override {
+        if (stripeSize_ <= 0 || parts_.empty() || pos < 0 || count <= 0 || pos >= total_)
+            return 0;
+        const std::int64_t avail = total_ - pos;
+        int want = count < avail ? count : static_cast<int>(avail);
+        int produced = 0;
+        while (want > 0) {
+            const std::int64_t logical = pos + produced;
+            const std::int64_t stripe = logical / stripeSize_;
+            const std::int64_t stripeOffset = logical - stripe * stripeSize_;
+            const std::size_t partIndex = static_cast<std::size_t>(stripe % parts_.size());
+            const std::int64_t stripeInPart = stripe / static_cast<std::int64_t>(parts_.size());
+            const std::int64_t partPos = stripeInPart * stripeSize_ + stripeOffset;
+            const int n = static_cast<int>(std::min<std::int64_t>(stripeSize_ - stripeOffset, want));
+            const ByteStorePtr& part = parts_[partIndex];
+            const int got = part ? part->read(partPos, dst + produced, n) : 0;
+            if (got <= 0) break;
+            produced += got;
+            want -= got;
+        }
+        return produced;
+    }
+
+private:
+    std::int64_t stripeSize_;
+    std::vector<ByteStorePtr> parts_;
     std::int64_t total_ = 0;
 };
 

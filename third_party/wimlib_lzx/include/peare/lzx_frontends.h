@@ -43,10 +43,15 @@ peare_lzx_status peare_lzx_xex_decompress(peare_lzx_xex_decoder *decoder,
                                           size_t image_size);
 void peare_lzx_xex_destroy(peare_lzx_xex_decoder *decoder);
 
-/* Reserved now so CAB support can be added without changing the public engine
- * boundary.  CAB framing/state is not implemented in this batch. */
+/* CAB folders contain one continuous classic Microsoft LZX stream, split across
+ * CFDATA records independently of the LZX block boundaries. */
 peare_lzx_status peare_lzx_cab_create(size_t window_size,
                                       peare_lzx_cab_decoder **decoder);
+peare_lzx_status peare_lzx_cab_decompress(peare_lzx_cab_decoder *decoder,
+                                          const void *compressed_stream,
+                                          size_t compressed_size,
+                                          void *uncompressed_data,
+                                          size_t uncompressed_size);
 void peare_lzx_cab_destroy(peare_lzx_cab_decoder *decoder);
 
 #ifdef __cplusplus

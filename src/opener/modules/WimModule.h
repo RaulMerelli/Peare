@@ -16,7 +16,8 @@ public:
     // Open directly over a positioned byte source (no materialisation): used when
     // a WIM is nested inside another container, so only the chunks actually read
     // are decoded.
-    static ModulePtr open(const fs::ByteStorePtr& disc, const QString& sourceName);
+    static ModulePtr open(const fs::ByteStorePtr& disc, const QString& sourceName,
+                          const QString& subPath = QString());
 
     const ModuleInfo& info() const noexcept override { return info_; }
     const QVector<ResourceEntry>& resources() const noexcept override { return resources_; }

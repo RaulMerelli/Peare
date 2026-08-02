@@ -9,7 +9,10 @@ struct peare_lzx_xex_decoder {
     size_t expected_output_size;
     void *context;
 };
-struct peare_lzx_cab_decoder { size_t window_size; };
+struct peare_lzx_cab_decoder {
+    size_t window_size;
+    void *context;
+};
 
 static peare_lzx_status map_decoder_result(int value)
 {
@@ -105,8 +108,39 @@ void peare_lzx_xex_destroy(peare_lzx_xex_decoder *decoder)
 peare_lzx_status peare_lzx_cab_create(size_t window_size,
                                       peare_lzx_cab_decoder **decoder)
 {
-    (void)window_size;
-    if (decoder) *decoder = NULL;
-    return PEARE_LZX_UNSUPPORTED;
+    peare_lzx_cab_decoder *out;
+    if (!decoder || !lzx_window_size_valid(window_size))
+        return PEARE_LZX_INVALID_ARGUMENT;
+    *decoder = NULL;
+    out = (peare_lzx_cab_decoder *)calloc(1, sizeof(*out));
+    if (!out) return PEARE_LZX_OUT_OF_MEMORY;
+    out->window_size = window_size;
+    if (lzx_decompressor_ops.create_decompressor(window_size, &out->context) != 0) {
+        free(out);
+        return PEARE_LZX_OUT_OF_MEMORY;
+    }
+    *decoder = out;
+    return PEARE_LZX_OK;
 }
-void peare_lzx_cab_destroy(peare_lzx_cab_decoder *decoder) { free(decoder); }
+
+peare_lzx_status peare_lzx_cab_decompress(peare_lzx_cab_decoder *decoder,
+                                          const void *compressed_stream,
+                                          size_t compressed_size,
+                                          void *uncompressed_data,
+                                          size_t uncompressed_size)
+{
+    if (!decoder || !compressed_stream || !uncompressed_data ||
+        compressed_size == 0 || uncompressed_size == 0)
+        return PEARE_LZX_INVALID_ARGUMENT;
+    return map_decoder_result(peare_lzx_decompress_contiguous(
+        compressed_stream, compressed_size, uncompressed_data,
+        uncompressed_size, decoder->context));
+}
+
+void peare_lzx_cab_destroy(peare_lzx_cab_decoder *decoder)
+{
+    if (!decoder) return;
+    if (decoder->context)
+        lzx_decompressor_ops.free_decompressor(decoder->context);
+    free(decoder);
+}

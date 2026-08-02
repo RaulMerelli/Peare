@@ -185,6 +185,21 @@ QIcon SettingsIcons::iconFor(const QString& section) const
     return icons_.value(section);
 }
 
+QIcon SettingsIcons::iconForFileName(const QString& fileName) const
+{
+    const int dot = fileName.lastIndexOf(QLatin1Char('.'));
+    const QString ext = dot > 0 ? fileName.mid(dot + 1).toLower() : QString();
+    const QString key = QStringLiteral("ext:") + ext;
+    const auto cached = resourceIconCache_.constFind(key);
+    if (cached != resourceIconCache_.constEnd())
+        return cached.value();
+    QIcon icon = ext.isEmpty() ? defaultIcon() : IconFromExt::get(ext);
+    if (icon.isNull())
+        icon = defaultIcon();
+    resourceIconCache_.insert(key, icon);
+    return icon;
+}
+
 QIcon SettingsIcons::resourceIcon(const QString& type) const
 {
     QIcon icon = icons_.value(type);

@@ -1,6 +1,6 @@
 # Peare
 
-*Plugin-Extendable Advanced Resource Editor*
+*Portable Extractor of Archives, Resources & Executables*
 
 <p align="center">
   <img src="resources/peare.png" alt="Peare icon" width="192">
@@ -16,9 +16,15 @@ The project is inspired by **Resource Hacker** and **BCC Workshop**. Its current
 
 ## Why the name Peare?
 
-**Peare** is an acronym for **Plugin-Extendable Advanced Resource Editor**.
+**Peare** is an acronym for **Portable Extractor of Archives, Resources & Executables**.
 
-The name describes the long-term direction of the project. The current implementation concentrates on opening containers, listing resources, preserving their original payloads, and decoding them. Editing and the plugin system remain future work.
+- **Portable** — one lean C++11 core behind a thin C ABI, meant to run on many operating systems (from OS/2 to Android), not tied to any single platform.
+- **Extractor** — the first and central job: pull the original bytes out of a container **exactly**, byte-for-byte, whether that container is an executable, an archive, a disc image, or a file system nested inside a virtual disk.
+- **Archives, Resources & Executables** — the three families it opens: archives and disk/volume images, the resources inside modules, and the historical executable formats it grew from.
+
+The name also reflects how the project actually grows. Rather than a plugin system, new format support is brought in by porting the reference implementation directly into the core — for example the clean-room C++ port of the DiscUtils file-system and virtual-disk stack. AI-assisted development makes wiring a whole library into the core faster and cleaner than defining and maintaining a plugin boundary, so extensibility lives in the source, not in an external plug-in ABI.
+
+The first **E** stands for **Extractor** today; once in-place editing lands — the long-standing goal inherited from Resource Hacker and BCC Workshop — it becomes **Editor**, and Peare turns into a *Portable Editor of Archives, Resources & Executables* without changing its name.
 
 ## Project history
 
@@ -51,7 +57,7 @@ Peare aims to:
 - get one backend to list and expose the contents of a module or package (as an archiver);
 - get one backend to read and parse to a more common format all the niche and historical formats inside;
 - provide a stable C ABI without exposing Qt or C++ types, so can be used in other projects and languages with a simple wrapper;
-- allow future plugins to extend containers, resource discovery, decoding, and presentation;
+- stay extensible by porting new container, file-system, and disk formats directly into the core behind the same C ABI;
 - expand beyond currently supported formats to other packages that contain resources worth inspecting.
 
 Possible future package families include JAR, APK, APPX, XAP, MSI, and MSIX. These are project goals, not current compatibility claims.
@@ -83,7 +89,13 @@ The GUI opens files, builds the resource tree, displays decoded results, compose
 
 The stateful Opener:
 
-- opens PE, NE, LE, LX, XBE, XEX, XZP, LIVE, PIRS, and CON files or memory buffers;
+- opens PE, NE, LE, LX, XBE, XEX, XUIZ, LIVE, PIRS, CON executables, OS/2 PACK and
+  SZDD archives, Siemens firmware, SDI and XVA deployment images, Linux swap, LVM, MD RAID and Windows Dynamic Disk/LDM, ISO 9660 / WIM / FAT / exFAT / NTFS / ext / XFS / Btrfs / SquashFS / HFS+ / UDF disc images, and DMG / VMDK / VHD / VDI / VHDX virtual disks â€”
+  from a file path or any byte source, through one entry point;
+- opens Microsoft CAB archives, including uncompressed, MSZIP and LZX folders;
+- opens ZIP and TAR archives as virtual filesystems;
+- opens partitioned raw disk images as disk containers;
+- opens a contained file as a nested container on demand, with no image copy;
 - lists resource folders and entries;
 - preserves numeric and textual identifiers, languages, codepages;
 - reconstructs paged, segmented, continued, and large resources;
@@ -126,17 +138,61 @@ The Opener currently handles:
 | Xbox | XBE |  |
 | Xbox 360 | XEX |  |
 
-## Supported archives
+## Supported archives and filesystems
 
 The Opener additionally has support for uncommon archives:
 
 | Format | Description | Notes |
 |---|---|---|
-| Xbox 360 XZP | Resource archive |  |
+| Xbox 360 XUIZ | Resource archive |  |
 | OS/2 UnPack | IBM/Microsoft OS/2 PACK archive |  |
 | Microsoft Compress | SZDD archive (variant A) |  |
-| Siemens ProSave IMG |  Firmware image for HMIs |  |
-| Siemens ProSave FWF |  Firmware image for HMIs |  |
+| Microsoft Cabinet | CAB archive | uncompressed, MSZIP and LZX folders |
+| ZIP | Virtual filesystem archive | stored and deflate entries; ZIP64/encrypted entries not yet |
+| TAR | Virtual filesystem archive | regular files and directories; hard links when target appears first; symlinks skipped |
+| Microsoft SDI | System Deployment Image | exposes sections such as PART and WIM as nested payloads |
+| Xen XVA | Xen Virtual Appliance | TAR-based appliance; reconstructs VDI chunk disks and exposes partitions |
+| Siemens ProSave IMG | Firmware image for HMIs |  |
+| Siemens ProSave FWF | Firmware image for HMIs |  |
+| ISO 9660 | Optical disc image | Joliet; 2048-byte ISO and raw 2352-byte Mode2 BIN images |
+| Microsoft WIM | Windows Imaging Format | LZX and XPRESS chunks |
+| FAT | FAT12/16/32 volume | Floppies, EFI System Partitions, USB/firmware images |
+| exFAT | Microsoft exFAT volume | SD cards, large USB media; contiguous and FAT-chained files |
+| NTFS | Microsoft NTFS volume | MFT + attributes, data-run runlists, $I30 index; LZNT1-compressed files not yet decoded |
+| ext2/3/4 | Linux ext volume | ext4 extent trees + ext2/3 indirect block maps |
+| XFS | Linux XFS volume | v4/v5, local/extent/btree inodes, shortform/block/leaf directories |
+| Btrfs | Linux Btrfs volume | single-device chunk map, directories, subvolumes, sparse/raw/zlib/LZO extents |
+| SquashFS | Compressed Linux filesystem image | v4 zlib, metadata/data blocks and fragments |
+| HFS+ / HFSX | Apple HFS Plus volume | Catalog B-tree leaf records and data fork reads through initial extents |
+| UDF | Universal Disk Format | OSTA UDF; Type 1 partitions; 2048-byte ISO and raw 2352-byte Mode2 BIN images (metadata/sparable/virtual not yet) |
+| Linux swap | Swap volume | v1/v2 magic, version, label and page counts |
+| Linux LVM2 | Logical volume manager | single-PV readable striped/linear logical volumes |
+| Linux MD RAID | Software RAID member | RAID1 readable volume; v0.90 and v1.0/1.1/1.2 superblock locations |
+| Windows Dynamic Disk | Logical Disk Manager | concatenated and striped LDM volumes over the available disk image; multi-disk groups not yet |
+| Windows Registry hive | Registry hive file | read-only key navigation and value payloads (`regf`/`hbin`, `nk`/`vk`, `lf`/`lh`/`li`/`ri`) |
+| Windows BCD | Boot Configuration Data store | semantic view over Registry-backed `Objects/{GUID}/Description` and `Elements/{ID}` |
+
+## Supported virtual disks
+
+The Opener also reads virtual hard-disk containers. A disk is exposed as its
+partition table (MBR, incl. extended, GPT, and Apple Partition Map); each partition is a nested
+container that opens the file system inside it (FAT, exFAT, ...) through the same
+lazy path.
+
+| Format | Description | Notes |
+|---|---|---|
+| VMware VMDK | Virtual disk | monolithicSparse, split sparse/flat, streamOptimized |
+| Apple DMG / UDIF | Disk image | blkx resources with raw, zero and zlib-compressed runs |
+| Microsoft VHD | Virtual disk | fixed and dynamic; differencing parents not yet resolved |
+| VirtualBox VDI | Virtual disk | fixed and dynamic; differencing/undo parents not yet resolved |
+| Microsoft VHDX | Virtual disk | fixed and dynamic; differencing parents and dirty-log replay not yet resolved |
+| RAW | Raw disk image | MBR/GPT/APM partition table over `.img`/similar flat images |
+
+The filesystem readers (ISO 9660, WIM, FAT, exFAT, NTFS, ext2/3/4, XFS, Btrfs, SquashFS, HFS+, UDF), the OpticalDisk Mode2 sector view, the RAW/VMDK/VHD/VDI/VHDX disk readers, the Linux MD RAID1 reader, the Windows LDM reader, the
+MBR/GPT/APM partition layer, and the underlying positioned byte-store / stream layer
+are clean-room C++ ports of **LTRData DiscUtils**, kept byte-compatible with it.
+They compose lazily so a file inside a partition inside a virtual disk opens
+without materialising anything.
 
 ## Resource compatibility
 
@@ -144,12 +200,12 @@ The matrix below preserves the compatibility declarations of the verified C# imp
 
 Legend:
 
-- **Yes** — implemented;
-- **No** — Not yet implemented;
-- **N/A** — not known to exist
-- **(1)** — known limitations or resources that may not decode correctly;
-- **(2)** — implementation exists, but no suitable sample was available for verification;
-- **(3)** — known incompatibility with Windows 1.x or 2.x resources.
+- **Yes** â€” implemented;
+- **No** â€” Not yet implemented;
+- **N/A** â€” not known to exist
+- **(1)** â€” known limitations or resources that may not decode correctly;
+- **(2)** â€” implementation exists, but no suitable sample was available for verification;
+- **(3)** â€” known incompatibility with Windows 1.x or 2.x resources.
 
 | Resource | NE OS/2 | LX OS/2 | LE OS/2 | NE Windows | PE Windows |
 |---|---:|---:|---:|---:|---:|
@@ -162,18 +218,18 @@ Legend:
 | `RT_MENU` | Yes | Yes | Yes | Yes (3) | Yes |
 | `RT_ACCELTABLE` | Yes | Yes | Yes | N/A | N/A |
 | `RT_ACCELERATOR` | N/A | N/A | N/A | Yes | Yes |
-| `RT_DLGINCLUDE` | Yes | Yes | Yes | — | — |
-| `RT_HELPTABLE` | Yes (2) | Yes | Yes | — | — |
-| `RT_HELPSUBTABLE` | Yes (2) | Yes | Yes | — | — |
+| `RT_DLGINCLUDE` | Yes | Yes | Yes | â€” | â€” |
+| `RT_HELPTABLE` | Yes (2) | Yes | Yes | â€” | â€” |
+| `RT_HELPSUBTABLE` | Yes (2) | Yes | Yes | â€” | â€” |
 | `RT_FONT` | Yes | Yes | Yes | Yes | Yes |
 | `RT_FONTDIR` | Yes (1) | Yes (1) | Yes (1) | Yes (1) | Yes (1) |
 | `RT_DIALOG` | Yes (1) | Yes (1) | Yes (1) | No | No |
-| `RT_NAMETABLE` | — | — | — | Yes (3) | — |
-| `RT_GROUP_ICON` | — | — | — | Yes | Yes |
-| `RT_ICON` | — | — | — | Yes | Yes |
-| `RT_VERSION` | — | — | — | Yes | Yes |
-| `RT_GROUP_CURSOR` | — | — | — | Yes | Yes |
-| `RT_CURSOR` | — | — | — | Yes | Yes |
+| `RT_NAMETABLE` | â€” | â€” | â€” | Yes (3) | â€” |
+| `RT_GROUP_ICON` | â€” | â€” | â€” | Yes | Yes |
+| `RT_ICON` | â€” | â€” | â€” | Yes | Yes |
+| `RT_VERSION` | â€” | â€” | â€” | Yes | Yes |
+| `RT_GROUP_CURSOR` | â€” | â€” | â€” | Yes | Yes |
+| `RT_CURSOR` | â€” | â€” | â€” | Yes | Yes |
 
 OS/2 pointer and bitmap resources may contain `BA`, `BM`, `IC`, `CI`, `CP`, or `PT` structures and may produce multiple images.
 
@@ -231,29 +287,75 @@ Automated scripts for building are available for each plaform supported.
 
 Manual build, install, and test procedures are documented in [docs/BUILDING.md](docs/BUILDING.md).
 
-## Plugin intent
+## Extensibility
 
-Plugin support is not implemented yet. It remains part of the project identity and long-term design.
+Peare is extended by **porting new format support directly into the core**, not
+through an external plugin ABI. A new container, file system, or virtual disk is
+added as a module behind the same common `peare_opener_*` interface — the way the
+DiscUtils file-system and virtual-disk stack was brought in as a clean-room C++
+port. AI-assisted development makes wiring a whole reference implementation into
+the core faster and more maintainable than defining, versioning, and policing a
+plugin boundary, so the project's extensibility lives in the source itself.
 
-A future plugin system is intended to support one or more of these roles:
+Adding a module is documented as a checklist in
+[docs/ADDING_OPENER.md](docs/ADDING_OPENER.md). Whatever is added must preserve
+two invariants: **byte-perfect extraction** of original payloads, and the
+**stability of the public C ABI**.
 
-1. **Extend containers and resource discovery**
-   - add resources not exposed by the built-in Opener;
-   - support additional content inside an existing module;
-   - add entirely new package formats.
+Natural directions from here include exposing .NET resources inside PE files and
+opening further package formats (JAR, APK, APPX, MSI/MSIX).
 
-2. **Provide or alter resource listings**
-   - expose additional folders or entries;
-   - replace or intercept the default interpretation of a resource when necessary.
+## Roadmap
 
-3. **Decode and present resources**
-   - return images, text, or other neutral output;
-   - optionally provide a GUI-specific presentation;
-   - remain usable outside the GUI when no custom control is required.
+These are planned directions, not current compatibility claims. Items are grouped
+by family; each is a candidate for a byte-exact reader behind the same C ABI.
 
-Examples may be exposing .NET resources inside PE files and opening package formats such as JAR.
+**File systems**
 
-The plugin interface must not compromise byte-perfect extraction or the stability of the public C ABI.
+- **HPFS** — OS/2 High Performance File System (not covered by DiscUtils; clean
+  implementation from the on-disk format).
+- **JFS** — IBM/OS/2–Linux Journaled File System.
+- **Legacy NTFS** — the early NTFS v1.x layout as written by Windows NT 3.1/3.5,
+  which predates several structures the modern reader assumes.
+- **Windows CE ROM images** — the **XIP** (execute-in-place) module region and the
+  **IMGFS** file system (as handled by `eimgfs`), for Windows CE / Windows Mobile
+  ROM dumps.
+
+**Archives and compressors (the formats 7-Zip handles, that Peare does not yet)**
+
+- Archivers: **7z**, **RAR**, **LZH/LHA**, **ARJ**, **AR**, **CPIO**, **XAR**.
+- Compressors/streams: **GZIP**, **BZIP2**, **XZ / LZMA / LZMA2**, **Zstandard**,
+  **Z** (compress).
+- Installers and packages: **MSI** (OLE / compound file), **NSIS**, **RPM**,
+  **DEB**, **CHM**, **CramFS**.
+- Disk/image extras 7-Zip exposes: **QCOW2**, **APFS**, Apple Partition Map.
+
+Where 7-Zip and Peare already overlap (ZIP, TAR, CAB, ISO, UDF, FAT, exFAT, NTFS,
+ext, HFS+, SquashFS, WIM, MBR/GPT, VHD/VHDX/VDI/VMDK/DMG) the work is done.
+
+**Variants of formats already supported**
+
+- **OS/2 UnPack v2** (PACK2) — the newer OS/2 PACK container (signature
+  `A5 96 FD FF`, `FTCOMP` marker), which uses a different compression method than
+  the current PACK v1 LZW reader and needs its own decompressor.
+- **SZDD variant B** and the **KWAJ** container — the remaining Microsoft Compress
+  formats, alongside the current SZDD variant A.
+
+**Refinements inside existing readers**
+
+- NTFS: **LZNT1** decompression and `$ATTRIBUTE_LIST`-split attributes.
+- UDF: metadata / sparable / virtual partition maps (rewritable and Blu-ray media).
+- Additional file-system compression codecs (e.g. Btrfs zstd, XFS/SquashFS xz/lzo).
+
+**In-place editing**
+
+- The long-standing goal from Resource Hacker / BCC Workshop: write resources back
+  into a module while preserving everything else. When it lands, the acronym's
+  first **E** turns from *Extractor* into *Editor*.
+
+Out of scope, by design: DiscUtils' network transports (iSCSI, NFS), OS mount
+bridges (Dokan/FUSE), and physical-device access — none of which are "open a
+file" operations.
 
 ## Project status
 
@@ -273,6 +375,7 @@ Historical executable formats contain undocumented structures, vendor variations
 | Project | Author |
 | --- | --- |
 | Qt | The Qt Company |
+| DiscUtils (filesystem/disk readers: ISO 9660, WIM, FAT, exFAT, NTFS, ext2/3/4, XFS, Btrfs, SquashFS, HFS+, UDF, Linux swap, LVM2, Linux MD RAID1, Windows LDM, Windows Registry hive and BCD BootConfig stores, DMG/UDIF, VMDK, VHD, VDI, VHDX, SDI, XVA, MBR/GPT/APM, stream/buffer layers) | Kenneth Bell / LTRData |
 | wimlib (LZX compression) | Eric Biggers |
 | cabextract (LZX code lineage, via wimlib) | Stuart Caie |
 | Tiny AES in C | kokke |
@@ -282,7 +385,10 @@ Historical executable formats contain undocumented structures, vendor variations
 
 | Source | Where |
 | --- | --- |
-| wimlib | https://wimlib.net/ · https://github.com/ebiggers/wimlib |
+| DiscUtils (LTRData fork) | https://github.com/LTRData/DiscUtils |
+| OSTA Universal Disk Format specification | https://www.osta.org/specs/ |
+| ECMA-119 (ISO 9660) / ECMA-167 (UDF volume structure) | https://ecma-international.org/publications-and-standards/standards/ |
+| wimlib | https://wimlib.net/ Â· https://github.com/ebiggers/wimlib |
 | Tiny AES in C | https://github.com/kokke/tiny-AES-c |
 | WMP WSZ format | https://github.com/tdebaets/wmp-wsz-format |
 | IBM OS/2 16/32-bit Object Module Format | https://www.edm2.com/index.php/IBM_OS/2_16/32-bit_Object_Module_Format_ |
@@ -294,7 +400,7 @@ Historical executable formats contain undocumented structures, vendor variations
 ## Copyright
 
 All format specifications, product names, and trademarks referenced or supported
-by Peare are the property of their respective owners — including, among others,
+by Peare are the property of their respective owners â€” including, among others,
 Microsoft Corporation, IBM Corporation, and Siemens AG. Peare provides
 independent, clean-room readers and is not affiliated with, authorized by, or
 endorsed by these companies.
@@ -308,3 +414,5 @@ endorsed by these companies.
 - [PeareOpener API](docs/API_OPENER.md)
 - [PeareDecoder API](docs/API_DECODER.md)
 - [Developer guide](docs/DEVELOPMENT.md)
+
+

@@ -69,7 +69,7 @@ if(PEARE_EFFECTIVE_QT_MAJOR STREQUAL "6")
     set(PEARE_QT_PACKAGE Qt6)
     set(QT_VERSION_MAJOR 6)
 else()
-    find_package(Qt5 5.15 REQUIRED COMPONENTS Core Gui Widgets)
+    find_package(Qt5 5.15 REQUIRED COMPONENTS Core Gui Widgets Zlib)
     set(PEARE_QT_PACKAGE Qt5)
     set(QT_VERSION_MAJOR 5)
 endif()
@@ -93,6 +93,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(PEARE_QT_CORE ${PEARE_QT_PACKAGE}::Core)
 set(PEARE_QT_GUI ${PEARE_QT_PACKAGE}::Gui)
 set(PEARE_QT_WIDGETS ${PEARE_QT_PACKAGE}::Widgets)
+if(QT_VERSION_MAJOR EQUAL 5)
+    set(PEARE_QT_ZLIB Qt5::Zlib)
+else()
+    set(PEARE_QT_ZLIB)
+endif()
 if(QT_VERSION_MAJOR EQUAL 6)
     set(PEARE_QT_CORE5COMPAT Qt6::Core5Compat)
 else()
@@ -193,10 +198,99 @@ add_library(PeareOpener SHARED
     src/opener/fs/XpressHuffman.cpp
     src/opener/fs/WimReader.h
     src/opener/fs/WimReader.cpp
+    src/opener/fs/FatReader.h
+    src/opener/fs/FatReader.cpp
+    src/opener/fs/UdfReader.h
+    src/opener/fs/UdfReader.cpp
+    src/opener/fs/ExFatReader.h
+    src/opener/fs/ExFatReader.cpp
+    src/opener/fs/VmdkDisk.h
+    src/opener/fs/VmdkDisk.cpp
+    src/opener/fs/VhdDisk.h
+    src/opener/fs/VhdDisk.cpp
+    src/opener/fs/VdiDisk.h
+    src/opener/fs/VdiDisk.cpp
+    src/opener/fs/VhdxDisk.h
+    src/opener/fs/VhdxDisk.cpp
+    src/opener/fs/PartitionTable.h
+    src/opener/fs/PartitionTable.cpp
+    src/opener/fs/LinuxRaid.h
+    src/opener/fs/LinuxRaid.cpp
+    src/opener/fs/DynamicDisk.h
+    src/opener/fs/DynamicDisk.cpp
+    src/opener/fs/ExtReader.h
+    src/opener/fs/ExtReader.cpp
+    src/opener/fs/NtfsReader.h
+    src/opener/fs/NtfsReader.cpp
+    src/opener/fs/XfsReader.h
+    src/opener/fs/XfsReader.cpp
+    src/opener/fs/SquashFsReader.h
+    src/opener/fs/SquashFsReader.cpp
+    src/opener/fs/HfsPlusReader.h
+    src/opener/fs/HfsPlusReader.cpp
+    src/opener/fs/DmgDisk.h
+    src/opener/fs/DmgDisk.cpp
+    src/opener/fs/BtrfsReader.h
+    src/opener/fs/BtrfsReader.cpp
+    src/opener/fs/RegistryHiveReader.h
+    src/opener/fs/RegistryHiveReader.cpp
+    src/opener/modules/FsLevel.h
     src/opener/modules/IsoModule.h
     src/opener/modules/IsoModule.cpp
     src/opener/modules/WimModule.h
     src/opener/modules/WimModule.cpp
+    src/opener/modules/FatModule.h
+    src/opener/modules/FatModule.cpp
+    src/opener/modules/UdfModule.h
+    src/opener/modules/UdfModule.cpp
+    src/opener/modules/ExFatModule.h
+    src/opener/modules/ExFatModule.cpp
+    src/opener/modules/VmdkModule.h
+    src/opener/modules/VmdkModule.cpp
+    src/opener/modules/VhdModule.h
+    src/opener/modules/VhdModule.cpp
+    src/opener/modules/VdiModule.h
+    src/opener/modules/VdiModule.cpp
+    src/opener/modules/VhdxModule.h
+    src/opener/modules/VhdxModule.cpp
+    src/opener/modules/SdiModule.h
+    src/opener/modules/SdiModule.cpp
+    src/opener/modules/XvaModule.h
+    src/opener/modules/XvaModule.cpp
+    src/opener/modules/SwapModule.h
+    src/opener/modules/SwapModule.cpp
+    src/opener/modules/LvmModule.h
+    src/opener/modules/LvmModule.cpp
+    src/opener/modules/LinuxRaidModule.h
+    src/opener/modules/LinuxRaidModule.cpp
+    src/opener/modules/DynamicDiskModule.h
+    src/opener/modules/DynamicDiskModule.cpp
+    src/opener/modules/ExtModule.h
+    src/opener/modules/ExtModule.cpp
+    src/opener/modules/NtfsModule.h
+    src/opener/modules/NtfsModule.cpp
+    src/opener/modules/XfsModule.h
+    src/opener/modules/XfsModule.cpp
+    src/opener/modules/SquashFsModule.h
+    src/opener/modules/SquashFsModule.cpp
+    src/opener/modules/HfsPlusModule.h
+    src/opener/modules/HfsPlusModule.cpp
+    src/opener/modules/DmgModule.h
+    src/opener/modules/DmgModule.cpp
+    src/opener/modules/BtrfsModule.h
+    src/opener/modules/BtrfsModule.cpp
+    src/opener/modules/RegistryModule.h
+    src/opener/modules/RegistryModule.cpp
+    src/opener/modules/BootConfigModule.h
+    src/opener/modules/BootConfigModule.cpp
+    src/opener/modules/CabModule.h
+    src/opener/modules/CabModule.cpp
+    src/opener/modules/RawDiskModule.h
+    src/opener/modules/RawDiskModule.cpp
+    src/opener/modules/ZipModule.h
+    src/opener/modules/ZipModule.cpp
+    src/opener/modules/TarModule.h
+    src/opener/modules/TarModule.cpp
 )
 target_compile_definitions(PeareOpener PRIVATE PEARE_OPENER_BUILD)
 target_include_directories(PeareOpener
@@ -206,7 +300,7 @@ target_include_directories(PeareOpener
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
-target_link_libraries(PeareOpener PRIVATE ${PEARE_QT_CORE} PeareLzxEngine)
+target_link_libraries(PeareOpener PRIVATE ${PEARE_QT_CORE} ${PEARE_QT_ZLIB} PeareLzxEngine)
 target_include_directories(PeareOpener PRIVATE third_party/wimlib_lzx/include)
 set_target_properties(PeareOpener PROPERTIES
     CXX_VISIBILITY_PRESET hidden

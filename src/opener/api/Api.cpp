@@ -21,6 +21,7 @@ struct peare_source_handle_s {
     peare::fs::ByteStorePtr store;
     QByteArray bytes;
     QString name;
+    QString subPath;  // non-empty: reopen `store` (a filesystem image) at this dir
 };
 
 namespace {
@@ -35,7 +36,7 @@ peare_status copyBytes(const char* data, size_t length, peare_blob* out) {
 peare_status copyByteArray(const QByteArray& bytes, peare_blob* out) { return copyBytes(bytes.constData(),static_cast<size_t>(bytes.size()),out); }
 peare_status copyUtf8(const QString& text, peare_blob* out) { return copyByteArray(text.toUtf8(),out); }
 peare_container_format toCFormat(peare::ModuleFormat f) {
- switch(f){case peare::ModuleFormat::DosMZ:return PEARE_CONTAINER_DOS_MZ;case peare::ModuleFormat::PE:return PEARE_CONTAINER_PE;case peare::ModuleFormat::NE:return PEARE_CONTAINER_NE;case peare::ModuleFormat::LE:return PEARE_CONTAINER_LE;case peare::ModuleFormat::LX:return PEARE_CONTAINER_LX;case peare::ModuleFormat::XEX:return PEARE_CONTAINER_XEX;case peare::ModuleFormat::XBE:return PEARE_CONTAINER_XBE;case peare::ModuleFormat::XUIZ:return PEARE_CONTAINER_XUIZ;case peare::ModuleFormat::LIVE_PIRS:return PEARE_CONTAINER_LIVE_PIRS;case peare::ModuleFormat::CON:return PEARE_CONTAINER_CON;case peare::ModuleFormat::OS2_PACK:return PEARE_CONTAINER_OS2_PACK;case peare::ModuleFormat::SZDD:return PEARE_CONTAINER_SZDD;case peare::ModuleFormat::SIEMENS_IMG:return PEARE_CONTAINER_SIEMENS_IMG;case peare::ModuleFormat::SIEMENS_FWF:return PEARE_CONTAINER_SIEMENS_FWF;case peare::ModuleFormat::ISO9660:return PEARE_CONTAINER_ISO9660;case peare::ModuleFormat::WIM:return PEARE_CONTAINER_WIM;default:return PEARE_CONTAINER_UNKNOWN;}}
+switch(f){case peare::ModuleFormat::DosMZ:return PEARE_CONTAINER_DOS_MZ;case peare::ModuleFormat::PE:return PEARE_CONTAINER_PE;case peare::ModuleFormat::NE:return PEARE_CONTAINER_NE;case peare::ModuleFormat::LE:return PEARE_CONTAINER_LE;case peare::ModuleFormat::LX:return PEARE_CONTAINER_LX;case peare::ModuleFormat::XEX:return PEARE_CONTAINER_XEX;case peare::ModuleFormat::XBE:return PEARE_CONTAINER_XBE;case peare::ModuleFormat::XUIZ:return PEARE_CONTAINER_XUIZ;case peare::ModuleFormat::LIVE_PIRS:return PEARE_CONTAINER_LIVE_PIRS;case peare::ModuleFormat::CON:return PEARE_CONTAINER_CON;case peare::ModuleFormat::OS2_PACK:return PEARE_CONTAINER_OS2_PACK;case peare::ModuleFormat::SZDD:return PEARE_CONTAINER_SZDD;case peare::ModuleFormat::CAB:return PEARE_CONTAINER_CAB;case peare::ModuleFormat::RAW_DISK:return PEARE_CONTAINER_RAW_DISK;case peare::ModuleFormat::ZIP:return PEARE_CONTAINER_ZIP;case peare::ModuleFormat::TAR:return PEARE_CONTAINER_TAR;case peare::ModuleFormat::LINUX_RAID:return PEARE_CONTAINER_LINUX_RAID;case peare::ModuleFormat::DYNAMIC_DISK:return PEARE_CONTAINER_DYNAMIC_DISK;case peare::ModuleFormat::SIEMENS_IMG:return PEARE_CONTAINER_SIEMENS_IMG;case peare::ModuleFormat::SIEMENS_FWF:return PEARE_CONTAINER_SIEMENS_FWF;case peare::ModuleFormat::ISO9660:return PEARE_CONTAINER_ISO9660;case peare::ModuleFormat::WIM:return PEARE_CONTAINER_WIM;case peare::ModuleFormat::FAT:return PEARE_CONTAINER_FAT;case peare::ModuleFormat::UDF:return PEARE_CONTAINER_UDF;case peare::ModuleFormat::EXFAT:return PEARE_CONTAINER_EXFAT;case peare::ModuleFormat::VMDK:return PEARE_CONTAINER_VMDK;case peare::ModuleFormat::VHD:return PEARE_CONTAINER_VHD;case peare::ModuleFormat::VDI:return PEARE_CONTAINER_VDI;case peare::ModuleFormat::VHDX:return PEARE_CONTAINER_VHDX;case peare::ModuleFormat::SDI:return PEARE_CONTAINER_SDI;case peare::ModuleFormat::XVA:return PEARE_CONTAINER_XVA;case peare::ModuleFormat::SWAP:return PEARE_CONTAINER_SWAP;case peare::ModuleFormat::LVM:return PEARE_CONTAINER_LVM;case peare::ModuleFormat::EXT:return PEARE_CONTAINER_EXT;case peare::ModuleFormat::NTFS:return PEARE_CONTAINER_NTFS;case peare::ModuleFormat::XFS:return PEARE_CONTAINER_XFS;case peare::ModuleFormat::SQUASHFS:return PEARE_CONTAINER_SQUASHFS;case peare::ModuleFormat::HFSPLUS:return PEARE_CONTAINER_HFSPLUS;case peare::ModuleFormat::DMG:return PEARE_CONTAINER_DMG;case peare::ModuleFormat::BTRFS:return PEARE_CONTAINER_BTRFS;case peare::ModuleFormat::REGISTRY:return PEARE_CONTAINER_REGISTRY;case peare::ModuleFormat::BOOTCONFIG:return PEARE_CONTAINER_BOOTCONFIG;default:return PEARE_CONTAINER_UNKNOWN;}}
 peare_platform toCPlatform(peare::ResourcePlatform p) {
  switch(p){case peare::ResourcePlatform::Windows:return PEARE_PLATFORM_WINDOWS;case peare::ResourcePlatform::Os2:return PEARE_PLATFORM_OS2;case peare::ResourcePlatform::Other:return PEARE_PLATFORM_OTHER;default:return PEARE_PLATFORM_UNKNOWN;}}
 void clearContext(peare_resource_context* c){if(c)std::memset(c,0,sizeof(*c));}
@@ -52,6 +53,9 @@ void freeSnapshotItem(peare_resource_snapshot_item* item)
     std::free(item->context.language_utf8.bytes);
     delete static_cast<peare::fs::ByteStorePtr*>(item->lazy_content);
     item->lazy_content = nullptr;
+    std::free(item->sub_path);
+    item->sub_path = nullptr;
+    item->is_directory = 0;
     item->context = {};
 }
 
@@ -67,6 +71,15 @@ peare_status fillSnapshotItem(const peare::OpenedResource& opened,
     // is materialised on demand in peare_resource_get_payload.
     if (opened.contentStore)
         item->lazy_content = new (std::nothrow) peare::fs::ByteStorePtr(opened.contentStore);
+    item->is_directory = opened.isDirectory ? 1 : 0;
+    if (opened.isDirectory) {
+        const QByteArray sp = opened.subPath.toUtf8();
+        item->sub_path = static_cast<char*>(std::malloc(static_cast<size_t>(sp.size()) + 1));
+        if (item->sub_path) {
+            std::memcpy(item->sub_path, sp.constData(), static_cast<size_t>(sp.size()));
+            item->sub_path[sp.size()] = '\0';
+        }
+    }
     const auto& source = opened.context;
     item->context.container_format = toCFormat(source.containerFormat);
     item->context.platform = toCPlatform(source.platform);
@@ -115,7 +128,7 @@ peare_status makeResourceHandle(const std::shared_ptr<SessionState>& state,
         destroySnapshot(handle); delete handle; return status;
     }
     // The sibling ("related") snapshot was built here for every resource open but
-    // is exposed by no public function — pure O(N) waste per open, i.e. O(N^2)
+    // is exposed by no public function Ã¢â‚¬â€ pure O(N) waste per open, i.e. O(N^2)
     // when a consumer walks every resource (e.g. building a tree). Dropped.
     *out_resource = handle;
     return PEARE_STATUS_OK;
@@ -177,7 +190,10 @@ peare_status peare_resource_get_source(peare_resource_handle resource, peare_sou
         auto* store = static_cast<peare::fs::ByteStorePtr*>(it.lazy_content);
         if (store) s->store = *store;
     }
-    if (!s->store)
+    // Directory container: reopen the fs image (in the store) at its subpath.
+    if (it.is_directory && it.sub_path)
+        s->subPath = QString::fromUtf8(it.sub_path);
+    if (!s->store && !it.is_directory)
         s->bytes = QByteArray(reinterpret_cast<const char*>(it.payload.bytes),
                               static_cast<int>(it.payload.length));
     s->name = it.context.identifier_utf8.bytes
@@ -198,10 +214,12 @@ peare_status peare_opener_open(peare_opener_handle opener, peare_source_handle s
         if (source->isFile) {
             opened = next->session.openFile(source->filePath);
         } else if (source->store) {
-            // Open straight from the positioned source — no materialisation. A
+            // Open straight from the positioned source Ã¢â‚¬â€ no materialisation. A
             // filesystem (ISO/WIM) reads only what it needs; a big nested image
             // is never copied. This is the recursion point for nested containers.
-            opened = next->session.openStore(source->store, source->name);
+            // A non-empty subPath reopens a filesystem image at a directory (the
+            // lazy per-directory enumeration seam).
+            opened = next->session.openStore(source->store, source->name, source->subPath);
         } else {
             opened = next->session.openBuffer(source->bytes, source->name);
         }
@@ -369,8 +387,11 @@ peare_status peare_resource_get_payload(peare_resource_handle resource, peare_bl
     if (!out_payload) return PEARE_STATUS_INVALID_ARGUMENT;
     out_payload->bytes = nullptr; out_payload->length = 0;
     if (!peare_resource_snapshot_valid(resource)) return PEARE_STATUS_INVALID_HANDLE;
+    // A directory container has no byte payload (its store is the whole fs image,
+    // which must never be materialised here); open it as a container instead.
+    if (resource->primary.is_directory) return PEARE_STATUS_OK;
     // Layer-backed: read the content now (this is the only place a file's bytes
-    // are materialised — one file, on demand, when the consumer asks for it).
+    // are materialised Ã¢â‚¬â€ one file, on demand, when the consumer asks for it).
     if (resource->primary.lazy_content) {
         auto* store = static_cast<peare::fs::ByteStorePtr*>(resource->primary.lazy_content);
         if (store && *store) {
@@ -502,3 +523,6 @@ const char* peare_status_message(peare_status status)
     return "Unknown status";
 }
 }
+
+
+

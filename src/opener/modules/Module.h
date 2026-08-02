@@ -46,6 +46,13 @@ struct ResourceEntry {
     // otherwise `data` (the flat array) is used. This single seam is what lets
     // the common opener ABI hide whether a resource is array- or layer-backed.
     peare::fs::ByteStorePtr content;
+    // Directory-level container: a filesystem opener lists one directory at a
+    // time; a subdirectory is exposed as this kind of entry. `content` holds the
+    // whole filesystem image (the volume/partition store) and `containerSubPath`
+    // the directory path inside it. Navigating it reopens the same image rooted
+    // at that path — the lazy-enumeration seam for the DiscUtils fs stack.
+    bool isDirectory = false;
+    QString containerSubPath;
 };
 
 class IModule {

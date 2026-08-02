@@ -14,7 +14,8 @@ public:
     // Open over a positioned byte source. Filesystem formats (ISO, WIM) are read
     // straight from the source with no materialisation; other formats fall back
     // to reading it fully.
-    static ModulePtr open(const fs::ByteStorePtr& disc, const QString& sourceName);
+    static ModulePtr open(const fs::ByteStorePtr& disc, const QString& sourceName,
+                          const QString& subPath = QString());
 };
 
 } // namespace peare

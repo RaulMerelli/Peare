@@ -1,44 +1,17 @@
 #include "WimModule.h"
 #include "Compat.h"
+#include "FsLevel.h"
 
 #include "../fs/WimReader.h"
 
 #include <QFile>
 
-#include <string>
 #include <utility>
 
 namespace peare {
-namespace {
 
-void walk(const fs::IDiscFileSystem& fs, const std::string& dir,
-          const QStringList& prefix, QVector<ResourceEntry>& out) {
-    const std::vector<fs::DiscEntry> entries = fs.list(dir);
-    for (const fs::DiscEntry& e : entries) {
-        const std::string full = dir.empty() ? e.name : dir + "/" + e.name;
-        const QString name = QString::fromUtf8(e.name.c_str());
-        if (e.isDirectory) {
-            QStringList sub = prefix;
-            sub << name;
-            walk(fs, full, sub, out);
-        } else {
-            ResourceEntry entry;
-            entry.type = QStringLiteral("WIM_FILE");
-            entry.isEmbeddedFile = true;
-            entry.name = name;
-            entry.language = QStringLiteral("neutral");
-            entry.dataSize = quint64(e.length);
-            entry.format = ModuleFormat::WIM;
-            entry.hierarchyPath = prefix;
-            entry.content = fs.openFile(full);  // lazy chunked resource
-            out.push_back(std::move(entry));
-        }
-    }
-}
-
-}  // namespace
-
-ModulePtr WimModule::open(const fs::ByteStorePtr& disc, const QString& sourceName) {
+ModulePtr WimModule::open(const fs::ByteStorePtr& disc, const QString& sourceName,
+                          const QString& subPath) {
     auto module = peare::makeUnique<WimModule>();
     module->info_.filePath = sourceName;
     module->info_.format = ModuleFormat::WIM;
@@ -51,7 +24,8 @@ ModulePtr WimModule::open(const fs::ByteStorePtr& disc, const QString& sourceNam
     }
     module->fs_ = reader;
     module->info_.description = QString::fromStdString(reader->friendlyName());
-    walk(*reader, std::string(), QStringList(), module->resources_);
+    buildFsLevel(*reader, disc, subPath.toStdString(), ModuleFormat::WIM,
+                 QStringLiteral("WIM_FILE"), QStringLiteral("WIM_DIR"), module->resources_);
     return ModulePtr(std::move(module));
 }
 

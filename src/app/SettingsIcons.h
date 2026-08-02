@@ -13,6 +13,8 @@ public:
 
     QIcon iconFor(const QString& section) const;
     QIcon resourceIcon(const QString& type) const;
+    // Icon chosen from a file name's extension (for filesystem file entries).
+    QIcon iconForFileName(const QString& fileName) const;
     QIcon folderOpenIcon() const;
     QIcon folderCloseIcon() const;
     QIcon defaultIcon() const;
