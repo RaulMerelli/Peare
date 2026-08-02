@@ -34,4 +34,8 @@ private:
     QString filePath_;
     QHash<QString, QIcon> icons_;
     QHash<QString, QString> extensions_;
+    // Memoises resourceIcon() for types not in icons_: IconFromExt::get() makes a
+    // shell call per type, so without this a tree of thousands of same-type
+    // entries (e.g. a WIM's files) would query the shell thousands of times.
+    mutable QHash<QString, QIcon> resourceIconCache_;
 };

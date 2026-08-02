@@ -317,6 +317,7 @@ void MainWindow::showModuleSummary(const QString& filePath)
     size_t totalResources = 0;
     for (size_t f = 0; f < currentSession_.folderCount(); ++f)
         totalResources += currentSession_.resourceCount(f);
+    treeView_->setUpdatesEnabled(false);
     populateFromSession(&currentSession_, nullptr);
 
     // Every expandable native container uses folder icons consistently.
@@ -331,6 +332,7 @@ void MainWindow::showModuleSummary(const QString& filePath)
         };
     for (int i = 0; i < treeView_->topLevelItemCount(); ++i)
         normalizeExpandableIcons(treeView_->topLevelItem(i));
+    treeView_->setUpdatesEnabled(true);
 
     setWindowTitle(pearegui::containerName(format) + QStringLiteral(" file open: ") + sourceName);
     auto* layout = qobject_cast<QVBoxLayout*>(contentWidget_->layout());
@@ -506,6 +508,9 @@ void MainWindow::expandContainerItem(QTreeWidgetItem* item)
     }
     pearegui::Session* childPtr = child.get();
     childSessions_.push_back(std::move(child));
+    // Building a large subtree (a WIM can hold tens of thousands of entries) with
+    // live view updates is what made expansion take a minute; batch it.
+    treeView_->setUpdatesEnabled(false);
     populateFromSession(childPtr, item);
 
     // Normalise folder icons in the freshly built subtree (the top-level build
@@ -521,6 +526,7 @@ void MainWindow::expandContainerItem(QTreeWidgetItem* item)
     for (int i = 0; i < item->childCount(); ++i)
         normalize(item->child(i));
     item->setIcon(0, settingsIcons_.folderOpenIcon());
+    treeView_->setUpdatesEnabled(true);
 }
 
 void MainWindow::showSelectedResource()

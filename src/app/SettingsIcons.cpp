@@ -191,9 +191,16 @@ QIcon SettingsIcons::resourceIcon(const QString& type) const
     if (!icon.isNull())
         return icon;
 
+    const auto cached = resourceIconCache_.constFind(type);
+    if (cached != resourceIconCache_.constEnd())
+        return cached.value();
+
     const QString extension = extensions_.value(type, defaultExtensionForType(type));
     icon = IconFromExt::get(extension);
-    return icon.isNull() ? defaultIcon() : icon;
+    if (icon.isNull())
+        icon = defaultIcon();
+    resourceIconCache_.insert(type, icon);
+    return icon;
 }
 
 QIcon SettingsIcons::folderOpenIcon() const
