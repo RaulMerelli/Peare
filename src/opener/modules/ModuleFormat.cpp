@@ -478,8 +478,9 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
              (signature[2] == 0x00 && signature[3] == 0x14) ||
              (signature[2] == 0x14 && signature[3] == 0x0A) ||
              (signature[2] == 0xFF && signature[3] == 0xFF) ||
-             (signature[2] == 0xFE && signature[3] == 0xFF))) {
-            return {ModuleFormat::OS2_PACK, 0, QStringLiteral("IBM/Microsoft OS/2 PACK archive"), {}};
+             (signature[2] == 0xFE && signature[3] == 0xFF) ||
+             (signature[2] == 0xFD && signature[3] == 0xFF))) {
+            return {ModuleFormat::OS2_PACK, 0, QStringLiteral("IBM/Microsoft OS/2 PACK/PACK2 archive"), {}};
         }
         if (magic == QByteArrayLiteral("XBEH")) {
             return {ModuleFormat::XBE, 0, QStringLiteral("Original Xbox Executable (XBE)"), {}};
@@ -668,8 +669,9 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
         if (p[0] == 0xA5 && p[1] == 0x96 &&
             ((p[2] == 0x0A && p[3] == 0x00) || (p[2] == 0x0A && p[3] == 0x0A) ||
              (p[2] == 0x00 && p[3] == 0x14) || (p[2] == 0x14 && p[3] == 0x0A) ||
-             (p[2] == 0xFF && p[3] == 0xFF) || (p[2] == 0xFE && p[3] == 0xFF)))
-            return {ModuleFormat::OS2_PACK, 0, QStringLiteral("IBM/Microsoft OS/2 PACK archive"), {}};
+             (p[2] == 0xFF && p[3] == 0xFF) || (p[2] == 0xFE && p[3] == 0xFF) ||
+             (p[2] == 0xFD && p[3] == 0xFF)))
+            return {ModuleFormat::OS2_PACK, 0, QStringLiteral("IBM/Microsoft OS/2 PACK/PACK2 archive"), {}};
         const QByteArray magic = data.left(4);
         if (magic == QByteArrayLiteral("XBEH")) return {ModuleFormat::XBE, 0, QStringLiteral("Original Xbox Executable (XBE)"), {}};
         if (magic == QByteArrayLiteral("XEX1") || magic == QByteArrayLiteral("XEX2")) return {ModuleFormat::XEX, 0, QStringLiteral("Xbox 360 Executable (XEX)"), {}};

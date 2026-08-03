@@ -1,4 +1,5 @@
 #include "Os2PackModule.h"
+#include "Os2Pack2Decoder.h"
 #include "Compat.h"
 
 #include <QFile>
@@ -59,6 +60,7 @@ bool signatureFormat(const QByteArray& data, qsizetype offset, quint16* format)
     case 0x0A14: *format = 0x0A14; return true;
     case 0xFFFF: *format = 0xFFFF; return true;
     case 0xFFFE: *format = 0xFFFE; return true;
+    case 0xFFFD: *format = 0xFFFD; return true;
     default: return false;
     }
 }
@@ -162,6 +164,13 @@ bool parseMember(const QByteArray& data, qsizetype offset, PackMember* member, Q
             eaOffset = le32(data, pos, &ok); if (!ok) { *error = QStringLiteral("Truncated extended OS/2 PACK header"); return false; } pos += 4;
             const quint32 original = le32(data, pos, &ok); if (!ok) { *error = QStringLiteral("Truncated extended OS/2 PACK header"); return false; } pos += 4;
             const quint32 next = le32(data, pos, &ok); if (!ok) { *error = QStringLiteral("Truncated extended OS/2 PACK header"); return false; } pos += 4;
+            if (format == 0xFFFD) {
+                if (pos + 15 > data.size() || data.mid(pos, 7) != QByteArray("FTCOMP\0", 7)) {
+                    *error = QStringLiteral("Invalid OS/2 PACK2 FTCOMP header");
+                    return false;
+                }
+                pos += 15; // FTCOMP\0, two 16-bit fields, and one 32-bit field.
+            }
             fileNameLength = int(le16(data, pos, &ok)); if (!ok) { *error = QStringLiteral("Truncated extended OS/2 PACK header"); return false; } pos += 2;
             if (original != 0 && original != 1) { member->originalSize = original; member->hasOriginalSize = true; }
             if (next != 0) { member->nextMemberOffset = next; member->hasNextMember = true; }
@@ -330,7 +339,7 @@ std::unique_ptr<Os2PackModule> Os2PackModule::open(const QByteArray& data, const
     auto module = peare::makeUnique<Os2PackModule>();
     module->info_.filePath = logicalName;
     module->info_.format = ModuleFormat::OS2_PACK;
-    module->info_.description = QStringLiteral("IBM/Microsoft OS/2 PACK archive");
+    module->info_.description = QStringLiteral("IBM/Microsoft OS/2 PACK/PACK2 archive");
 
     qsizetype offset = 0;
     int index = 0;
@@ -342,7 +351,19 @@ std::unique_ptr<Os2PackModule> Os2PackModule::open(const QByteArray& data, const
         QString error;
         if (!parseMember(data, offset, &member, &error)) { module->info_.error = error; module->resources_.clear(); return module; }
         QByteArray decoded;
-        if (!decompress(data, member.compressedOffset, member.compressedEnd, member.originalSize, member.hasOriginalSize, &decoded, &error)) {
+        bool decodedOk = false;
+        if (member.formatCode == 0xFFFD) {
+            if (!member.hasOriginalSize) {
+                error = QStringLiteral("PACK2 member has no original size");
+            } else {
+                decodedOk = decompressOs2Pack2(data, member.compressedOffset, member.compressedEnd,
+                                               member.originalSize, &decoded, &error);
+            }
+        } else {
+            decodedOk = decompress(data, member.compressedOffset, member.compressedEnd,
+                                   member.originalSize, member.hasOriginalSize, &decoded, &error);
+        }
+        if (!decodedOk) {
             module->info_.error = QStringLiteral("%1: %2").arg(member.fileName, error); module->resources_.clear(); return module;
         }
         ResourceEntry entry;

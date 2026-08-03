@@ -173,6 +173,9 @@ add_library(PeareOpener SHARED
     src/opener/modules/ConModule.cpp
     src/opener/modules/Os2PackModule.h
     src/opener/modules/Os2PackModule.cpp
+    src/opener/modules/Os2Pack2Decoder.h
+    src/opener/modules/Os2Pack2Decoder.cpp
+    src/opener/modules/Os2Pack2Tables.h
     src/opener/modules/SzddModule.h
     src/opener/modules/SzddModule.cpp
     src/opener/modules/SiemensImgModule.h

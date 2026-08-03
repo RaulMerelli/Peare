@@ -108,7 +108,7 @@ The GUI opens files, builds the resource tree, displays decoded results, compose
 
 The stateful Opener:
 
-- opens PE, NE, LE, LX, XBE, XEX, XUIZ, LIVE, PIRS, CON executables, OS/2 PACK and
+- opens PE, NE, LE, LX, XBE, XEX, XUIZ, LIVE, PIRS, CON executables, OS/2 PACK/PACK2 and
   SZDD archives, Siemens firmware, SDI and XVA deployment images, Linux swap, LVM, MD RAID and Windows Dynamic Disk/LDM, ISO 9660 / WIM / FAT / exFAT / NTFS / ext / XFS / Btrfs / SquashFS / HFS+ / UDF disc images, and DMG / VMDK / VHD / VDI / VHDX virtual disks —
   from a file path or any byte source, through one entry point;
 - opens Microsoft CAB archives, including uncompressed, MSZIP and LZX folders;
@@ -164,7 +164,7 @@ The Opener additionally has support for uncommon archives:
 | Format | Description | Notes |
 |---|---|---|
 | Xbox 360 XUIZ | Resource archive |  |
-| OS/2 UnPack | IBM/Microsoft OS/2 PACK archive |  |
+| OS/2 UnPack | IBM/Microsoft OS/2 PACK and PACK2 archives | PACK v1 LZW and PACK2 FTCOMP `fT19` |
 | Microsoft Compress | SZDD archive (variant A) |  |
 | Microsoft Cabinet | CAB archive | uncompressed, MSZIP and LZX folders |
 | ZIP | Virtual filesystem archive | stored and deflate entries; ZIP64/encrypted entries not yet |
@@ -354,9 +354,6 @@ ext, HFS+, SquashFS, WIM, MBR/GPT, VHD/VHDX/VDI/VMDK/DMG) the work is done.
 
 **Variants of formats already supported**
 
-- **OS/2 UnPack v2** (PACK2) — the newer OS/2 PACK container (signature
-  `A5 96 FD FF`, `FTCOMP` marker), which uses a different compression method than
-  the current PACK v1 LZW reader and needs its own decompressor.
 - **SZDD variant B** and the **KWAJ** container — the remaining Microsoft Compress
   formats, alongside the current SZDD variant A.
 
