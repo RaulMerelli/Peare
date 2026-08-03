@@ -5,7 +5,7 @@
 #include <memory>
 #include <utility>
 
-#include <QtZlib/zlib.h>
+#include <miniz.h>
 
 namespace peare {
 namespace fs {

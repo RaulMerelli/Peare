@@ -1,0 +1,114 @@
+name: Build
+
+# Builds Peare (GUI app + PeareOpener/PeareDecoder shared libraries) on Linux and
+# Windows with Qt 5.15.2, uploads the binaries as build artifacts, and — when a
+# tag like v1.2.3 is pushed — publishes them as a GitHub Release.
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed by the release job to create/upload a Release
+
+jobs:
+  linux:
+    name: Linux x64 (Qt 5.15.2)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt 5.15.2
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "5.15.2"
+          host: linux
+          target: desktop
+          arch: gcc_64
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Stage binaries
+        run: |
+          mkdir -p dist
+          find build -type f \( -name 'Peare' -o -name 'libPeare*.so' \) -exec cp -v {} dist/ \;
+          cp README.md dist/ 2>/dev/null || true
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: peare-linux-x64
+          path: dist/**
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64 (Qt 5.15.2)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt 5.15.2
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "5.15.2"
+          host: windows
+          target: desktop
+          arch: win64_msvc2019_64
+
+      - name: Configure
+        shell: cmd
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="%QT_ROOT_DIR%"
+
+      - name: Build
+        shell: cmd
+        run: cmake --build build --config Release --parallel
+
+      - name: Stage binaries + Qt runtime
+        shell: cmd
+        run: |
+          mkdir dist
+          for /r build %%f in (Peare.exe PeareOpener.dll PeareDecoder.dll) do copy "%%f" dist\ >nul 2>&1
+          "%QT_ROOT_DIR%\bin\windeployqt.exe" --release --no-translations dist\Peare.exe
+          copy README.md dist\ >nul 2>&1
+          dir dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: peare-windows-x64
+          path: dist/**
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package per-platform archives
+        run: |
+          set -e
+          mkdir -p release
+          ( cd artifacts/peare-linux-x64   && tar czf "$GITHUB_WORKSPACE/release/peare-${GITHUB_REF_NAME}-linux-x64.tar.gz" . )
+          ( cd artifacts/peare-windows-x64 && zip -r  "$GITHUB_WORKSPACE/release/peare-${GITHUB_REF_NAME}-windows-x64.zip" . )
+          ls -la release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true

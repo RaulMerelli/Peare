@@ -397,6 +397,7 @@ Historical executable formats contain undocumented structures, vendor variations
 | DiscUtils (filesystem/disk readers: ISO 9660, WIM, FAT, exFAT, NTFS, ext2/3/4, XFS, Btrfs, SquashFS, HFS+, UDF, Linux swap, LVM2, Linux MD RAID1, Windows LDM, Windows Registry hive and BCD BootConfig stores, DMG/UDIF, VMDK, VHD, VDI, VHDX, SDI, XVA, MBR/GPT/APM, stream/buffer layers) | Kenneth Bell / LTRData |
 | wimlib (LZX compression) | Eric Biggers |
 | cabextract (LZX code lineage, via wimlib) | Stuart Caie |
+| miniz (deflate/zlib decompression) | Rich Geldreich et al. |
 | Tiny AES in C | kokke |
 | wmp-wsz-format (WMP skin WSZ layout) | Ted de Baets (tdebaets) |
 
@@ -407,7 +408,8 @@ Historical executable formats contain undocumented structures, vendor variations
 | DiscUtils (LTRData fork) | https://github.com/LTRData/DiscUtils |
 | OSTA Universal Disk Format specification | https://www.osta.org/specs/ |
 | ECMA-119 (ISO 9660) / ECMA-167 (UDF volume structure) | https://ecma-international.org/publications-and-standards/standards/ |
-| wimlib | https://wimlib.net/ Â· https://github.com/ebiggers/wimlib |
+| wimlib | https://wimlib.net/ · https://github.com/ebiggers/wimlib |
+| miniz | https://github.com/richgel999/miniz |
 | Tiny AES in C | https://github.com/kokke/tiny-AES-c |
 | WMP WSZ format | https://github.com/tdebaets/wmp-wsz-format |
 | IBM OS/2 16/32-bit Object Module Format | https://www.edm2.com/index.php/IBM_OS/2_16/32-bit_Object_Module_Format_ |

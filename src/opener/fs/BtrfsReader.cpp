@@ -6,7 +6,7 @@
 #include <map>
 #include <sstream>
 
-#include <QtZlib/zlib.h>
+#include <miniz.h>
 
 namespace peare {
 namespace fs {

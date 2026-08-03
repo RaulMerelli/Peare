@@ -6,7 +6,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QStringList>
-#include <QtZlib/zlib.h>
+#include <miniz.h>
 
 #include <algorithm>
 #include <cstring>

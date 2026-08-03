@@ -4,7 +4,7 @@
 #include <cstring>
 #include <limits>
 
-#include <QtZlib/zlib.h>
+#include <miniz.h>
 
 namespace peare {
 namespace fs {
