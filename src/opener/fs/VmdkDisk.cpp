@@ -149,8 +149,12 @@ public:
 
 private:
     struct GrainRef {
-        std::int64_t dataOffset = 0;
-        std::uint32_t compressedSize = 0;
+        GrainRef() : dataOffset(0), compressedSize(0) {}
+        GrainRef(std::int64_t valueDataOffset, std::uint32_t valueCompressedSize)
+            : dataOffset(valueDataOffset), compressedSize(valueCompressedSize) {}
+
+        std::int64_t dataOffset;
+        std::uint32_t compressedSize;
     };
 
     bool buildIndex(std::int64_t pos, std::string* error) {

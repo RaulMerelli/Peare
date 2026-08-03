@@ -46,8 +46,12 @@ private:
     };
 
     struct DirRec {
+        DirRec() : inode(0) {}
+        DirRec(const std::string& valueName, std::uint64_t valueInode)
+            : name(valueName), inode(valueInode) {}
+
         std::string name;
-        std::uint64_t inode = 0;
+        std::uint64_t inode;
     };
 
     void parse();

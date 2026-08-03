@@ -17,9 +17,13 @@ namespace fs {
 class BtrfsReader final : public IDiscFileSystem {
 public:
     struct Key {
-        std::uint64_t objectId = 0;
-        std::uint8_t type = 0;
-        std::uint64_t offset = 0;
+        Key() : objectId(0), type(0), offset(0) {}
+        Key(std::uint64_t valueObjectId, std::uint8_t valueType, std::uint64_t valueOffset)
+            : objectId(valueObjectId), type(valueType), offset(valueOffset) {}
+
+        std::uint64_t objectId;
+        std::uint8_t type;
+        std::uint64_t offset;
     };
     struct Chunk {
         std::uint64_t logical = 0;

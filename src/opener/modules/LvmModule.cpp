@@ -19,8 +19,12 @@ const std::int64_t kSector = 512;
 const std::uint32_t kInitialCrc = 0xf597a6cfU;
 
 struct Area {
-    std::uint64_t offset = 0;
-    std::uint64_t length = 0;
+    Area() : offset(0), length(0) {}
+    Area(std::uint64_t valueOffset, std::uint64_t valueLength)
+        : offset(valueOffset), length(valueLength) {}
+
+    std::uint64_t offset;
+    std::uint64_t length;
 };
 
 struct PvInfo {

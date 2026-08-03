@@ -24,9 +24,13 @@ namespace peare {
 namespace fs {
 
 struct DiscEntry {
+    DiscEntry() : isDirectory(false), length(0) {}
+    DiscEntry(const std::string& valueName, bool valueIsDirectory, std::int64_t valueLength)
+        : name(valueName), isDirectory(valueIsDirectory), length(valueLength) {}
+
     std::string name;        // leaf name (no path separators)
-    bool isDirectory = false;
-    std::int64_t length = 0; // content length in bytes (0 for directories)
+    bool isDirectory;
+    std::int64_t length;     // content length in bytes (0 for directories)
 };
 
 class IDiscFileSystem {
