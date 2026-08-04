@@ -371,10 +371,17 @@ std::unique_ptr<LxModule> LxModule::open(const QString& filePath)
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) { module->info_.error = file.errorString(); return module; }
     const QByteArray bytes = file.readAll();
-    if (bytes.size() < 0x40 || u16(bytes, 0) != 0x5A4D) {
-        module->info_.error = QStringLiteral("The file is not an MZ executable."); return module;
+    quint32 lxHeaderOffset = 0;
+    if (bytes.size() >= 2 && u16(bytes, 0) == 0x584C) {
+        lxHeaderOffset = 0;
+    } else {
+        if (bytes.size() < 0x40 || u16(bytes, 0) != 0x5A4D) {
+            module->info_.error = QStringLiteral("The file is neither an MZ-wrapped nor a stubless LX executable.");
+            return module;
+        }
+        lxHeaderOffset = u32(bytes, 0x3C);
     }
-    const quint32 lxHeaderOffset = u32(bytes, 0x3C);
+
     module->info_.headerOffset = lxHeaderOffset;
     if (lxHeaderOffset + 0xAC > quint32(bytes.size()) || u16(bytes, lxHeaderOffset) != 0x584C) {
         module->info_.error = QStringLiteral("The file is not a Linear Executable (LX)."); return module;

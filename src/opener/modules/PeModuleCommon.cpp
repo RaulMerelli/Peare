@@ -19,6 +19,10 @@ void appendPeResources(QVector<ResourceEntry>& destination,
         target.codePage = source.codePage;
         target.format = ModuleFormat::PE;
         target.data = source.data;
+        // A PE resource is a complete opaque payload and may itself be an
+        // archive/firmware image. Structural PE regions (headers/sections) are
+        // deliberately not marked this way, preventing self-recursive opens.
+        target.isEmbeddedFile = true;
         target.hierarchyPath = QStringList() << QStringLiteral(".rsrc");
         destination.push_back(std::move(target));
     }
@@ -66,7 +70,7 @@ void appendPeStructure(QVector<ResourceEntry>& destination,
     headers.dataOffset = 0;
     const quint32 declaredHeaders = peU32(data, qsizetype(nt) + 24 + 60);
     headers.dataSize = qMin<quint64>(declaredHeaders ? declaredHeaders : quint64(sectionTable + count * 40), quint64(data.size()));
-    headers.format = ModuleFormat::PE;
+    headers.format = ModuleFormat::Unknown;
     headers.data = data.left(qsizetype(headers.dataSize));
     destination.push_back(std::move(headers));
 
@@ -89,7 +93,7 @@ void appendPeStructure(QVector<ResourceEntry>& destination,
         section.language = QStringLiteral("neutral");
         section.dataOffset = offset;
         section.dataSize = available;
-        section.format = ModuleFormat::PE;
+        section.format = ModuleFormat::Unknown;
         section.data = data.mid(qsizetype(offset), qsizetype(available));
         destination.push_back(std::move(section));
     }

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <set>
 #include <utility>
 
 namespace peare {
@@ -33,6 +34,7 @@ FatReader::FatReader(ByteStorePtr disc) : disc_(std::move(disc)) {
 }
 
 void FatReader::parse() {
+    if (!disc_ || disc_->capacity() < 512) { error_ = "Truncated boot sector"; return; }
     const std::vector<std::uint8_t> bpb = disc_->readRange(0, 512);
     if (bpb.size() < 512) { error_ = "Truncated boot sector"; return; }
 
@@ -47,29 +49,64 @@ void FatReader::parse() {
     const std::uint32_t fatSz32 = le32(bpb, 36);
     rootClus_ = le32(bpb, 44);
 
-    if (bytesPerSec_ == 0 || secPerClus_ == 0) { error_ = "Invalid BPB"; return; }
+    const bool validSectorSize = bytesPerSec_ >= 512 && bytesPerSec_ <= 4096 &&
+        (bytesPerSec_ & (bytesPerSec_ - 1)) == 0;
+    const bool validClusterSize = secPerClus_ != 0 && secPerClus_ <= 128 &&
+        (secPerClus_ & (secPerClus_ - 1)) == 0;
+    if (!validSectorSize || !validClusterSize || rsvdSec_ == 0 ||
+        fatCount_ == 0 || fatCount_ > 2) {
+        error_ = "Invalid FAT BPB";
+        return;
+    }
 
-    const std::uint32_t rootDirSectors = (rootEntCnt_ * 32u + bytesPerSec_ - 1) / bytesPerSec_;
+    const std::uint64_t rootDirSectors =
+        (static_cast<std::uint64_t>(rootEntCnt_) * 32 + bytesPerSec_ - 1) / bytesPerSec_;
     fatSz_ = fatSz16 != 0 ? fatSz16 : fatSz32;
     const std::uint32_t totalSec = totSec16 != 0 ? totSec16 : totSec32;
     if (fatSz_ == 0 || totalSec == 0) { error_ = "Invalid BPB sizes"; return; }
-    const std::uint32_t dataSec = totalSec - (rsvdSec_ + fatCount_ * fatSz_ + rootDirSectors);
-    const std::uint32_t countOfClusters = dataSec / secPerClus_;
-    type_ = countOfClusters < 4085 ? FatType::Fat12
-          : countOfClusters < 65525 ? FatType::Fat16 : FatType::Fat32;
-    friendly_ = std::string("FAT") + (type_ == FatType::Fat12 ? "12" : type_ == FatType::Fat16 ? "16" : "32");
 
-    firstDataSector_ = std::int64_t(rsvdSec_) + std::int64_t(fatCount_) * fatSz_ + rootDirSectors;
-    rootDirStart_ = (std::int64_t(rsvdSec_) + std::int64_t(fatCount_) * fatSz_) * bytesPerSec_;
-    rootDirBytes_ = std::int64_t(rootEntCnt_) * 32;
+    const std::uint64_t overhead = static_cast<std::uint64_t>(rsvdSec_) +
+        static_cast<std::uint64_t>(fatCount_) * fatSz_ + rootDirSectors;
+    const std::uint64_t availableSec = static_cast<std::uint64_t>(disc_->capacity()) / bytesPerSec_;
+    if (overhead >= totalSec || totalSec > availableSec) {
+        error_ = "FAT volume exceeds source bounds";
+        return;
+    }
+    const std::uint64_t dataSec = static_cast<std::uint64_t>(totalSec) - overhead;
+    clusterCount_ = static_cast<std::uint32_t>(dataSec / secPerClus_);
+    if (clusterCount_ == 0) { error_ = "FAT volume has no data clusters"; return; }
+    type_ = clusterCount_ < 4085 ? FatType::Fat12
+          : clusterCount_ < 65525 ? FatType::Fat16 : FatType::Fat32;
+    friendly_ = std::string("FAT") +
+        (type_ == FatType::Fat12 ? "12" : type_ == FatType::Fat16 ? "16" : "32");
 
-    // Materialise the (active/first) FAT table.
-    const std::int64_t fatStart = std::int64_t(rsvdSec_) * bytesPerSec_;
-    const std::int64_t fatBytes = std::int64_t(fatSz_) * bytesPerSec_;
+    firstDataSector_ = static_cast<std::int64_t>(overhead);
+    rootDirStart_ = (static_cast<std::int64_t>(rsvdSec_) +
+                     static_cast<std::int64_t>(fatCount_) * fatSz_) * bytesPerSec_;
+    rootDirBytes_ = static_cast<std::int64_t>(rootEntCnt_) * 32;
+
+    std::uint32_t activeFat = 0;
+    if (type_ == FatType::Fat32) {
+        const std::uint16_t extFlags = le16(bpb, 40);
+        if (extFlags & 0x0080) {
+            activeFat = extFlags & 0x000F;
+            if (activeFat >= fatCount_) { error_ = "Invalid FAT32 active FAT"; return; }
+        }
+        if (rootClus_ < 2 || rootClus_ >= clusterCount_ + 2) {
+            error_ = "Invalid FAT32 root cluster";
+            return;
+        }
+    }
+
+    const std::int64_t fatStart =
+        (static_cast<std::int64_t>(rsvdSec_) + static_cast<std::int64_t>(activeFat) * fatSz_) *
+        bytesPerSec_;
+    const std::int64_t fatBytes = static_cast<std::int64_t>(fatSz_) * bytesPerSec_;
     fat_ = disc_->readRange(fatStart, fatBytes);
-
-    // Sanity: FAT32 root cluster must be >= 2.
-    if (type_ == FatType::Fat32 && rootClus_ < 2) { error_ = "Invalid FAT32 root cluster"; return; }
+    if (fat_.size() != static_cast<std::size_t>(fatBytes)) {
+        error_ = "Truncated FAT table";
+        return;
+    }
     valid_ = true;
 }
 
@@ -97,19 +134,19 @@ std::uint32_t FatReader::nextCluster(std::uint32_t cluster) const {
 
 std::vector<std::uint32_t> FatReader::chain(std::uint32_t firstCluster) const {
     std::vector<std::uint32_t> out;
+    std::set<std::uint32_t> visited;
     std::uint32_t c = firstCluster;
-    // Bound the walk to the number of FAT entries to defend against loops.
-    const std::size_t maxEntries = fat_.size() ? fat_.size() : 1;
-    while (c >= 2 && out.size() < maxEntries) {
-        // Bad cluster / free cluster ends the chain.
+    const std::size_t maxEntries = static_cast<std::size_t>(clusterCount_) + 2;
+    while (c >= 2 && c < clusterCount_ + 2 && out.size() < maxEntries &&
+           visited.insert(c).second) {
         if ((type_ == FatType::Fat12 && (c & 0x0FFF) == 0x0FF7) ||
             (type_ == FatType::Fat16 && (c & 0xFFFF) == 0xFFF7) ||
             (type_ == FatType::Fat32 && (c & 0x0FFFFFFF) == 0x0FFFFFF7))
             break;
         out.push_back(c);
         const std::uint32_t next = nextCluster(c);
-        if (isEndOfChain(next))
-            break;
+        if (isEndOfChain(next)) break;
+        if (next == 0 || next == 1) break;
         c = next;
     }
     return out;
@@ -151,46 +188,90 @@ ByteStorePtr FatReader::clusterContent(std::uint32_t firstCluster, std::uint32_t
     return std::make_shared<SubStore>(concat, 0, std::int64_t(size));
 }
 
-std::vector<FatReader::DirEntry> FatReader::parseDirectory(const std::vector<std::uint8_t>& buf) const {
+std::vector<FatReader::DirEntry> FatReader::parseDirectory(
+    const std::vector<std::uint8_t>& buf) const {
     std::vector<DirEntry> out;
-    std::vector<std::uint16_t> lfn;  // assembled UTF-16 code units, index = (seq-1)*13+k
+    std::vector<std::uint16_t> lfn;
+    int expectedSequence = 0;
+    std::uint8_t lfnChecksum = 0;
+    bool lfnActive = false;
+
+    const auto resetLfn = [&]() {
+        lfn.clear();
+        expectedSequence = 0;
+        lfnChecksum = 0;
+        lfnActive = false;
+    };
+    const auto shortChecksum = [](const std::uint8_t* name) {
+        std::uint8_t sum = 0;
+        for (int i = 0; i < 11; ++i)
+            sum = static_cast<std::uint8_t>(((sum & 1) ? 0x80 : 0) + (sum >> 1) + name[i]);
+        return sum;
+    };
+
     for (std::size_t off = 0; off + 32 <= buf.size(); off += 32) {
         const std::uint8_t first = buf[off];
-        if (first == 0x00) break;              // end of directory
+        if (first == 0x00) break;
         const std::uint8_t attr = buf[off + 11];
-        if (first == 0xE5) { lfn.clear(); continue; }  // deleted
+        if (first == 0xE5) { resetLfn(); continue; }
 
-        if ((attr & 0x0F) == 0x0F) {           // LFN entry
+        if ((attr & 0x0F) == 0x0F) {
             const int seq = first & 0x3F;
-            if (seq >= 1) {
-                if (lfn.size() < std::size_t(seq) * 13) lfn.resize(std::size_t(seq) * 13, 0xFFFF);
-                std::size_t p = std::size_t(seq - 1) * 13;
-                for (int k = 0; k < 5; ++k) lfn[p + k] = le16(buf, off + 1 + k * 2);
-                for (int k = 0; k < 6; ++k) lfn[p + 5 + k] = le16(buf, off + 14 + k * 2);
-                for (int k = 0; k < 2; ++k) lfn[p + 11 + k] = le16(buf, off + 28 + k * 2);
+            const bool last = (first & 0x40) != 0;
+            const std::uint8_t checksum = buf[off + 13];
+            if (seq < 1 || seq > 20 || buf[off + 12] != 0 || le16(buf, off + 26) != 0) {
+                resetLfn();
+                continue;
             }
+            if (last) {
+                lfn.assign(static_cast<std::size_t>(seq) * 13, 0xFFFF);
+                expectedSequence = seq;
+                lfnChecksum = checksum;
+                lfnActive = true;
+            }
+            if (!lfnActive || seq != expectedSequence || checksum != lfnChecksum) {
+                resetLfn();
+                continue;
+            }
+            const std::size_t pos = static_cast<std::size_t>(seq - 1) * 13;
+            for (int k = 0; k < 5; ++k) lfn[pos + k] = le16(buf, off + 1 + k * 2);
+            for (int k = 0; k < 6; ++k) lfn[pos + 5 + k] = le16(buf, off + 14 + k * 2);
+            for (int k = 0; k < 2; ++k) lfn[pos + 11 + k] = le16(buf, off + 28 + k * 2);
+            --expectedSequence;
             continue;
         }
 
-        // 8.3 entry. Skip volume-label entries.
-        if (attr & 0x08) { lfn.clear(); continue; }
+        if (attr & 0x08) { resetLfn(); continue; }
 
         DirEntry e;
-        if (!lfn.empty()) {
-            for (std::uint16_t c : lfn) { if (c == 0 || c == 0xFFFF) break; appendUtf8(e.name, c); }
+        if (lfnActive && expectedSequence == 0 &&
+            shortChecksum(buf.data() + off) == lfnChecksum) {
+            for (std::size_t i = 0; i < lfn.size(); ++i) {
+                const std::uint16_t c = lfn[i];
+                if (c == 0 || c == 0xFFFF) break;
+                appendUtf8(e.name, c);
+            }
         }
-        lfn.clear();
-        if (e.name.empty()) {  // decode the 8.3 short name
+        resetLfn();
+        if (e.name.empty()) {
             std::string base, ext;
-            for (int k = 0; k < 8; ++k) { char c = char(buf[off + k]); if (c != ' ') base.push_back(c); }
-            for (int k = 0; k < 3; ++k) { char c = char(buf[off + 8 + k]); if (c != ' ') ext.push_back(c); }
-            if (!base.empty() && std::uint8_t(base[0]) == 0x05) base[0] = char(0xE5);
+            for (int k = 0; k < 8; ++k) {
+                char c = static_cast<char>(buf[off + k]);
+                if (c != ' ') base.push_back(c);
+            }
+            for (int k = 0; k < 3; ++k) {
+                char c = static_cast<char>(buf[off + 8 + k]);
+                if (c != ' ') ext.push_back(c);
+            }
+            if (!base.empty() && static_cast<std::uint8_t>(base[0]) == 0x05)
+                base[0] = static_cast<char>(0xE5);
             e.name = ext.empty() ? base : base + "." + ext;
         }
         if (e.name == "." || e.name == "..") continue;
 
         e.isDirectory = (attr & 0x10) != 0;
-        e.firstCluster = (std::uint32_t(le16(buf, off + 20)) << 16) | le16(buf, off + 26);
+        e.firstCluster = (static_cast<std::uint32_t>(le16(buf, off + 20)) << 16) |
+                         le16(buf, off + 26);
         e.size = le32(buf, off + 28);
         if (!e.name.empty()) out.push_back(std::move(e));
     }

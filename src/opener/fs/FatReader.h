@@ -59,6 +59,7 @@ private:
     std::uint16_t rootEntCnt_ = 0;
     std::uint32_t fatSz_ = 0;
     std::uint32_t rootClus_ = 0;
+    std::uint32_t clusterCount_ = 0;
     std::int64_t firstDataSector_ = 0;
     std::int64_t rootDirStart_ = 0;   // FAT12/16 fixed root area byte offset
     std::int64_t rootDirBytes_ = 0;

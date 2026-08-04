@@ -45,7 +45,8 @@ ModulePtr VmdkModule::buildFromDisk(const fs::ByteStorePtr& disk, const QString&
     module->disk_ = disk;
 
     std::vector<fs::PartitionInfo> parts = fs::readPartitionTable(disk);
-    auto addPartition = [&](const QString& name, std::int64_t off, std::int64_t len) {
+    auto addPartition = [&](const QString& name, std::int64_t off, std::int64_t len,
+                            const fs::ByteStorePtr& content = fs::ByteStorePtr()) {
         ResourceEntry entry;
         entry.type = QStringLiteral("DISK_PARTITION");
         entry.isEmbeddedFile = true;
@@ -53,7 +54,7 @@ ModulePtr VmdkModule::buildFromDisk(const fs::ByteStorePtr& disk, const QString&
         entry.language = QStringLiteral("neutral");
         entry.dataSize = quint64(len);
         entry.dataOffset = quint64(off);
-        entry.content = std::make_shared<fs::SubStore>(disk, off, len);
+        entry.content = content ? content : std::make_shared<fs::SubStore>(disk, off, len);
         module->resources_.push_back(std::move(entry));
     };
 
@@ -62,10 +63,11 @@ ModulePtr VmdkModule::buildFromDisk(const fs::ByteStorePtr& disk, const QString&
     } else {
         for (std::size_t i = 0; i < parts.size(); ++i) {
             const fs::PartitionInfo& p = parts[i];
-            addPartition(QStringLiteral("Partition %1 (%2)")
-                             .arg(i + 1)
-                             .arg(QString::fromStdString(p.typeName)),
-                         p.offset, p.length);
+            const QString partitionName = p.typeName.empty()
+                ? QStringLiteral("Partition %1").arg(i + 1)
+                : QStringLiteral("Partition %1 — %2").arg(i + 1)
+                      .arg(QString::fromStdString(p.typeName));
+            addPartition(partitionName, p.offset, p.length, p.content);
         }
     }
     return ModulePtr(std::move(module));

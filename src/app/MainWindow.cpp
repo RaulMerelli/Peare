@@ -252,13 +252,14 @@ void MainWindow::clearContent()
 void MainWindow::openFile()
 {
     const QString filters = QStringLiteral(
-        "All supported modules (*.exe *.dll *.sys *.ocx *.cpl *.scr *.drv *.ax *.efi *.mui *.tlb *.acm *.spl *.sct *.wll *.xll *.fll *.pyd *.bpl *.ifs *.msstyles *.386 *.vxd *.fon *.le *.lx *.xbe *.xex *.xzp *.xuiz *.live *.pirs *.con);;"
+        "All supported modules (*.exe *.dll *.sys *.ocx *.cpl *.scr *.drv *.ax *.efi *.mui *.tlb *.acm *.spl *.sct *.wll *.xll *.fll *.pyd *.bpl *.ifs *.msstyles *.386 *.vxd *.fon *.le *.lx *.xbe *.xex *.xzp *.xuiz *.live *.pirs *.con *.bin *.nb0 *.nbf *.fim);;"
         "DOS, Windows and OS/2 executables (*.exe *.dll *.sys *.ocx *.cpl *.scr *.drv *.ax *.efi *.mui *.tlb *.acm *.spl *.sct *.wll *.xll *.fll *.pyd *.bpl *.ifs *.msstyles *.386 *.vxd *.fon *.le *.lx);;"
         "Portable Executable (PE) (*.exe *.dll *.sys *.ocx *.cpl *.scr *.drv *.ax *.efi *.mui *.tlb *.acm *.spl *.sct *.wll *.xll *.fll *.pyd *.bpl *.ifs *.msstyles);;"
         "New Executable (NE) (*.exe *.dll *.drv *.386 *.vxd *.fon);;"
         "Linear Executable (LE/LX) (*.exe *.dll *.drv *.le *.lx);;"
         "Xbox executables (*.xbe *.xex);;"
         "Xbox 360 archives and packages (*.xzp *.xuiz *.live *.pirs *.con);;"
+        "Windows CE ROM and IMGFS (*.bin *.nb0 *.nbf *.fim);;"
         "All files (*.*)");
 
     QFileDialog dialog(this, QStringLiteral("Open module"));
@@ -451,11 +452,16 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
                 context.type == QStringLiteral("DISK_PARTITION") ||
                 context.type == QStringLiteral("ISO_FILE") ||
                 context.type == QStringLiteral("WIM_FILE") ||
+                context.type == QStringLiteral("WINCE_FILE") ||
+                context.type == QStringLiteral("OS2_PACK_FILE") ||
                 context.type == QStringLiteral("FAT_FILE") ||
                 context.type == QStringLiteral("EXFAT_FILE") ||
                 context.type == QStringLiteral("NTFS_FILE") ||
                 context.type == QStringLiteral("EXT_FILE") ||
                 context.type == QStringLiteral("XFS_FILE") ||
+                context.type == QStringLiteral("JFS_FILE") ||
+                context.type == QStringLiteral("HPFS_FILE") ||
+                context.type == QStringLiteral("SIEMENS_FSF_FILE") ||
                 context.type == QStringLiteral("SQUASHFS_FILE") ||
                 context.type == QStringLiteral("HFS_FILE") ||
                 context.type == QStringLiteral("BTRFS_FILE") ||
@@ -488,7 +494,6 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
                 context.type == QStringLiteral("LX_AREA") ||
                 context.type == QStringLiteral("XUIZ_CONTAINER") ||
                 context.type == QStringLiteral("XUIZ_FILE") ||
-                context.type == QStringLiteral("OS2_PACK_FILE") ||
                 context.type == QStringLiteral("SZDD_FILE") ||
                 context.type == QStringLiteral("SIEMENS_IMG_FILE") ||
                 context.type == QStringLiteral("SIEMENS_FWF_FILE")) {

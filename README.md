@@ -108,8 +108,8 @@ The GUI opens files, builds the resource tree, displays decoded results, compose
 
 The stateful Opener:
 
-- opens PE, NE, LE, LX, XBE, XEX, XUIZ, LIVE, PIRS, CON executables, OS/2 PACK/PACK2 and
-  SZDD archives, Siemens firmware, SDI and XVA deployment images, Linux swap, LVM, MD RAID and Windows Dynamic Disk/LDM, ISO 9660 / WIM / FAT / exFAT / NTFS / ext / XFS / Btrfs / SquashFS / HFS+ / UDF disc images, and DMG / VMDK / VHD / VDI / VHDX virtual disks —
+- opens PE, NE, LE, LX, XBE, XEX, XUIZ, LIVE, PIRS, CON executables, OS/2 PACK/PACK2,
+  OS/2 FEALIST extended-attribute files and SZDD archives, Siemens firmware, FFU, SDI and XVA deployment images, Linux swap, LVM, MD RAID and Windows Dynamic Disk/LDM, ISO 9660 / WIM / FAT / exFAT / NTFS / ext / XFS / JFS / Btrfs / SquashFS / HFS+ / UDF disc images, and DMG / VMDK / VHD / VDI / VHDX virtual disks —
   from a file path or any byte source, through one entry point;
 - opens Microsoft CAB archives, including uncompressed, MSZIP and LZX folders;
 - opens ZIP and TAR archives as virtual filesystems;
@@ -164,15 +164,19 @@ The Opener additionally has support for uncommon archives:
 | Format | Description | Notes |
 |---|---|---|
 | Xbox 360 XUIZ | Resource archive |  |
-| OS/2 UnPack | IBM/Microsoft OS/2 PACK and PACK2 archives | PACK v1 LZW and PACK2 FTCOMP `fT19` |
+| OS/2 UnPack | IBM/Microsoft OS/2 PACK and PACK2 archives | PACK v1 LZW and PACK2 FTCOMP `fT19`; member paths are exposed without an artificial archive-root folder |
+| OS/2 FEALIST | Extended-attribute list, commonly stored as `.EA_` | Exposes named EAs as binary or text resources; embedded image payloads remain available to the Decoder |
 | Microsoft Compress | SZDD archive (variant A) |  |
 | Microsoft Cabinet | CAB archive | uncompressed, MSZIP and LZX folders |
-| ZIP | Virtual filesystem archive | stored and deflate entries; ZIP64/encrypted entries not yet |
+| ZIP | Virtual filesystem archive | stored, Shrink and Deflate entries; decompression is lazy; ZIP64/encrypted entries not yet |
 | TAR | Virtual filesystem archive | regular files and directories; hard links when target appears first; symlinks skipped |
+| Microsoft FFU | Full Flash Update image | Windows Phone/W10M and desktop v1/v2 stores; sparse write descriptors, GPT partitions and multi-store images |
 | Microsoft SDI | System Deployment Image | exposes sections such as PART and WIM as nested payloads |
 | Xen XVA | Xen Virtual Appliance | TAR-based appliance; reconstructs VDI chunk disks and exposes partitions |
 | Siemens ProSave IMG | Firmware image for HMIs |  |
-| Siemens ProSave FWF | Firmware image for HMIs |  |
+| Siemens ProSave FWF | Firmware image for HMIs | OMS object stream; exposes NK, flash images and nested FSF volumes |
+| Siemens FSF | Windows CE flash-file archive used in Siemens HMI firmware | Real `\flash` hierarchy, lazy member extraction and safe partial-segment handling |
+| Windows CE ROM / IMGFS | ROM and flash filesystem archive | B000FF, raw NB0/XIP, NOSAJ, ARNOLDBOOTBLOCK, iPAQ NBF, CE 1.x/2.x structural ROMs, IMGFS direct and FTL |
 | ISO 9660 | Optical disc image | Joliet; 2048-byte ISO and raw 2352-byte Mode2 BIN images |
 | Microsoft WIM | Windows Imaging Format | LZX and XPRESS chunks |
 | FAT | FAT12/16/32 volume | Floppies, EFI System Partitions, USB/firmware images |
@@ -180,6 +184,8 @@ The Opener additionally has support for uncommon archives:
 | NTFS | Microsoft NTFS volume | MFT + attributes, data-run runlists, $I30 index; LZNT1-compressed files not yet decoded |
 | ext2/3/4 | Linux ext volume | ext4 extent trees + ext2/3 indirect block maps |
 | XFS | Linux XFS volume | v4/v5, local/extent/btree inodes, shortform/block/leaf directories |
+| JFS | IBM Journaled File System volume | JFS1 v1/v2, primary/secondary superblocks and AITs, fileset inode maps/IAGs, indexed and legacy OS/2 directory trees, xtree extents, sparse files, symlinks and OS/2 LVM/DriveLink segmented-volume reconstruction |
+| HPFS | IBM/Microsoft High Performance File System volume | OS/2 HPFS boot/super/spare blocks, directory dnode B-trees, fnode/anode allocation trees, fragmented and sparse files, hotfix remapping, CP437/850/852/866 names; EAs and HPFS386 ACLs are not exposed |
 | Btrfs | Linux Btrfs volume | single-device chunk map, directories, subvolumes, sparse/raw/zlib/LZO extents |
 | SquashFS | Compressed Linux filesystem image | v4 zlib, metadata/data blocks and fragments |
 | HFS+ / HFSX | Apple HFS Plus volume | Catalog B-tree leaf records and data fork reads through initial extents |
@@ -200,7 +206,7 @@ lazy path.
 
 | Format | Description | Notes |
 |---|---|---|
-| VMware VMDK | Virtual disk | monolithicSparse, split sparse/flat, streamOptimized |
+| VMware VMDK | Virtual disk | monolithicSparse, split sparse/flat (including non-zero FLAT backing offsets), streamOptimized |
 | Apple DMG / UDIF | Disk image | blkx resources with raw, zero and zlib-compressed runs |
 | Microsoft VHD | Virtual disk | fixed and dynamic; differencing parents not yet resolved |
 | VirtualBox VDI | Virtual disk | fixed and dynamic; differencing/undo parents not yet resolved |
@@ -212,6 +218,13 @@ MBR/GPT/APM partition layer, and the underlying positioned byte-store / stream l
 are clean-room C++ ports of **LTRData DiscUtils**, kept byte-compatible with it.
 They compose lazily so a file inside a partition inside a virtual disk opens
 without materialising anything.
+
+The JFS and HPFS readers are independent read-only implementations based on
+IBM OS/2 and Linux on-disk structures. The JFS reader handles both directory-entry
+layouts encountered in OS/2 and indexed JFS volumes, selects usable primary or
+secondary metadata, and can reconstruct segmented OS/2 LVM/DriveLink volumes.
+They use the same lazy byte-store and nested-container model as the other
+filesystem readers.
 
 ## Resource compatibility
 
@@ -304,7 +317,7 @@ Detailed instructions are in [docs/GUI.md](docs/GUI.md).
 
 Automated scripts for building are available for each plaform supported.
 
-Manual build, install, and test procedures are documented in [docs/BUILDING.md](docs/BUILDING.md).
+Manual build and installation procedures are documented in [docs/BUILDING.md](docs/BUILDING.md).
 
 ## Extensibility
 
@@ -331,14 +344,9 @@ by family; each is a candidate for a byte-exact reader behind the same C ABI.
 
 **File systems**
 
-- **HPFS** — OS/2 High Performance File System (not covered by DiscUtils; clean
-  implementation from the on-disk format).
-- **JFS** — IBM/OS/2–Linux Journaled File System.
+
 - **Legacy NTFS** — the early NTFS v1.x layout as written by Windows NT 3.1/3.5,
   which predates several structures the modern reader assumes.
-- **Windows CE ROM images** — the **XIP** (execute-in-place) module region and the
-  **IMGFS** file system (as handled by `eimgfs`), for Windows CE / Windows Mobile
-  ROM dumps.
 
 **Archives and compressors (the formats 7-Zip handles, that Peare does not yet)**
 
@@ -397,6 +405,10 @@ Historical executable formats contain undocumented structures, vendor variations
 | miniz (deflate/zlib decompression) | Rich Geldreich et al. |
 | Tiny AES in C | kokke |
 | wmp-wsz-format (WMP skin WSZ layout) | Ted de Baets (tdebaets) |
+| CERF (Windows CE ROM/container and IMGFS parser reference) | Yaroslav Kibysh / gweslab |
+| Linux JFS on-disk format definitions (format reference only) | IBM and Linux JFS maintainers |
+| wince-decompr (Windows CE LZX stream framing reference) | KodaSec / Artificial |
+| WPInternals | ReneLergner, gus33000, WPInternals contributors |
 
 **Documentation and format references**
 
@@ -405,10 +417,13 @@ Historical executable formats contain undocumented structures, vendor variations
 | DiscUtils (LTRData fork) | https://github.com/LTRData/DiscUtils |
 | OSTA Universal Disk Format specification | https://www.osta.org/specs/ |
 | ECMA-119 (ISO 9660) / ECMA-167 (UDF volume structure) | https://ecma-international.org/publications-and-standards/standards/ |
+| FFU Full Flash Update image | https://github.com/ReneLergner/WPinternals |
 | wimlib | https://wimlib.net/ · https://github.com/ebiggers/wimlib |
 | miniz | https://github.com/richgel999/miniz |
 | Tiny AES in C | https://github.com/kokke/tiny-AES-c |
 | WMP WSZ format | https://github.com/tdebaets/wmp-wsz-format |
+| CERF Windows CE emulator and ROM parser | https://github.com/gweslab/cerf |
+| WinCE Decompressor | https://github.com/KodaSec/wince-decompr |
 | IBM OS/2 16/32-bit Object Module Format | https://www.edm2.com/index.php/IBM_OS/2_16/32-bit_Object_Module_Format_ |
 | Resources and Decompiling Them | https://www.edm2.com/index.php/Resources_and_Decompiling_Them |
 | IBM OS/2 2.0 Technical Library (Presentation Driver Reference) | https://bitsavers.trailing-edge.com/pdf/ibm/pc/os2/ |
@@ -423,7 +438,7 @@ clean-room readers and is not affiliated with, authorized by, or endorsed by any
 of them. Owners referenced include, among others:
 
 - **Microsoft Corporation** — Windows, MS-DOS, PE / NE / LE / LX consumers,
-  NTFS, exFAT, FAT, WIM, Microsoft Cabinet (CAB), Microsoft Compress (SZDD),
+  NTFS, exFAT, FAT, WIM, FFU, Microsoft Cabinet (CAB), Microsoft Compress (SZDD),
   VHD and VHDX, the Windows registry hive, Boot Configuration Data (BCD),
   System Deployment Image (SDI), and Xbox / Xbox 360 formats (XBE, XEX, XUIZ,
   STFS: CON / LIVE / PIRS).
@@ -432,7 +447,7 @@ of them. Owners referenced include, among others:
 - **VMware, Inc.** — the Virtual Machine Disk (VMDK) format.
 - **Oracle Corporation** — the VirtualBox Virtual Disk Image (VDI) format.
 - **Citrix Systems / the Xen Project** — the Xen Virtual Appliance (XVA) format.
-- **Siemens AG** — the ProSave IMG and FWF firmware formats.
+- **Siemens AG** — the ProSave IMG, FWF, and embedded FSF firmware formats.
 - **OSTA, Ecma International, and ISO/IEC** — UDF and ISO 9660
   (ECMA-119 / ECMA-167).
 - **PKWARE, Inc.** — the ZIP format.
@@ -447,7 +462,7 @@ imply any endorsement.
 
 - [GUI usage](docs/GUI.md)
 - [Architecture](docs/ARCHITECTURE.md)
-- [Building, installation, and tests](docs/BUILDING.md)
+- [Building and installation](docs/BUILDING.md)
 - [Common ABI types](docs/API_TYPES.md)
 - [PeareOpener API](docs/API_OPENER.md)
 - [PeareDecoder API](docs/API_DECODER.md)

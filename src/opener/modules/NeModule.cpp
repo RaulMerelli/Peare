@@ -403,19 +403,18 @@ std::unique_ptr<NeModule> NeModule::open(const QString& filePath)
     }
     const QByteArray fileBytes = file.readAll();
 
-    // verify MZ Header (DOS Stub) ---
-    if (fileBytes.size() < 0x1A) {
-        module->info_.error = QStringLiteral("File too short for a valid MZ header.");
-        return module;
+    qsizetype neHeaderOffset = 0;
+    if (fileBytes.size() >= 2 && u16(fileBytes, 0) == 0x454E) {
+        // Native OS/2 drivers and executables may omit the DOS MZ stub.
+        neHeaderOffset = 0;
+    } else {
+        if (fileBytes.size() < 0x40 || u16(fileBytes, 0) != 0x5A4D) {
+            module->info_.error = QStringLiteral("File is neither an MZ-wrapped nor a stubless NE executable.");
+            return module;
+        }
+        neHeaderOffset = qsizetype(u32(fileBytes, 0x3C));
     }
 
-    // get NE Header Offset
-    if (fileBytes.size() < 0x40) {
-        module->info_.error = QStringLiteral("File too short for a valid NE header.");
-        return module;
-    }
-
-    const qsizetype neHeaderOffset = qsizetype(u32(fileBytes, 0x3C));
     module->info_.headerOffset = quint64(neHeaderOffset);
     if (neHeaderOffset < 0 || neHeaderOffset + 64 > fileBytes.size()) {
         module->info_.error = QStringLiteral("NE header offset out of range (0x%1).")
@@ -453,23 +452,27 @@ std::unique_ptr<NeModule> NeModule::open(const QString& filePath)
         }
 
         const quint16 resourceTableOffset = u16(fileBytes, neHeaderOffset + 0x24);
-        const qsizetype resourceTablePos = neHeaderOffset + resourceTableOffset;
-        if (resourceTablePos + 2 > fileBytes.size()) {
-            module->info_.error = QStringLiteral("Resource table offset points out of file bounds (or too close to end).");
+        const quint16 residentNamesTableOffset = u16(fileBytes, neHeaderOffset + 0x26);
+        // In Windows NE, ne_rsrctab == ne_restab means that the resource
+        // table is empty. The bytes at that offset are resident names, not
+        // resource records.
+        if (resourceTableOffset == 0 || residentNamesTableOffset <= resourceTableOffset)
             return module;
-        }
+        if (!looksLikeWindowsNeResources(fileBytes, neHeaderOffset))
+            return module;
+
+        const qsizetype resourceTablePos = neHeaderOffset + resourceTableOffset;
+        if (resourceTablePos + 2 > fileBytes.size())
+            return module;
 
         const quint16 alignShift = u16(fileBytes, resourceTablePos);
         qsizetype currentParsePos = resourceTablePos + 2; // starts after AlignmentShiftCount
 
         qsizetype safeParsingEnd = fileBytes.size();
-        if (neHeaderOffset + 0x26 + 2 <= fileBytes.size()) {
-            const quint16 residentNamesTableOffset = u16(fileBytes, neHeaderOffset + 0x26);
-            if (residentNamesTableOffset > 0) {
-                const qsizetype potentialNextTablePos = neHeaderOffset + residentNamesTableOffset;
-                if (potentialNextTablePos > currentParsePos && potentialNextTablePos < fileBytes.size())
-                    safeParsingEnd = potentialNextTablePos;
-            }
+        if (residentNamesTableOffset > 0) {
+            const qsizetype potentialNextTablePos = neHeaderOffset + residentNamesTableOffset;
+            if (potentialNextTablePos > currentParsePos && potentialNextTablePos <= fileBytes.size())
+                safeParsingEnd = potentialNextTablePos;
         }
 
         // resource table parsing loop for Windows
@@ -527,8 +530,12 @@ std::unique_ptr<NeModule> NeModule::open(const QString& filePath)
                 entry.hierarchyPath = QStringList() << QStringLiteral(".rsrc");
                 if (typeName == QStringLiteral("RT_STRING") && (idField & 0x8000))
                     entry.baseId = ((idField & 0x7FFF) - 1) * 16;
-                if (resourceOffset + resourceLength <= quint64(fileBytes.size()))
-                    entry.data = fileBytes.mid(qsizetype(resourceOffset), qsizetype(resourceLength));
+                if (resourceLength == 0 || resourceOffset > quint64(fileBytes.size()) ||
+                    resourceLength > quint64(fileBytes.size()) - resourceOffset) {
+                    currentParsePos += 12;
+                    continue;
+                }
+                entry.data = fileBytes.mid(qsizetype(resourceOffset), qsizetype(resourceLength));
 
                 module->resources_.push_back(std::move(entry));
                 currentParsePos += 12; // Advance the pointer after the resource header

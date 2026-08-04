@@ -332,7 +332,18 @@ ByteStorePtr openVmdkDisk(const ByteStorePtr& file,
             parts.push_back(ext);
         } else if (type == "FLAT" || type == "VMFS") {
             long long offsetSectors = 0;
-            ss >> offsetSectors;  // trailing offset for FLAT extents
+            const std::size_t firstQuote = line.find('"');
+            const std::size_t secondQuote = firstQuote == std::string::npos
+                ? std::string::npos : line.find('"', firstQuote + 1);
+            if (secondQuote != std::string::npos) {
+                std::istringstream tail(line.substr(secondQuote + 1));
+                tail >> offsetSectors;
+                if (!tail && !line.substr(secondQuote + 1).empty())
+                    return fail("Invalid VMDK FLAT extent offset");
+            }
+            if (offsetSectors < 0 || offsetSectors > sib->capacity() / kSector ||
+                bytes > sib->capacity() - offsetSectors * kSector)
+                return fail("VMDK FLAT extent lies outside its backing file");
             parts.push_back(std::make_shared<SubStore>(sib, offsetSectors * kSector, bytes));
         } else {
             return fail("Unsupported VMDK extent type: " + type);

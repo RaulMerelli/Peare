@@ -21,6 +21,9 @@ ResourcePlatform platformFor(const ResourceEntry& entry)
 
     switch (entry.format) {
     case ModuleFormat::PE:
+    case ModuleFormat::WINCE_ROM:
+    case ModuleFormat::FFU:
+    case ModuleFormat::SIEMENS_FSF:
         return ResourcePlatform::Windows;
     case ModuleFormat::LE:
     case ModuleFormat::LX:
@@ -34,6 +37,8 @@ ResourcePlatform platformFor(const ResourceEntry& entry)
     case ModuleFormat::CON:
         return ResourcePlatform::Other;
     case ModuleFormat::OS2_PACK:
+    case ModuleFormat::OS2_EA:
+    case ModuleFormat::HPFS:
         return ResourcePlatform::Os2;
     case ModuleFormat::SZDD:
     case ModuleFormat::CAB:
@@ -59,6 +64,7 @@ ResourcePlatform platformFor(const ResourceEntry& entry)
     case ModuleFormat::DYNAMIC_DISK:
     case ModuleFormat::EXT:
     case ModuleFormat::XFS:
+    case ModuleFormat::JFS:
     case ModuleFormat::SQUASHFS:
     case ModuleFormat::HFSPLUS:
     case ModuleFormat::DMG:
@@ -250,44 +256,83 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
     resources_.clear();
     if (resourceContainer_)
         resources_ = resourceContainer_->resources();
-    // Nested containers are no longer expanded eagerly here. Every module exposes
-    // only its own resources; a resource that is itself a container is opened on
-    // demand by the consumer (peare_resource_get_source + peare_opener_open) when
-    // it is navigated into. The is-container hint below marks such resources.
-    // Cheap is-container hint: only for whole embedded files the module declared,
-    // peek enough bytes for filesystem signatures beyond the boot sector (ISO,
-    // UDF, Btrfs) and see whether a known openable format is recognised.
+    // Nested containers are expanded only on demand. Whole files receive the
+    // existing deep header probe (needed for ISO/UDF/Btrfs signatures at fixed
+    // offsets). Arbitrary executable resources receive only a 512-byte,
+    // strong-signature probe, which makes embedded ZIP/FWF/etc. navigable without
+    // applying expensive or loose structural heuristics to every RT_* payload.
     for (ResourceEntry& entry : resources_) {
         entry.isContainer = false;
-        // A directory-level entry is always a container (it reopens the fs at a
-        // subpath); no byte peek needed. Its format labels it as the fs itself.
         if (entry.isDirectory) {
             entry.isContainer = true;
             continue;
         }
+
+        // Only complete embedded files are eligible for recursive format
+        // detection. PE headers/sections and other structural regions can begin
+        // with valid-looking signatures but are not standalone files; probing
+        // them caused the PE_HEADERS -> PE_HEADERS infinite expansion loop.
         if (!entry.isEmbeddedFile)
             continue;
-        QByteArray header;
-        if (entry.content) {
-            const std::vector<std::uint8_t> h = entry.content->readRange(0, 0x14000);
-            header = QByteArray(reinterpret_cast<const char*>(h.data()), static_cast<int>(h.size()));
-        } else {
-            header = entry.data.left(0x14000);
+
+        const auto readHead = [&](std::int64_t count) -> QByteArray {
+            if (entry.content) {
+                const std::vector<std::uint8_t> h = entry.content->readRange(0, count);
+                return QByteArray(reinterpret_cast<const char*>(h.data()),
+                                  static_cast<int>(h.size()));
+            }
+            return entry.data.left(static_cast<int>(count));
+        };
+        const auto readTail4 = [&]() -> QByteArray {
+            if (entry.content && entry.content->capacity() >= 4) {
+                const std::vector<std::uint8_t> t =
+                    entry.content->readRange(entry.content->capacity() - 4, 4);
+                return QByteArray(reinterpret_cast<const char*>(t.data()),
+                                  static_cast<int>(t.size()));
+            }
+            return entry.data.size() >= 4 ? entry.data.right(4) : QByteArray();
+        };
+
+        const QByteArray prefix = readHead(512);
+        ModuleFormat nestedFormat = prefix.isEmpty() ? ModuleFormat::Unknown
+            : ModuleFormatDetector::detectNestedBuffer(prefix).format;
+
+        // Siemens ProSave common-file IMG wraps payloads that can begin with a
+        // stronger B000FF signature. Probe the footer only for .IMG resources or
+        // an already-detected WinCE payload, then let the outer wrapper win. This
+        // keeps ordinary ISO directory enumeration at the original one-prefix-
+        // read cost while preserving ISO -> folders -> IMG -> NK.bin.
+        const bool imgCandidate = entry.name.endsWith(QStringLiteral(".img"),
+                                                       Qt::CaseInsensitive) ||
+                                  nestedFormat == ModuleFormat::WINCE_ROM;
+        if (entry.isEmbeddedFile && imgCandidate &&
+            (!entry.content || entry.content->cheapRandomAccess())) {
+            const QByteArray tail = readTail4();
+            if (tail.size() == 4) {
+                const auto* p = reinterpret_cast<const unsigned char*>(tail.constData());
+                const quint32 value = quint32(p[0]) | (quint32(p[1]) << 8) |
+                                      (quint32(p[2]) << 16) | (quint32(p[3]) << 24);
+                if (value == 0x03031998U) nestedFormat = ModuleFormat::SIEMENS_IMG;
+            }
         }
-        const ModuleFormatInfo detected =
-            header.isEmpty() ? ModuleFormatInfo{} : ModuleFormatDetector::detectBuffer(header);
-        ModuleFormat nestedFormat = detected.format;
-        if (nestedFormat == ModuleFormat::Unknown && entry.content &&
+
+        if (nestedFormat == ModuleFormat::Unknown && entry.isEmbeddedFile) {
+            const QByteArray header = readHead(0x14000);
+            nestedFormat = header.isEmpty() ? ModuleFormat::Unknown
+                : ModuleFormatDetector::detectBuffer(header).format;
+        }
+
+        if (nestedFormat == ModuleFormat::Unknown && entry.content && entry.isEmbeddedFile &&
+            entry.content->cheapRandomAccess() &&
             fs::hasLinuxRaidSuperblock(entry.content))
             nestedFormat = ModuleFormat::LINUX_RAID;
-        if (nestedFormat == ModuleFormat::Unknown && entry.content &&
+        if (nestedFormat == ModuleFormat::Unknown && entry.content && entry.isEmbeddedFile &&
+            entry.content->cheapRandomAccess() &&
             fs::hasDynamicDiskMetadata(entry.content))
             nestedFormat = ModuleFormat::DYNAMIC_DISK;
+
         entry.isContainer = nestedFormat != ModuleFormat::Unknown;
         if (entry.isContainer)
-            // Report the resource's *own* recognised format (e.g. PE) rather than
-            // the containing module's (e.g. ISO 9660), so a selected nested file
-            // is labelled by what it actually is.
             entry.format = nestedFormat;
     }
     rebuildFolders();
@@ -319,10 +364,15 @@ void OpenerSession::rebuildFolders()
             entry.type == QStringLiteral("LX_AREA") ||
             entry.type == QStringLiteral("XUIZ_CONTAINER") ||
             entry.type == QStringLiteral("XUIZ_FILE") ||
+            entry.type == QStringLiteral("WINCE_FILE") ||
             entry.type == QStringLiteral("OS2_PACK_FILE") ||
             entry.type == QStringLiteral("SZDD_FILE") ||
+            entry.type == QStringLiteral("CAB_FILE") ||
+            entry.type == QStringLiteral("ZIP_FILE") ||
+            entry.type == QStringLiteral("TAR_FILE") ||
             entry.type == QStringLiteral("SIEMENS_IMG_FILE") ||
             entry.type == QStringLiteral("SIEMENS_FWF_FILE") ||
+            entry.type == QStringLiteral("SIEMENS_FSF_FILE") ||
             entry.type == QStringLiteral("ISO_FILE") ||
             entry.type == QStringLiteral("WIM_FILE") ||
             entry.type == QStringLiteral("FAT_FILE") ||
@@ -331,6 +381,8 @@ void OpenerSession::rebuildFolders()
             entry.type == QStringLiteral("EXT_FILE") ||
             entry.type == QStringLiteral("NTFS_FILE") ||
             entry.type == QStringLiteral("XFS_FILE") ||
+            entry.type == QStringLiteral("JFS_FILE") ||
+            entry.type == QStringLiteral("HPFS_FILE") ||
             entry.type == QStringLiteral("SQUASHFS_FILE") ||
             entry.type == QStringLiteral("HFS_FILE") ||
             entry.type == QStringLiteral("BTRFS_FILE") ||

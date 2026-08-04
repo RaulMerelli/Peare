@@ -18,6 +18,8 @@ struct PartitionInfo {
     std::string typeName;      // human-readable partition type/label
     std::int64_t offset = 0;   // byte offset of the partition within the disk
     std::int64_t length = 0;   // byte length
+    std::uint8_t mbrType = 0;  // original MBR type when applicable
+    ByteStorePtr content;       // optional assembled logical-volume view
 };
 
 // Reads the partition table (GPT preferred, else MBR incl. extended chain).

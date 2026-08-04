@@ -41,6 +41,11 @@ public:
     // (== IBuffer.Read(pos, buffer, offset, count)).
     virtual int read(std::int64_t pos, std::uint8_t* dst, int count) const = 0;
 
+    // True when positioned reads have roughly constant cost. Sequentially
+    // compressed members override this: probing a trailer would otherwise
+    // force decompression of the whole file merely while building the tree.
+    virtual bool cheapRandomAccess() const { return true; }
+
     // Convenience helpers layered on read().
     void readExactly(std::int64_t pos, std::uint8_t* dst, int count) const {
         int done = 0;

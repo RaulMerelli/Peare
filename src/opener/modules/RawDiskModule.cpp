@@ -39,7 +39,16 @@ ModulePtr RawDiskModule::open(const fs::ByteStorePtr& disk, const QString& sourc
 
     const std::vector<fs::PartitionInfo> parts = fs::readPartitionTable(disk);
     if (parts.empty()) {
-        module->info_.error = QStringLiteral("No MBR/GPT partition table found");
+        ResourceEntry entry;
+        entry.type = QStringLiteral("DISK_PARTITION");
+        entry.isEmbeddedFile = true;
+        entry.name = QStringLiteral("Whole disk");
+        entry.language = QStringLiteral("neutral");
+        entry.dataOffset = 0;
+        entry.dataSize = quint64(disk->capacity());
+        entry.format = ModuleFormat::RAW_DISK;
+        entry.content = disk;
+        module->resources_.push_back(std::move(entry));
         return ModulePtr(std::move(module));
     }
 
@@ -48,14 +57,15 @@ ModulePtr RawDiskModule::open(const fs::ByteStorePtr& disk, const QString& sourc
         ResourceEntry entry;
         entry.type = QStringLiteral("DISK_PARTITION");
         entry.isEmbeddedFile = true;
-        entry.name = QStringLiteral("Partition %1 (%2)")
-                         .arg(i + 1)
-                         .arg(QString::fromStdString(p.typeName));
+        entry.name = p.typeName.empty()
+            ? QStringLiteral("Partition %1").arg(i + 1)
+            : QStringLiteral("Partition %1 — %2").arg(i + 1)
+                  .arg(QString::fromStdString(p.typeName));
         entry.language = QStringLiteral("neutral");
         entry.dataOffset = quint64(p.offset);
         entry.dataSize = quint64(p.length);
         entry.format = ModuleFormat::RAW_DISK;
-        entry.content = std::make_shared<fs::SubStore>(disk, p.offset, p.length);
+        entry.content = p.content ? p.content : std::make_shared<fs::SubStore>(disk, p.offset, p.length);
         module->resources_.push_back(std::move(entry));
     }
     return ModulePtr(std::move(module));

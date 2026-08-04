@@ -108,18 +108,30 @@ QString decodeCompact83(const QByteArray& raw)
     return codec ? codec->toUnicode(joined) : QString::fromLatin1(joined);
 }
 
-QString safeLeafName(QString name, int index)
+bool splitSafePackName(QString name, int index, QStringList* hierarchy, QString* leaf)
 {
     name.replace(QLatin1Char('\\'), QLatin1Char('/'));
-    name = name.section(QLatin1Char('/'), -1);
+    while (name.startsWith(QLatin1Char('/'))) name.remove(0, 1);
+    const QStringList parts = name.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    QStringList clean;
     static const QString forbidden = QStringLiteral("<>:\"/\\|?*");
-    for (int i = 0; i < name.size(); ++i) {
-        if (name.at(i).unicode() < 0x20 || forbidden.contains(name.at(i))) name[i] = QLatin1Char('_');
+    for (QString part : parts) {
+        if (part == QStringLiteral(".") || part == QStringLiteral("..")) return false;
+        for (int i = 0; i < part.size(); ++i) {
+            if (part.at(i).unicode() < 0x20 || forbidden.contains(part.at(i)))
+                part[i] = QLatin1Char('_');
+        }
+        while (part.endsWith(QLatin1Char(' ')) || part.endsWith(QLatin1Char('.'))) part.chop(1);
+        if (!part.isEmpty()) clean.push_back(part);
     }
-    while (name.endsWith(QLatin1Char(' ')) || name.endsWith(QLatin1Char('.'))) name.chop(1);
-    if (name.isEmpty() || name == QStringLiteral(".") || name == QStringLiteral(".."))
-        return QStringLiteral("member_%1.bin").arg(index, 3, 10, QLatin1Char('0'));
-    return name;
+    if (clean.isEmpty()) {
+        *leaf = QStringLiteral("member_%1.bin").arg(index, 3, 10, QLatin1Char('0'));
+        hierarchy->clear();
+        return true;
+    }
+    *leaf = clean.takeLast();
+    *hierarchy = clean;
+    return true;
 }
 
 bool parseMember(const QByteArray& data, qsizetype offset, PackMember* member, QString* error)
@@ -189,13 +201,12 @@ bool parseMember(const QByteArray& data, qsizetype offset, PackMember* member, Q
         return false;
     }
     qsizetype compressedEnd = memberEnd;
-    if (eaOffset != 0) {
-        if (eaOffset < quint32(pos) || eaOffset > quint32(memberEnd)) {
-            *error = QStringLiteral("Invalid OS/2 PACK extended-attribute offset");
-            return false;
-        }
+    if (eaOffset != 0 && eaOffset >= quint32(pos) && eaOffset <= quint32(memberEnd)) {
         compressedEnd = qsizetype(eaOffset);
     }
+    // Some IBM PACK archives contain a stale or member-relative EA offset.
+    // The compressed stream has its own stop code, so an unusable EA pointer
+    // is safely ignored and trailing bytes remain outside the decoded output.
     if (compressedEnd < pos) {
         *error = QStringLiteral("Invalid OS/2 PACK compressed-data length");
         return false;
@@ -366,16 +377,23 @@ std::unique_ptr<Os2PackModule> Os2PackModule::open(const QByteArray& data, const
         if (!decodedOk) {
             module->info_.error = QStringLiteral("%1: %2").arg(member.fileName, error); module->resources_.clear(); return module;
         }
+        QStringList hierarchy;
+        QString leaf;
+        if (!splitSafePackName(member.fileName, index, &hierarchy, &leaf)) {
+            module->info_.error = QStringLiteral("Unsafe OS/2 PACK member path");
+            module->resources_.clear();
+            return module;
+        }
         ResourceEntry entry;
         entry.type = QStringLiteral("OS2_PACK_FILE");
         entry.isEmbeddedFile = true;
-        entry.name = safeLeafName(member.fileName, index);
+        entry.name = leaf;
         entry.language = QStringLiteral("neutral");
         entry.dataOffset = quint64(member.compressedOffset);
         entry.dataSize = quint64(decoded.size());
         entry.format = ModuleFormat::OS2_PACK;
         entry.isOs2 = true;
-        entry.hierarchyPath = QStringList() << entry.name;
+        entry.hierarchyPath = hierarchy;
         entry.data = decoded;
         module->resources_.push_back(std::move(entry));
 

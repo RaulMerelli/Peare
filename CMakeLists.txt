@@ -173,6 +173,8 @@ add_library(PeareOpener SHARED
     src/opener/modules/ConModule.cpp
     src/opener/modules/Os2PackModule.h
     src/opener/modules/Os2PackModule.cpp
+    src/opener/modules/Os2EaModule.h
+    src/opener/modules/Os2EaModule.cpp
     src/opener/modules/Os2Pack2Decoder.h
     src/opener/modules/Os2Pack2Decoder.cpp
     src/opener/modules/Os2Pack2Tables.h
@@ -182,6 +184,12 @@ add_library(PeareOpener SHARED
     src/opener/modules/SiemensImgModule.cpp
     src/opener/modules/SiemensFwfModule.h
     src/opener/modules/SiemensFwfModule.cpp
+    src/opener/modules/SiemensFsfModule.h
+    src/opener/modules/SiemensFsfModule.cpp
+    src/opener/modules/WinceRomModule.h
+    src/opener/modules/WinceRomModule.cpp
+    src/opener/modules/WinceCompression.h
+    src/opener/modules/WinceCompression.cpp
     src/opener/modules/EmbeddedZlibInflate.h
     src/opener/modules/SiemensImgParser.h
     src/opener/modules/SiemensFwfParser.h
@@ -230,6 +238,10 @@ add_library(PeareOpener SHARED
     src/opener/fs/NtfsReader.cpp
     src/opener/fs/XfsReader.h
     src/opener/fs/XfsReader.cpp
+    src/opener/fs/JfsReader.h
+    src/opener/fs/JfsReader.cpp
+    src/opener/fs/HpfsReader.h
+    src/opener/fs/HpfsReader.cpp
     src/opener/fs/SquashFsReader.h
     src/opener/fs/SquashFsReader.cpp
     src/opener/fs/HfsPlusReader.h
@@ -277,6 +289,10 @@ add_library(PeareOpener SHARED
     src/opener/modules/NtfsModule.cpp
     src/opener/modules/XfsModule.h
     src/opener/modules/XfsModule.cpp
+    src/opener/modules/JfsModule.h
+    src/opener/modules/JfsModule.cpp
+    src/opener/modules/HpfsModule.h
+    src/opener/modules/HpfsModule.cpp
     src/opener/modules/SquashFsModule.h
     src/opener/modules/SquashFsModule.cpp
     src/opener/modules/HfsPlusModule.h
@@ -293,6 +309,8 @@ add_library(PeareOpener SHARED
     src/opener/modules/CabModule.cpp
     src/opener/modules/RawDiskModule.h
     src/opener/modules/RawDiskModule.cpp
+    src/opener/modules/FfuModule.h
+    src/opener/modules/FfuModule.cpp
     src/opener/modules/ZipModule.h
     src/opener/modules/ZipModule.cpp
     src/opener/modules/TarModule.h

@@ -4,10 +4,10 @@
 
 namespace peare {
 
-class ZipModule final : public IModule, public IResourceContainer {
+class SiemensFsfModule final : public IModule, public IResourceContainer {
 public:
-    static std::unique_ptr<ZipModule> open(const QString& filePath);
-    static std::unique_ptr<ZipModule> open(const QByteArray& data, const QString& logicalName);
+    static ModulePtr open(const QString& filePath);
+    static ModulePtr open(const QByteArray& data, const QString& logicalName);
     static ModulePtr open(const fs::ByteStorePtr& file, const QString& sourceName);
 
     const ModuleInfo& info() const noexcept override { return info_; }
@@ -19,4 +19,4 @@ private:
     fs::ByteStorePtr file_;
 };
 
-}  // namespace peare
+} // namespace peare

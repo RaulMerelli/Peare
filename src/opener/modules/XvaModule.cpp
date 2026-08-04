@@ -260,7 +260,8 @@ ModulePtr XvaModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
         const DiskInfo& diskInfo = disks[di];
         fs::ByteStorePtr disk = std::make_shared<XvaDiskStore>(file, diskInfo.capacity, diskInfo.location, entries);
         const std::vector<fs::PartitionInfo> parts = fs::readPartitionTable(disk);
-        auto addEntry = [&](const QString& name, std::int64_t off, std::int64_t len) {
+        auto addEntry = [&](const QString& name, std::int64_t off, std::int64_t len,
+                            const fs::ByteStorePtr& content = fs::ByteStorePtr()) {
             ResourceEntry entry;
             entry.type = QStringLiteral("DISK_PARTITION");
             entry.isEmbeddedFile = true;
@@ -268,7 +269,7 @@ ModulePtr XvaModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
             entry.language = QStringLiteral("neutral");
             entry.dataOffset = quint64(off);
             entry.dataSize = quint64(len);
-            entry.content = std::make_shared<fs::SubStore>(disk, off, len);
+            entry.content = content ? content : std::make_shared<fs::SubStore>(disk, off, len);
             module->resources_.push_back(std::move(entry));
         };
         const QString diskName = diskInfo.label.isEmpty()
@@ -283,7 +284,7 @@ ModulePtr XvaModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
                              .arg(diskName)
                              .arg(pi + 1)
                              .arg(QString::fromStdString(p.typeName)),
-                         p.offset, p.length);
+                         p.offset, p.length, p.content);
             }
         }
     }

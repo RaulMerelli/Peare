@@ -1,6 +1,7 @@
 #include "ModuleFormat.h"
 
 #include <QFile>
+#include <QFileInfo>
 
 #include <cstring>
 
@@ -36,6 +37,56 @@ quint16 readBe16(const QByteArray& data, qsizetype offset)
     if (offset < 0 || offset + 2 > data.size()) return 0;
     const auto* p = reinterpret_cast<const unsigned char*>(data.constData() + offset);
     return (quint16(p[0]) << 8) | quint16(p[1]);
+}
+
+
+bool isOs2EaList(const QByteArray& data)
+{
+    if (data.size() < 8 || readLe32(data, 0) != quint32(data.size())) return false;
+    qsizetype pos = 4;
+    int entries = 0;
+    while (pos < data.size()) {
+        if (pos + 4 > data.size()) return false;
+        const quint8 nameLength = quint8(data.at(pos + 1));
+        const quint16 valueLength = readLe16(data, pos + 2);
+        const qsizetype valueOffset = pos + 4 + nameLength + 1;
+        if (nameLength == 0 || valueOffset > data.size() ||
+            data.at(pos + 4 + nameLength) != '\0' ||
+            qsizetype(valueLength) > data.size() - valueOffset)
+            return false;
+        pos = valueOffset + valueLength;
+        ++entries;
+    }
+    return entries > 0 && pos == data.size();
+}
+
+ModuleFormatInfo directOs2Executable(const QByteArray& data)
+{
+    if (data.size() >= 64 && readLe16(data, 0) == 0x454E) {
+        const quint16 segments = readLe16(data, 0x1C);
+        const quint16 segmentTable = readLe16(data, 0x22);
+        if (segments <= 4096 && segmentTable >= 0x40 &&
+            quint64(segmentTable) + quint64(segments) * 8 <= quint64(data.size()))
+            return {ModuleFormat::NE, 0, QStringLiteral("New Executable (NE), stubless OS/2 image"), {}};
+    }
+
+    if (data.size() >= 0xAC) {
+        const quint16 signature = readLe16(data, 0);
+        if ((signature == 0x454C || signature == 0x584C) &&
+            quint8(data.at(2)) == 0 && quint8(data.at(3)) == 0) {
+            const quint32 pageSize = readLe32(data, 0x28);
+            const quint32 objectTable = readLe32(data, 0x40);
+            const quint32 objectCount = readLe32(data, 0x44);
+            if (pageSize >= 512 && pageSize <= 65536 &&
+                (pageSize & (pageSize - 1)) == 0 && objectCount <= 65536 &&
+                objectTable >= 0xAC && objectTable < quint32(data.size())) {
+                if (signature == 0x454C)
+                    return {ModuleFormat::LE, 0, QStringLiteral("Linear Executable (LE), stubless OS/2 image"), {}};
+                return {ModuleFormat::LX, 0, QStringLiteral("Linear Executable (LX), stubless OS/2 image"), {}};
+            }
+        }
+    }
+    return {};
 }
 
 bool isMode2IsoDescriptor(const QByteArray& data)
@@ -78,6 +129,85 @@ bool looksPartitionedRawDisk(const QByteArray& data, qint64 totalSize)
     return false;
 }
 
+bool hasAuthoritativeOs2Layout(const QByteArray& data, qint64 totalSize)
+{
+    if (data.size() < 512 || totalSize < 512 ||
+        data.at(510) != char(0x55) || data.at(511) != char(0xAA))
+        return false;
+    const qint64 diskSectors = totalSize / 512;
+    for (int i = 0; i < 4; ++i) {
+        const qsizetype off = 0x1BE + i * 16;
+        const quint8 type = quint8(data.at(off + 4));
+        if (type != 0x35 && type != 0x05 && type != 0x0F && type != 0x85)
+            continue;
+        const quint32 startLba = readLe32(data, off + 8);
+        const quint32 sectors = readLe32(data, off + 12);
+        if (startLba != 0 && sectors != 0 && qint64(startLba) < diskSectors)
+            return true;
+    }
+    return false;
+}
+
+bool validJfsSuperblock(const QByteArray& sb)
+{
+    if (sb.size() < 24 || std::memcmp(sb.constData(), "JFS1", 4) != 0)
+        return false;
+    const quint32 version = readLe32(sb, 4);
+    const quint32 blockSize = readLe32(sb, 16);
+    const quint16 blockShift = readLe16(sb, 20);
+    return (version == 1 || version == 2) && blockSize >= 512 && blockSize <= 4096 &&
+           (blockSize & (blockSize - 1)) == 0 && blockShift >= 9 && blockShift <= 12 &&
+           (quint32(1) << blockShift) == blockSize;
+}
+
+bool hasRecoverableJfsPartition(const QByteArray& data, qint64 totalSize)
+{
+    if (data.size() < 512 || totalSize < 0x8000 + 24) return false;
+    for (int i = 0; i < 4; ++i) {
+        const qsizetype entry = 0x1BE + i * 16;
+        const quint8 type = quint8(data.at(entry + 4));
+        const quint32 startLba = readLe32(data, entry + 8);
+        const quint32 sectors = readLe32(data, entry + 12);
+        if (type == 0 || startLba == 0 || sectors == 0) continue;
+        const qint64 start = qint64(startLba) * 512;
+        if (start <= 0 || start >= totalSize) continue;
+        const qint64 offsets[] = {0x8000, 0xF000};
+        for (qint64 off : offsets) {
+            const qint64 absolute = start + off;
+            if (absolute < start || absolute + 24 > totalSize || absolute + 24 > data.size())
+                continue;
+            if (validJfsSuperblock(data.mid(qsizetype(absolute), 24))) return true;
+        }
+    }
+    return false;
+}
+
+bool hasRecoverableJfsPartition(QFile& file, const QByteArray& firstSector)
+{
+    if (firstSector.size() < 512 || file.size() < 0x8000 + 24) return false;
+    for (int i = 0; i < 4; ++i) {
+        const qsizetype entry = 0x1BE + i * 16;
+        const quint8 type = quint8(firstSector.at(entry + 4));
+        const quint32 startLba = readLe32(firstSector, entry + 8);
+        const quint32 sectors = readLe32(firstSector, entry + 12);
+        if (type == 0 || startLba == 0 || sectors == 0) continue;
+        const qint64 start = qint64(startLba) * 512;
+        if (start <= 0 || start >= file.size()) continue;
+        const qint64 offsets[] = {0x8000, 0xF000};
+        for (qint64 off : offsets) {
+            const qint64 absolute = start + off;
+            if (absolute < start || absolute + 24 > file.size()) continue;
+            if (file.seek(absolute) && validJfsSuperblock(file.read(24))) {
+                file.seek(0);
+                return true;
+            }
+        }
+    }
+    file.seek(0);
+    return false;
+}
+
+
 bool looksApplePartitionMap(const QByteArray& data)
 {
     return data.size() >= 1024 && readBe16(data, 0) == 0x4552 &&
@@ -107,6 +237,37 @@ bool isZipHeader(const QByteArray& data)
             std::memcmp(data.constData(), "PK\007\010", 4) == 0);
 }
 
+int b000ffSignatureLength(const QByteArray& data)
+{
+    if (data.size() >= 8 && std::memcmp(data.constData(), "B000FF\r\n", 8) == 0)
+        return 8;
+    if (data.size() >= 7 && std::memcmp(data.constData(), "B000FF\n", 7) == 0)
+        return 7;
+    // A few OEM tools omit the line terminator. Accept that form only when the
+    // following image range is structurally plausible, to avoid claiming text.
+    if (data.size() >= 14 && std::memcmp(data.constData(), "B000FF", 6) == 0) {
+        const quint32 start = readLe32(data, 6);
+        const quint32 length = readLe32(data, 10);
+        if (start != 0 && length != 0) return 6;
+    }
+    return 0;
+}
+
+bool isB000ffHeader(const QByteArray& data)
+{
+    const int sig = b000ffSignatureLength(data);
+    if (!sig || data.size() < sig + 8) return false;
+    const quint32 start = readLe32(data, sig);
+    const quint32 length = readLe32(data, sig + 4);
+    return start != 0 && length != 0;
+}
+
+bool isSiemensFwfHeader(const QByteArray& data)
+{
+    return data.size() >= 2 && quint8(data.at(0)) == 0x03 &&
+           quint8(data.at(1)) == 0xA1;
+}
+
 std::int64_t tarOctal(const char* p, int n)
 {
     std::int64_t value = 0;
@@ -134,6 +295,143 @@ bool isTarHeader(const QByteArray& data)
     return data.at(0) != 0;
 }
 
+bool plausibleWindowsCeRomHdr(const QByteArray& data, qsizetype off, bool ce1)
+{
+    const qsizetype entrySize = ce1 ? 0x130 : 32;
+    if (off < 0 || off + 84 + entrySize > data.size()) return false;
+    const quint32 physFirst = readLe32(data, off + 8);
+    const quint32 physLast = readLe32(data, off + 12);
+    const quint32 modules = readLe32(data, off + 16);
+    const quint32 files = readLe32(data, off + 48);
+    if (physFirst < 0x80000000U || physFirst >= 0xC0000000U ||
+        physLast <= physFirst || modules == 0 || modules > 4096 || files > 50000)
+        return false;
+    if (quint64(off) + 84 + quint64(modules) * entrySize > quint64(data.size())) return false;
+    const qsizetype toc = off + 84;
+    if (ce1) {
+        const qsizetype name = toc + 0x10;
+        bool terminated = false;
+        bool nonempty = false;
+        for (int i = 0; i < 260 && name + i < data.size(); ++i) {
+            const uchar c = uchar(data.at(name + i));
+            if (!c) { terminated = true; break; }
+            if (c < 0x20 || c > 0x7e) return false;
+            nonempty = true;
+        }
+        if (!terminated || !nonempty) return false;
+        const quint32 ntVa = readLe32(data, toc + 0x124);
+        return ntVa >= physFirst && quint64(ntVa - physFirst) + 4 <= quint64(data.size()) &&
+               readLe32(data, qsizetype(ntVa - physFirst)) == 0x00004550U;
+    }
+    const quint32 nameVa = readLe32(data, toc + 16);
+    const quint32 e32Va = readLe32(data, toc + 20);
+    if (nameVa < physFirst || quint64(nameVa - physFirst) >= quint64(data.size()) ||
+        e32Va < physFirst || quint64(e32Va - physFirst) + 2 > quint64(data.size())) return false;
+    const qsizetype name = qsizetype(nameVa - physFirst);
+    const quint16 objects = readLe16(data, qsizetype(e32Va - physFirst));
+    return name >= 0 && name < data.size() && uchar(data.at(name)) >= 0x20 &&
+           uchar(data.at(name)) <= 0x7e && objects > 0 && objects <= 96;
+}
+
+
+bool fileContainsImgfs(QFile& file)
+{
+    if (file.size() <= 0 || file.size() > 512LL * 1024LL * 1024LL) return false;
+    static const char uuidBytes[16] = {
+        char(0xF8), char(0xAC), char(0x2C), char(0x9D), char(0xE3), char(0xD4), char(0x2B), char(0x4D),
+        char(0xBD), char(0x30), char(0x91), char(0x6E), char(0xD8), char(0x4F), char(0x31), char(0xDC)
+    };
+    const QByteArray uuid(uuidBytes, 16);
+    const qint64 stride = 8LL * 1024LL * 1024LL;
+    for (qint64 base = 0; base < file.size(); base += stride) {
+        if (!file.seek(base)) break;
+        const QByteArray chunk = file.read(qMin<qint64>(stride + 0x28, file.size() - base));
+        int pos = chunk.indexOf(uuid);
+        while (pos >= 0) {
+            const qint64 absolute = base + pos;
+            if ((absolute & 0xfff) == 0 && pos + 0x28 <= chunk.size() &&
+                readLe32(chunk, pos + 0x1c) == 0x34) {
+                const quint32 block = readLe32(chunk, pos + 0x24);
+                if (block >= 0x200 && block <= 0x10000) return true;
+            }
+            pos = chunk.indexOf(uuid, pos + 1);
+        }
+    }
+    return false;
+}
+
+bool isWindowsCeRomHeader(const QByteArray& data)
+{
+    if (isB000ffHeader(data)) return true;
+    if (data.size() >= 6 && std::memcmp(data.constData(), "NOSAJ\0", 6) == 0)
+        return true;
+    if (data.size() >= 16 && std::memcmp(data.constData(), "ARNOLDBOOTBLOCK\0", 16) == 0)
+        return true;
+    if (data.size() >= 5 && std::memcmp(data.constData(), "iPAQ ", 5) == 0)
+        return true;
+
+    static const char imgfsUuid[16] = {
+        char(0xF8), char(0xAC), char(0x2C), char(0x9D), char(0xE3), char(0xD4), char(0x2B), char(0x4D),
+        char(0xBD), char(0x30), char(0x91), char(0x6E), char(0xD8), char(0x4F), char(0x31), char(0xDC)
+    };
+    int uuid = data.indexOf(QByteArray(imgfsUuid, 16));
+    while (uuid >= 0) {
+        if ((uuid & 0xfff) == 0 && uuid + 0x28 <= data.size() &&
+            readLe32(data, uuid + 0x1c) == 0x34) {
+            const quint32 block = readLe32(data, uuid + 0x24);
+            if (block >= 0x200 && block <= 0x10000) return true;
+        }
+        uuid = data.indexOf(QByteArray(imgfsUuid, 16), uuid + 1);
+    }
+
+    // A normal DOS/PE executable may contain arbitrary ECEC bytes or values
+    // resembling ROMHDR fields; it remains an executable, not a ROM archive.
+    if (data.size() >= 2 && readLe16(data, 0) == 0x5a4d) return false;
+
+    int pos = data.indexOf(QByteArrayLiteral("ECEC"));
+    while (pos >= 0 && pos + 12 <= data.size()) {
+        const quint32 ptoc = readLe32(data, pos + 4);
+        if (ptoc >= 0x80000000U && ptoc < 0xC0000000U) return true;
+        pos = data.indexOf(QByteArrayLiteral("ECEC"), pos + 4);
+    }
+
+    // Structural CE1/CE2 detection is a fallback for flat ROM dumps only.
+    for (qsizetype off = 0; off + 84 <= data.size(); off += 4) {
+        if (plausibleWindowsCeRomHdr(data, off, false) ||
+            plausibleWindowsCeRomHdr(data, off, true)) return true;
+    }
+    return false;
+}
+
+ModuleFormatInfo detectOpticalBuffer(const QByteArray& data)
+{
+    if (data.size() >= 17 * kOpticalMode2SectorSize) {
+        if (isMode2UdfDescriptor(data))
+            return {ModuleFormat::UDF, 0, QStringLiteral("UDF (raw Mode 2 optical image)"), {}};
+        if (isMode2IsoDescriptor(data))
+            return {ModuleFormat::ISO9660, 0, QStringLiteral("ISO 9660 (raw Mode 2 optical image)"), {}};
+    }
+
+    // UDF volume recognition sequence, scanned from 0x8000 before ISO 9660.
+    for (int i = 0; i < 64; ++i) {
+        const qsizetype off = qsizetype(0x8000) + qsizetype(i) * 2048;
+        if (off + 6 > data.size()) break;
+        const char* id = data.constData() + off + 1;
+        if (std::memcmp(id, "NSR02", 5) == 0 || std::memcmp(id, "NSR03", 5) == 0)
+            return {ModuleFormat::UDF, 0, QStringLiteral("UDF (Universal Disk Format) image"), {}};
+        if (std::memcmp(id, "BEA01", 5) != 0 && std::memcmp(id, "BOOT2", 5) != 0 &&
+            std::memcmp(id, "CD001", 5) != 0 && std::memcmp(id, "CDW02", 5) != 0 &&
+            std::memcmp(id, "TEA01", 5) != 0)
+            break;
+    }
+
+    if (data.size() >= 0x8001 + 5 &&
+        std::memcmp(data.constData() + 0x8001, "CD001", 5) == 0)
+        return {ModuleFormat::ISO9660, 0, QStringLiteral("ISO 9660 image"), {}};
+
+    return {};
+}
+
 } // namespace
 
 ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
@@ -142,6 +440,69 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
     if (!file.open(QIODevice::ReadOnly)) {
         return {ModuleFormat::Unknown, 0, {}, file.errorString()};
     }
+
+    // Microsoft Full Flash Update: the security header starts at byte zero and
+    // carries the 12-byte "SignedImage " signature at offset four.
+    if (file.size() >= 16) {
+        char signature[12];
+        if (file.seek(4) && file.read(signature, 12) == 12 &&
+            std::memcmp(signature, "SignedImage ", 12) == 0) {
+            file.seek(0);
+            return {ModuleFormat::FFU, 0, QStringLiteral("Microsoft Full Flash Update (FFU)"), {}};
+        }
+        file.seek(0);
+    }
+
+    // Siemens containers must be recognised from positioned reads. Falling
+    // through to the generic detector would read an entire multi-gigabyte file.
+    if (file.size() >= 31) {
+        const QByteArray head = file.read(64);
+        file.seek(0);
+        if (head.size() >= 31 && std::memcmp(head.constData(), "FSF\0", 4) == 0 &&
+            readBe16(head, 20) == 1 && readBe16(head, 22) >= 15 &&
+            readBe16(head, 24) == 1 && quint8(head.at(30)) > 0)
+            return {ModuleFormat::SIEMENS_FSF, 0,
+                    QStringLiteral("Siemens FSF Windows CE flash-file archive"), {}};
+        if (isSiemensFwfHeader(head))
+            return {ModuleFormat::SIEMENS_FWF, 0,
+                    QStringLiteral("Siemens FWF OMS firmware archive"), {}};
+    }
+    if (file.size() >= 4) {
+        char tailMagic[4];
+        if (file.seek(file.size() - 4) && file.read(tailMagic, 4) == 4) {
+            const QByteArray tail(tailMagic, 4);
+            if (readLe32(tail, 0) == 0x03031998U) {
+                file.seek(0);
+                return {ModuleFormat::SIEMENS_IMG, 0,
+                        QStringLiteral("Siemens ProSave IMG firmware container"), {}};
+            }
+        }
+        file.seek(0);
+    }
+
+    // Windows CE wrapper/XIP headers live near the beginning. IMGFS can be
+    // placed later in an NB0 image, so known CE firmware extensions receive a
+    // bounded whole-image UUID scan without penalising unrelated disk images.
+    const QByteArray winceHead = file.read(qMin<qint64>(file.size(), 1024LL * 1024LL));
+    file.seek(0);
+    const QString winceSuffix = QFileInfo(filePath).suffix().toLower();
+    const bool scanImgfs = winceSuffix == QStringLiteral("bin") ||
+                           winceSuffix == QStringLiteral("nb0") ||
+                           winceSuffix == QStringLiteral("nbf") ||
+                           winceSuffix == QStringLiteral("fim") ||
+                           winceSuffix == QStringLiteral("rom") ||
+                           winceSuffix == QStringLiteral("imgfs");
+    const ModuleFormatInfo optical = detectOpticalBuffer(winceHead);
+    if (optical.format != ModuleFormat::Unknown) {
+        file.seek(0);
+        return optical;
+    }
+    if (isWindowsCeRomHeader(winceHead) ||
+        (scanImgfs && file.size() > winceHead.size() && fileContainsImgfs(file))) {
+        file.seek(0);
+        return {ModuleFormat::WINCE_ROM, 0, QStringLiteral("Windows CE ROM / IMGFS"), {}};
+    }
+    file.seek(0);
 
     // VMDK: KDMV sparse magic, or a text disk descriptor, at offset 0. Probed
     // before the full read below so multi-GB virtual disks are never slurped into
@@ -287,10 +648,59 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         file.seek(0);
     }
 
+    // Standalone JFS volumes can carry a 55AA boot signature and arbitrary
+    // bytes in the MBR table area. Recognise the authoritative aggregate
+    // superblock before treating those bytes as a partition table.
+    QByteArray firstSector;
+    if (file.size() >= 512 && file.seek(0))
+        firstSector = file.read(512);
+    const bool authoritativeOs2Layout = hasAuthoritativeOs2Layout(firstSector, file.size());
+    const qint64 earlyJfsOffsets[] = {0x8000, 0xF000};
+    for (qint64 superOffset : earlyJfsOffsets) {
+        if (file.size() < superOffset + 24) continue;
+        char raw[24];
+        if (!file.seek(superOffset) || file.read(raw, sizeof(raw)) != qint64(sizeof(raw)))
+            continue;
+        const QByteArray sb(raw, int(sizeof(raw)));
+        const quint32 version = readLe32(sb, 4);
+        const quint32 blockSize = readLe32(sb, 16);
+        const quint16 blockShift = readLe16(sb, 20);
+        if (std::memcmp(raw, "JFS1", 4) == 0 &&
+            (version == 1 || version == 2) && blockSize >= 512 && blockSize <= 4096 &&
+            (blockSize & (blockSize - 1)) == 0 && blockShift >= 9 && blockShift <= 12 &&
+            (quint32(1) << blockShift) == blockSize) {
+            if (!authoritativeOs2Layout) {
+                file.seek(0);
+                return {ModuleFormat::JFS, 0, QStringLiteral("IBM Journaled File System (JFS) volume"), {}};
+            }
+            break;
+        }
+    }
+    file.seek(0);
+    if (hasRecoverableJfsPartition(file, firstSector))
+        return {ModuleFormat::RAW_DISK, 0, QStringLiteral("Raw disk image with JFS partition"), {}};
+
+    // Stubless OS/2 executables begin directly with NE/LE/LX. Also recognise
+    // complete FEALIST sidecars before the permissive MBR probe.
+    if (file.size() >= 4) {
+        const QByteArray prefix = file.read(qMin<qint64>(file.size(), 256LL * 1024LL));
+        file.seek(0);
+        const ModuleFormatInfo direct = directOs2Executable(prefix);
+        if (direct.format != ModuleFormat::Unknown) return direct;
+        if (file.size() <= 64LL * 1024LL * 1024LL &&
+            prefix.size() >= 4 && readLe32(prefix, 0) == quint32(file.size())) {
+            const QByteArray candidate = file.readAll();
+            file.seek(0);
+            if (isOs2EaList(candidate))
+                return {ModuleFormat::OS2_EA, 0, QStringLiteral("OS/2 extended attribute list (FEALIST)"), {}};
+        }
+    }
+
     if (file.size() >= 512) {
         char mbr[512];
         if (file.seek(0) && file.read(mbr, 512) == 512 &&
-            looksPartitionedRawDisk(QByteArray(mbr, 512), file.size())) {
+            (looksPartitionedRawDisk(QByteArray(mbr, 512), file.size()) ||
+             hasAuthoritativeOs2Layout(QByteArray(mbr, 512), file.size()))) {
             file.seek(0);
             return {ModuleFormat::RAW_DISK, 0, QStringLiteral("Raw disk image"), {}};
         }
@@ -338,6 +748,49 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
             std::memcmp(magic, "_BHRfS_M", 8) == 0) {
             file.seek(0);
             return {ModuleFormat::BTRFS, 0, QStringLiteral("Btrfs volume"), {}};
+        }
+        file.seek(0);
+    }
+
+    // IBM JFS aggregate superblocks live at fixed offsets 0x8000 and 0xF000.
+    // Probe both so a volume with a damaged primary copy remains discoverable.
+    const qint64 jfsSuperOffsets[] = {0x8000, 0xF000};
+    for (qint64 superOffset : jfsSuperOffsets) {
+        if (file.size() < superOffset + 24) continue;
+        char raw[24];
+        if (!file.seek(superOffset) || file.read(raw, sizeof(raw)) != qint64(sizeof(raw)))
+            continue;
+        const QByteArray sb(raw, int(sizeof(raw)));
+        const quint32 version = readLe32(sb, 4);
+        const quint32 blockSize = readLe32(sb, 16);
+        const quint16 blockShift = readLe16(sb, 20);
+        if (std::memcmp(raw, "JFS1", 4) == 0 &&
+            (version == 1 || version == 2) &&
+            blockSize >= 512 && blockSize <= 4096 &&
+            (blockSize & (blockSize - 1)) == 0 &&
+            blockShift >= 9 && blockShift <= 12 &&
+            (quint32(1) << blockShift) == blockSize) {
+            file.seek(0);
+            return {ModuleFormat::JFS, 0, QStringLiteral("IBM Journaled File System (JFS) volume"), {}};
+        }
+    }
+    file.seek(0);
+
+    // OS/2 HPFS is identified authoritatively by the two superblock magics at
+    // sector 16. Some real installations have a rewritten/minimal boot sector
+    // whose cosmetic "HPFS    " field is absent, so do not make that field a
+    // prerequisite for opening an otherwise valid volume.
+    if (file.size() >= 17 * 512) {
+        char superRaw[24];
+        if (file.seek(16 * 512) &&
+            file.read(superRaw, sizeof(superRaw)) == qint64(sizeof(superRaw))) {
+            const QByteArray sb(superRaw, int(sizeof(superRaw)));
+            if (readLe32(sb, 0) == 0xF995E849U &&
+                readLe32(sb, 4) == 0xFA53E9C5U &&
+                readLe32(sb, 12) >= 18 && readLe32(sb, 16) >= 20) {
+                file.seek(0);
+                return {ModuleFormat::HPFS, 0, QStringLiteral("IBM/Microsoft HPFS volume"), {}};
+            }
         }
         file.seek(0);
     }
@@ -444,6 +897,13 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         return {ModuleFormat::SIEMENS_IMG, 0, QStringLiteral("Siemens ProSave IMG firmware container"), {}};
     }
 
+    if (data.size() >= 31 && std::memcmp(data.constData(), "FSF\0", 4) == 0 &&
+        readBe16(data, 20) == 1 && readBe16(data, 22) >= 15 &&
+        readBe16(data, 24) == 1 && quint8(data.at(30)) > 0) {
+        return {ModuleFormat::SIEMENS_FSF, 0,
+                QStringLiteral("Siemens FSF Windows CE flash-file archive"), {}};
+    }
+
     const bool fwfHeader = data.size() >= 2 &&
         static_cast<unsigned char>(data[0]) == 0x03 &&
         static_cast<unsigned char>(data[1]) == 0xA1;
@@ -533,8 +993,14 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         return {ModuleFormat::FAT, 0, QStringLiteral("FAT volume"), {}};
     }
 
+    if (isOs2EaList(data))
+        return {ModuleFormat::OS2_EA, 0, QStringLiteral("OS/2 extended attribute list (FEALIST)"), {}};
+
+    const ModuleFormatInfo direct = directOs2Executable(data);
+    if (direct.format != ModuleFormat::Unknown) return direct;
+
     if (readLe16(data, 0) != 0x5A4D) {
-        return {ModuleFormat::Unknown, 0, {}, QStringLiteral("Firma MZ, XBEH, XEX1 o XEX2 assente")};
+        return {ModuleFormat::Unknown, 0, {}, QStringLiteral("Firma MZ, NE, LE, LX, XBEH, XEX1 o XEX2 assente")};
     }
 
     ModuleFormatInfo info;
@@ -580,29 +1046,25 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
 
 ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
 {
-    if (data.size() >= 17 * kOpticalMode2SectorSize) {
-        if (isMode2UdfDescriptor(data))
-            return {ModuleFormat::UDF, 0, QStringLiteral("UDF (raw Mode 2 optical image)"), {}};
-        if (isMode2IsoDescriptor(data))
-            return {ModuleFormat::ISO9660, 0, QStringLiteral("ISO 9660 (raw Mode 2 optical image)"), {}};
-    }
+    if (data.size() >= 16 && std::memcmp(data.constData() + 4, "SignedImage ", 12) == 0)
+        return {ModuleFormat::FFU, 0, QStringLiteral("Microsoft Full Flash Update (FFU)"), {}};
 
-    // UDF volume recognition sequence, scanned from 0x8000 (before ISO 9660).
-    for (int i = 0; i < 64; ++i) {
-        const qsizetype s = qsizetype(0x8000) + qsizetype(i) * 2048;
-        if (s + 6 > data.size()) break;
-        const char* id = data.constData() + s + 1;
-        if (std::memcmp(id, "NSR02", 5) == 0 || std::memcmp(id, "NSR03", 5) == 0)
-            return {ModuleFormat::UDF, 0, QStringLiteral("UDF (Universal Disk Format) image"), {}};
-        if (std::memcmp(id, "BEA01", 5) != 0 && std::memcmp(id, "BOOT2", 5) != 0 &&
-            std::memcmp(id, "CD001", 5) != 0 && std::memcmp(id, "CDW02", 5) != 0 &&
-            std::memcmp(id, "TEA01", 5) != 0)
-            break;
-    }
+    if (data.size() >= 31 && std::memcmp(data.constData(), "FSF\0", 4) == 0 &&
+        readBe16(data, 20) == 1 && readBe16(data, 22) >= 15 &&
+        readBe16(data, 24) == 1 && quint8(data.at(30)) > 0)
+        return {ModuleFormat::SIEMENS_FSF, 0,
+                QStringLiteral("Siemens FSF Windows CE flash-file archive"), {}};
 
-    if (data.size() >= 0x8001 + 5 &&
-        std::memcmp(data.constData() + 0x8001, "CD001", 5) == 0)
-        return {ModuleFormat::ISO9660, 0, QStringLiteral("ISO 9660 image"), {}};
+    if (isSiemensFwfHeader(data))
+        return {ModuleFormat::SIEMENS_FWF, 0,
+                QStringLiteral("Siemens FWF OMS firmware archive"), {}};
+
+    const ModuleFormatInfo optical = detectOpticalBuffer(data);
+    if (optical.format != ModuleFormat::Unknown)
+        return optical;
+
+    if (isWindowsCeRomHeader(data))
+        return {ModuleFormat::WINCE_ROM, 0, QStringLiteral("Windows CE ROM / IMGFS"), {}};
 
     if (data.size() >= 8 && data.left(8) == QByteArray("SZDD\x88\xF0\x27\x33", 8))
         return {ModuleFormat::SZDD, 0, QStringLiteral("Microsoft Compress SZDD archive"), {}};
@@ -651,7 +1113,31 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
         }
     }
 
-    if (data.size() >= 512 && looksPartitionedRawDisk(data, data.size()))
+    if (isOs2EaList(data))
+        return {ModuleFormat::OS2_EA, 0, QStringLiteral("OS/2 extended attribute list (FEALIST)"), {}};
+
+    const ModuleFormatInfo direct = directOs2Executable(data);
+    if (direct.format != ModuleFormat::Unknown) return direct;
+
+    const qsizetype earlyJfsSuperOffsets[] = {0x8000, 0xF000};
+    for (qsizetype superOffset : earlyJfsSuperOffsets) {
+        if (data.size() < superOffset + 24 ||
+            std::memcmp(data.constData() + superOffset, "JFS1", 4) != 0)
+            continue;
+        const quint32 version = readLe32(data, superOffset + 4);
+        const quint32 blockSize = readLe32(data, superOffset + 16);
+        const quint16 blockShift = readLe16(data, superOffset + 20);
+        if (!hasAuthoritativeOs2Layout(data, data.size()) &&
+            (version == 1 || version == 2) && blockSize >= 512 && blockSize <= 4096 &&
+            (blockSize & (blockSize - 1)) == 0 && blockShift >= 9 && blockShift <= 12 &&
+            (quint32(1) << blockShift) == blockSize)
+            return {ModuleFormat::JFS, 0, QStringLiteral("IBM Journaled File System (JFS) volume"), {}};
+    }
+
+    if (data.size() >= 512 &&
+        (looksPartitionedRawDisk(data, data.size()) ||
+         hasAuthoritativeOs2Layout(data, data.size()) ||
+         hasRecoverableJfsPartition(data, data.size())))
         return {ModuleFormat::RAW_DISK, 0, QStringLiteral("Raw disk image"), {}};
 
     if (looksApplePartitionMap(data))
@@ -703,6 +1189,27 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
         std::memcmp(data.constData() + 0x10040, "_BHRfS_M", 8) == 0)
         return {ModuleFormat::BTRFS, 0, QStringLiteral("Btrfs volume"), {}};
 
+    const qsizetype jfsSuperOffsets[] = {0x8000, 0xF000};
+    for (qsizetype superOffset : jfsSuperOffsets) {
+        if (data.size() < superOffset + 24 ||
+            std::memcmp(data.constData() + superOffset, "JFS1", 4) != 0)
+            continue;
+        const quint32 version = readLe32(data, superOffset + 4);
+        const quint32 blockSize = readLe32(data, superOffset + 16);
+        const quint16 blockShift = readLe16(data, superOffset + 20);
+        if ((version == 1 || version == 2) && blockSize >= 512 && blockSize <= 4096 &&
+            (blockSize & (blockSize - 1)) == 0 && blockShift >= 9 && blockShift <= 12 &&
+            (quint32(1) << blockShift) == blockSize)
+            return {ModuleFormat::JFS, 0, QStringLiteral("IBM Journaled File System (JFS) volume"), {}};
+    }
+
+    if (data.size() >= 17 * 512 &&
+        readLe32(data, 16 * 512) == 0xF995E849U &&
+        readLe32(data, 16 * 512 + 4) == 0xFA53E9C5U &&
+        readLe32(data, 16 * 512 + 12) >= 18 &&
+        readLe32(data, 16 * 512 + 16) >= 20)
+        return {ModuleFormat::HPFS, 0, QStringLiteral("IBM/Microsoft HPFS volume"), {}};
+
     if (data.size() >= 4 && std::memcmp(data.constData(), "XFSB", 4) == 0)
         return {ModuleFormat::XFS, 0, QStringLiteral("XFS volume"), {}};
 
@@ -750,6 +1257,74 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
     return {ModuleFormat::Unknown, 0, {}, QStringLiteral("No recognised header")};
 }
 
+ModuleFormatInfo ModuleFormatDetector::detectNestedBuffer(const QByteArray& data)
+{
+    if (isOs2EaList(data))
+        return {ModuleFormat::OS2_EA, 0, QStringLiteral("OS/2 extended attribute list (FEALIST)"), {}};
+    const ModuleFormatInfo direct = directOs2Executable(data);
+    if (direct.format != ModuleFormat::Unknown) return direct;
+    // This function deliberately recognises only formats with deterministic
+    // signatures in the supplied prefix. It is invoked for arbitrary PE/NE/LX
+    // resources, so loose structural guesses would create false expand arrows.
+    if (data.size() >= 16 && std::memcmp(data.constData() + 4, "SignedImage ", 12) == 0)
+        return {ModuleFormat::FFU, 0, QStringLiteral("Microsoft Full Flash Update (FFU)"), {}};
+    if (data.size() >= 31 && std::memcmp(data.constData(), "FSF\0", 4) == 0 &&
+        readBe16(data, 20) == 1 && readBe16(data, 22) >= 15 &&
+        readBe16(data, 24) == 1 && quint8(data.at(30)) > 0)
+        return {ModuleFormat::SIEMENS_FSF, 0,
+                QStringLiteral("Siemens FSF Windows CE flash-file archive"), {}};
+    if (isSiemensFwfHeader(data))
+        return {ModuleFormat::SIEMENS_FWF, 0,
+                QStringLiteral("Siemens FWF OMS firmware archive"), {}};
+    if (isB000ffHeader(data) ||
+        (data.size() >= 6 && std::memcmp(data.constData(), "NOSAJ\0", 6) == 0) ||
+        (data.size() >= 16 && std::memcmp(data.constData(), "ARNOLDBOOTBLOCK\0", 16) == 0) ||
+        (data.size() >= 5 && std::memcmp(data.constData(), "iPAQ ", 5) == 0))
+        return {ModuleFormat::WINCE_ROM, 0, QStringLiteral("Windows CE ROM / IMGFS"), {}};
+    if (isZipHeader(data))
+        return {ModuleFormat::ZIP, 0, QStringLiteral("ZIP archive"), {}};
+    if (isTarHeader(data))
+        return {ModuleFormat::TAR, 0, QStringLiteral("TAR archive"), {}};
+    if (data.size() >= 4 && std::memcmp(data.constData(), "MSCF", 4) == 0)
+        return {ModuleFormat::CAB, 0, QStringLiteral("Microsoft Cabinet (CAB) archive"), {}};
+    if (data.size() >= 8 && data.left(8) == QByteArray("SZDD\x88\xF0\x27\x33", 8))
+        return {ModuleFormat::SZDD, 0, QStringLiteral("Microsoft Compress SZDD archive"), {}};
+    if (data.size() >= 8 && std::memcmp(data.constData(), "MSWIM\0\0\0", 8) == 0)
+        return {ModuleFormat::WIM, 0, QStringLiteral("Windows Imaging (WIM) image"), {}};
+    if (data.size() >= 4 && std::memcmp(data.constData(), "KDMV", 4) == 0)
+        return {ModuleFormat::VMDK, 0, QStringLiteral("VMware Virtual Disk (VMDK)"), {}};
+    if (data.size() >= 8 && std::memcmp(data.constData(), "vhdxfile", 8) == 0)
+        return {ModuleFormat::VHDX, 0, QStringLiteral("Microsoft Virtual Hard Disk v2 (VHDX)"), {}};
+    if (data.size() >= 8 && std::memcmp(data.constData(), "$SDI0001", 8) == 0)
+        return {ModuleFormat::SDI, 0, QStringLiteral("System Deployment Image (SDI)"), {}};
+    if (data.size() >= 4) {
+        const QByteArray magic = data.left(4);
+        if (magic == QByteArrayLiteral("XBEH"))
+            return {ModuleFormat::XBE, 0, QStringLiteral("Original Xbox Executable (XBE)"), {}};
+        if (magic == QByteArrayLiteral("XEX1") || magic == QByteArrayLiteral("XEX2"))
+            return {ModuleFormat::XEX, 0, QStringLiteral("Xbox 360 Executable (XEX)"), {}};
+        if (magic == QByteArrayLiteral("XUIZ"))
+            return {ModuleFormat::XUIZ, 0, QStringLiteral("Xbox 360 XUIZ archive"), {}};
+        if (magic == QByteArrayLiteral("LIVE") || magic == QByteArrayLiteral("PIRS"))
+            return {ModuleFormat::LIVE_PIRS, 0, QStringLiteral("Xbox 360 STFS LIVE/PIRS container"), {}};
+        if (magic == QByteArrayLiteral("CON "))
+            return {ModuleFormat::CON, 0, QStringLiteral("Xbox 360 STFS CON container"), {}};
+    }
+    if (readLe16(data, 0) == 0x5A4D && data.size() >= 0x40) {
+        const quint32 nh = readLe32(data, 0x3c);
+        if (nh + 2 <= quint32(data.size())) {
+            const quint16 sig = readLe16(data, nh);
+            if (sig == 0x454E) return {ModuleFormat::NE, nh, QStringLiteral("New Executable (NE)"), {}};
+            if (sig == 0x454C) return {ModuleFormat::LE, nh, QStringLiteral("Linear Executable (LE)"), {}};
+            if (sig == 0x584C) return {ModuleFormat::LX, nh, QStringLiteral("Linear Executable (LX)"), {}};
+            if (nh + 4 <= quint32(data.size()) && readLe32(data, nh) == 0x00004550)
+                return {ModuleFormat::PE, nh, QStringLiteral("Portable Executable (PE)"), {}};
+        }
+        return {ModuleFormat::DosMZ, nh, QStringLiteral("DOS MZ executable"), {}};
+    }
+    return {};
+}
+
 QString ModuleFormatDetector::formatName(ModuleFormat format)
 {
     switch (format) {
@@ -767,6 +1342,7 @@ QString ModuleFormatDetector::formatName(ModuleFormat format)
     case ModuleFormat::SZDD: return QStringLiteral("SZDD");
     case ModuleFormat::SIEMENS_IMG: return QStringLiteral("Siemens IMG");
     case ModuleFormat::SIEMENS_FWF: return QStringLiteral("Siemens FWF");
+    case ModuleFormat::SIEMENS_FSF: return QStringLiteral("Siemens FSF");
     case ModuleFormat::ISO9660: return QStringLiteral("ISO 9660");
     case ModuleFormat::WIM: return QStringLiteral("WIM");
     case ModuleFormat::FAT: return QStringLiteral("FAT");
@@ -783,6 +1359,8 @@ QString ModuleFormatDetector::formatName(ModuleFormat format)
     case ModuleFormat::EXT: return QStringLiteral("ext");
     case ModuleFormat::NTFS: return QStringLiteral("NTFS");
     case ModuleFormat::XFS: return QStringLiteral("XFS");
+    case ModuleFormat::JFS: return QStringLiteral("JFS");
+    case ModuleFormat::HPFS: return QStringLiteral("HPFS");
     case ModuleFormat::SQUASHFS: return QStringLiteral("SquashFS");
     case ModuleFormat::HFSPLUS: return QStringLiteral("HFS+");
     case ModuleFormat::DMG: return QStringLiteral("DMG");
@@ -795,6 +1373,9 @@ QString ModuleFormatDetector::formatName(ModuleFormat format)
     case ModuleFormat::TAR: return QStringLiteral("TAR");
     case ModuleFormat::LINUX_RAID: return QStringLiteral("Linux RAID");
     case ModuleFormat::DYNAMIC_DISK: return QStringLiteral("Dynamic Disk");
+    case ModuleFormat::WINCE_ROM: return QStringLiteral("Windows CE ROM / IMGFS");
+    case ModuleFormat::FFU: return QStringLiteral("FFU");
+    case ModuleFormat::OS2_EA: return QStringLiteral("OS/2 EA");
     case ModuleFormat::Unknown: return QStringLiteral("Unknown");
     }
     return QStringLiteral("Unknown");

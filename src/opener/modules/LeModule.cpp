@@ -233,12 +233,17 @@ std::unique_ptr<LeModule> LeModule::open(const QString& filePath)
     if (!file.open(QIODevice::ReadOnly)) { module->info_.error = file.errorString(); return module; }
     const QByteArray fileBytes = file.readAll();
 
-    if (fileBytes.size() < 0x40 || u16(fileBytes, 0) != 0x5A4D) {
-        module->info_.error = QStringLiteral("The file is not an MZ executable.");
-        return module;
+    quint32 leHeaderOffset = 0;
+    if (fileBytes.size() >= 2 && u16(fileBytes, 0) == 0x454C) {
+        leHeaderOffset = 0;
+    } else {
+        if (fileBytes.size() < 0x40 || u16(fileBytes, 0) != 0x5A4D) {
+            module->info_.error = QStringLiteral("The file is neither an MZ-wrapped nor a stubless LE executable.");
+            return module;
+        }
+        leHeaderOffset = u32(fileBytes, 0x3C);
     }
 
-    const quint32 leHeaderOffset = u32(fileBytes, 0x3C);
     module->info_.headerOffset = leHeaderOffset;
     if (leHeaderOffset + 172 > quint32(fileBytes.size()) || u16(fileBytes, leHeaderOffset) != 0x454C) {
         module->info_.error = QStringLiteral("The file is not a Linear Executable (LE).");

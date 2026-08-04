@@ -20,6 +20,7 @@ enum class ModuleFormat {
     SZDD,
     SIEMENS_IMG,
     SIEMENS_FWF,
+    SIEMENS_FSF,
     ISO9660,
     WIM,
     FAT,
@@ -36,6 +37,8 @@ enum class ModuleFormat {
     EXT,
     NTFS,
     XFS,
+    JFS,
+    HPFS,
     SQUASHFS,
     HFSPLUS,
     DMG,
@@ -47,7 +50,10 @@ enum class ModuleFormat {
     ZIP,
     TAR,
     LINUX_RAID,
-    DYNAMIC_DISK
+    DYNAMIC_DISK,
+    WINCE_ROM,
+    FFU,
+    OS2_EA
 };
 
 struct ModuleFormatInfo {
@@ -70,6 +76,10 @@ public:
     // Used for the cheap is-container peek; recognises formats identifiable from
     // a header (MZ/PE/NE/LE/LX, XBE/XEX/XUIZ, STFS, OS/2 PACK, SZDD, ISO).
     static ModuleFormatInfo detectBuffer(const QByteArray &data);
+    // Strong-signature-only detection for arbitrary resource payloads. Unlike
+    // detectBuffer(), this never performs structural scans and is therefore
+    // safe to run over every executable resource using only a small prefix.
+    static ModuleFormatInfo detectNestedBuffer(const QByteArray &data);
     static QString formatName(ModuleFormat format);
 };
 

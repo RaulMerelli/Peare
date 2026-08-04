@@ -31,9 +31,11 @@ QString containerName(peare_container_format format)
     case PEARE_CONTAINER_LIVE_PIRS: return QStringLiteral("LIVE/PIRS");
     case PEARE_CONTAINER_CON: return QStringLiteral("CON");
     case PEARE_CONTAINER_OS2_PACK: return QStringLiteral("OS/2 PACK");
+    case PEARE_CONTAINER_OS2_EA: return QStringLiteral("OS/2 EA");
     case PEARE_CONTAINER_SZDD: return QStringLiteral("SZDD");
     case PEARE_CONTAINER_SIEMENS_IMG: return QStringLiteral("Siemens IMG");
     case PEARE_CONTAINER_SIEMENS_FWF: return QStringLiteral("Siemens FWF");
+    case PEARE_CONTAINER_SIEMENS_FSF: return QStringLiteral("Siemens FSF");
     case PEARE_CONTAINER_ISO9660: return QStringLiteral("ISO 9660");
     case PEARE_CONTAINER_WIM: return QStringLiteral("WIM");
     case PEARE_CONTAINER_FAT: return QStringLiteral("FAT");
@@ -50,6 +52,9 @@ QString containerName(peare_container_format format)
     case PEARE_CONTAINER_EXT: return QStringLiteral("ext");
     case PEARE_CONTAINER_NTFS: return QStringLiteral("NTFS");
     case PEARE_CONTAINER_XFS: return QStringLiteral("XFS");
+    case PEARE_CONTAINER_JFS: return QStringLiteral("JFS");
+    case PEARE_CONTAINER_HPFS: return QStringLiteral("HPFS");
+    case PEARE_CONTAINER_FFU: return QStringLiteral("FFU");
     case PEARE_CONTAINER_SQUASHFS: return QStringLiteral("SquashFS");
     case PEARE_CONTAINER_HFSPLUS: return QStringLiteral("HFS+");
     case PEARE_CONTAINER_DMG: return QStringLiteral("DMG");
@@ -62,6 +67,7 @@ QString containerName(peare_container_format format)
     case PEARE_CONTAINER_TAR: return QStringLiteral("TAR");
     case PEARE_CONTAINER_LINUX_RAID: return QStringLiteral("Linux RAID");
     case PEARE_CONTAINER_DYNAMIC_DISK: return QStringLiteral("Dynamic Disk");
+    case PEARE_CONTAINER_WINCE_ROM: return QStringLiteral("Windows CE ROM / IMGFS");
     default: return QStringLiteral("Unknown");
     }
 }

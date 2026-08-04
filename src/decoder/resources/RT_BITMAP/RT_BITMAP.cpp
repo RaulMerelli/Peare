@@ -476,14 +476,6 @@ QVector<Img> Get(const QByteArray& resData)
                     std::make_tuple(0, *image)); // Add with index 0
             }
 
-            const QString status =
-                imageDecoded
-                    ? QStringLiteral("loaded successfully")
-                    : QStringLiteral("failed to load");
-
-            qDebug().noquote()
-                << QStringLiteral("Single Bitmap or Pointer %1").arg(status);
-
             QVector<Img> result;
 
             // Extract single bitmap.
@@ -670,10 +662,21 @@ Optional<Img> Decode_BITMAP(
 {
     try
     {
-        qDebug() << "\r\n\r\nData found:\r\n";
         // ModuleResources.DumpRaw(bmpData);
 
         QByteArray bmpData = originalBmpData;
+
+        // A raw Windows RT_BITMAP starts directly with a DIB header. Check
+        // the unambiguous 12-byte core and 40+-byte info headers before the
+        // more permissive OS/2 legacy probes.
+        if (bmpData.size() >= 4) {
+            const int dibHeaderSize = ReadInt32(bmpData, 0);
+            if (dibHeaderSize == 12 || (dibHeaderSize >= 40 && dibHeaderSize <= bmpData.size())) {
+                Optional<Img> windowsDib = Decode_BITMAP_WINDOWS_DIB(bmpData);
+                if (windowsDib.has_value())
+                    return windowsDib;
+            }
+        }
 
         Optional<Img> bmpOS2 =
             Decode_BITMAP_OS2_V1(bmpData, resData);
@@ -802,12 +805,43 @@ Optional<Img> Decode_BITMAP_WINDOWS_DIB(
         constexpr quint32 BI_RLE4 = 2;
         constexpr quint32 BI_BITFIELDS = 3;
 
-        if (data.size() < 40)
+        if (data.size() < 12)
             return Optional<Img>();
 
         const int headerSize = ReadInt32(data, 0);
 
-        if (headerSize < 40 || headerSize > data.size())
+        // Windows 2.x and early Windows 3.x resources may contain a raw
+        // BITMAPCOREHEADER DIB. RT_BITMAP does not include a 14-byte BMP file
+        // header, and its palette entries are RGBTRIPLEs rather than RGBQUADs.
+        if (headerSize == 12)
+        {
+            const int width = ReadUInt16(data, 4);
+            const int height = ReadUInt16(data, 6);
+            const quint16 planes = ReadUInt16(data, 8);
+            const quint16 bitCount = ReadUInt16(data, 10);
+            if (width <= 0 || height <= 0 || planes != 1 ||
+                (bitCount != 1 && bitCount != 2 && bitCount != 4 &&
+                 bitCount != 8 && bitCount != 24))
+                return Optional<Img>();
+
+            const int paletteEntries = bitCount <= 8 ? (1 << bitCount) : 0;
+            const qint64 pixelOffset = 12 + qint64(paletteEntries) * 3;
+            const qint64 stride = ((qint64(width) * bitCount + 31) / 32) * 4;
+            const qint64 imageSize = stride * height;
+            if (pixelOffset < 12 || imageSize <= 0 ||
+                pixelOffset > data.size() || imageSize > data.size() - pixelOffset ||
+                imageSize > std::numeric_limits<int>::max())
+                return Optional<Img>();
+
+            QVector<QRgb> palette;
+            if (paletteEntries > 0)
+                palette = ReadPalette(data, 12, paletteEntries, 3);
+            const QByteArray pixelData = data.mid(int(pixelOffset), int(imageSize));
+            return GenerateBitmapFromDataImpl(pixelData, {}, width, height,
+                                                bitCount, palette);
+        }
+
+        if (data.size() < 40 || headerSize < 40 || headerSize > data.size())
             return Optional<Img>();
 
         const int width = ReadInt32(data, 4);
@@ -2553,7 +2587,7 @@ Optional<Img> Decode_BITMAP_OS2_ArrayPart(
         }
 
         const quint32 bfOffBits =
-            ReadUInt16(bmpData, 10);
+            ReadUInt32(bmpData, 10);
 
         // Calculate expected size of pixel data
         const int bitsPerLine =
