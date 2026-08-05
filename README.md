@@ -109,7 +109,7 @@ The GUI opens files, builds the resource tree, displays decoded results, compose
 The stateful Opener:
 
 - opens PE, NE, LE, LX, XBE, XEX, XUIZ, LIVE, PIRS, CON executables, OS/2 PACK/PACK2,
-  OS/2 FEALIST extended-attribute files and SZDD archives, Siemens firmware, FFU, SDI and XVA deployment images, Linux swap, LVM, MD RAID and Windows Dynamic Disk/LDM, ISO 9660 / WIM / FAT / exFAT / NTFS / ext / XFS / JFS / Btrfs / SquashFS / HFS+ / UDF disc images, and DMG / VMDK / VHD / VDI / VHDX virtual disks —
+  OS/2 FEALIST extended-attribute files, SZDD archives and .NET RESX resources, Siemens firmware, FFU, SDI and XVA deployment images, Linux swap, LVM, MD RAID and Windows Dynamic Disk/LDM, BIN/CUE optical images, ISO 9660 / WIM / FAT / exFAT / NTFS / ext / XFS / JFS / Btrfs / SquashFS / HFS+ / UDF disc images, and DMG / VMDK / VHD / VDI / VHDX virtual disks —
   from a file path or any byte source, through one entry point;
 - opens Microsoft CAB archives, including uncompressed, MSZIP and LZX folders;
 - opens ZIP and TAR archives as virtual filesystems;
@@ -137,7 +137,7 @@ It returns simple C ABI outputs:
 - typed metadata values;
 - rendered font text as PNG.
 
-When context is omitted, the Decoder examines the payload and uses RawDetect where useful.
+When context is omitted, the Decoder examines the payload and uses RawDetect where useful. Raw image detection includes an internal ZSoft PCX/PCC decoder (uncompressed/RLE, 1/2/4/8-bit indexed and planar RGB/CMYK layouts) and best-effort recovery of damaged GIF first frames, including files with leading garbage and recoverable LZW suffixes.
 
 Platform portability and packaging status is documented in `docs/PORTABILITY.md`.
 
@@ -167,6 +167,8 @@ The Opener additionally has support for uncommon archives:
 | OS/2 UnPack | IBM/Microsoft OS/2 PACK and PACK2 archives | PACK v1 LZW and PACK2 FTCOMP `fT19`; member paths are exposed without an artificial archive-root folder |
 | OS/2 FEALIST | Extended-attribute list, commonly stored as `.EA_` | Exposes named EAs as binary or text resources; embedded image payloads remain available to the Decoder |
 | Microsoft Compress | SZDD archive (variant A) |  |
+| .NET RESX | XML resource container | String/typed text, metadata, file-reference descriptors and strict Base64 payload extraction; no .NET object deserialization |
+| CDRWIN BIN/CUE | Optical-disc descriptor plus binary tracks | Multi-file BINARY layouts, AUDIO/CDG and MODE1/MODE2/CDI tracks; data tracks normalised to 2048-byte sectors for nested ISO/UDF opening |
 | Microsoft Cabinet | CAB archive | uncompressed, MSZIP and LZX folders |
 | ZIP | Virtual filesystem archive | stored, Shrink and Deflate entries; decompression is lazy; ZIP64/encrypted entries not yet |
 | TAR | Virtual filesystem archive | regular files and directories; hard links when target appears first; symlinks skipped |
@@ -400,10 +402,6 @@ Historical executable formats contain undocumented structures, vendor variations
 | --- | --- |
 | Qt | The Qt Company |
 | DiscUtils (filesystem/disk readers: ISO 9660, WIM, FAT, exFAT, NTFS, ext2/3/4, XFS, Btrfs, SquashFS, HFS+, UDF, Linux swap, LVM2, Linux MD RAID1, Windows LDM, Windows Registry hive and BCD BootConfig stores, DMG/UDIF, VMDK, VHD, VDI, VHDX, SDI, XVA, MBR/GPT/APM, stream/buffer layers) | Kenneth Bell / LTRData |
-| wimlib (LZX compression) | Eric Biggers |
-| cabextract (LZX code lineage, via wimlib) | Stuart Caie |
-| miniz (deflate/zlib decompression) | Rich Geldreich et al. |
-| Tiny AES in C | kokke |
 | wmp-wsz-format (WMP skin WSZ layout) | Ted de Baets (tdebaets) |
 | CERF (Windows CE ROM/container and IMGFS parser reference) | Yaroslav Kibysh / gweslab |
 | Linux JFS on-disk format definitions (format reference only) | IBM and Linux JFS maintainers |
@@ -418,9 +416,6 @@ Historical executable formats contain undocumented structures, vendor variations
 | OSTA Universal Disk Format specification | https://www.osta.org/specs/ |
 | ECMA-119 (ISO 9660) / ECMA-167 (UDF volume structure) | https://ecma-international.org/publications-and-standards/standards/ |
 | FFU Full Flash Update image | https://github.com/ReneLergner/WPinternals |
-| wimlib | https://wimlib.net/ · https://github.com/ebiggers/wimlib |
-| miniz | https://github.com/richgel999/miniz |
-| Tiny AES in C | https://github.com/kokke/tiny-AES-c |
 | WMP WSZ format | https://github.com/tdebaets/wmp-wsz-format |
 | CERF Windows CE emulator and ROM parser | https://github.com/gweslab/cerf |
 | WinCE Decompressor | https://github.com/KodaSec/wince-decompr |

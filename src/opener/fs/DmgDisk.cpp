@@ -1,10 +1,10 @@
 #include "DmgDisk.h"
 
+#include "../modules/DeflateDecoder.h"
+
 #include <algorithm>
 #include <cstring>
 #include <limits>
-
-#include <miniz.h>
 
 namespace peare {
 namespace fs {
@@ -19,18 +19,9 @@ const std::uint32_t kRunTerminator = 0xffffffffU;
 
 std::vector<std::uint8_t> inflateDmgZlib(const std::vector<std::uint8_t>& data,
                                          std::size_t expected) {
-    std::vector<std::uint8_t> out(expected);
-    z_stream stream;
-    std::memset(&stream, 0, sizeof(stream));
-    stream.next_in = const_cast<Bytef*>(reinterpret_cast<const Bytef*>(data.data()));
-    stream.avail_in = static_cast<uInt>(data.size());
-    stream.next_out = reinterpret_cast<Bytef*>(out.data());
-    stream.avail_out = static_cast<uInt>(out.size());
-    if (inflateInit2(&stream, -MAX_WBITS) != Z_OK) return std::vector<std::uint8_t>();
-    const int status = inflate(&stream, Z_FINISH);
-    const std::size_t produced = stream.total_out;
-    inflateEnd(&stream);
-    if (status != Z_STREAM_END || produced != expected) return std::vector<std::uint8_t>();
+    std::vector<std::uint8_t> out;
+    if (!compression::inflateZlibExact(data, expected, &out))
+        out.clear();
     return out;
 }
 
@@ -108,11 +99,10 @@ bool DmgRunStore::loadRun(std::size_t index) const {
     if (cache_.find(index) != cache_.end()) return true;
     if (index >= runs_.size()) return false;
     const DmgRun& r = runs_[index];
-    if (r.compLength <= 2 || r.sectorCount <= 0) return false;
-    const std::int64_t readOffset = r.compOffset + 2;  // DiscUtils skips zlib header.
-    const std::int64_t readLength = r.compLength - 2;
-    if (readLength > std::numeric_limits<int>::max()) return false;
-    std::vector<std::uint8_t> compressed = source_->readRange(readOffset, readLength);
+    if (r.compLength < 6 || r.sectorCount <= 0) return false;
+    if (r.compLength > std::numeric_limits<int>::max()) return false;
+    std::vector<std::uint8_t> compressed = source_->readRange(r.compOffset, r.compLength);
+    if (compressed.size() != static_cast<std::size_t>(r.compLength)) return false;
     const std::size_t expected = static_cast<std::size_t>(r.sectorCount * 512);
     std::vector<std::uint8_t> inflated = inflateDmgZlib(compressed, expected);
     if (inflated.empty() && expected != 0) return false;

@@ -69,6 +69,8 @@ ResourcePlatform platformFor(const ResourceEntry& entry)
     case ModuleFormat::HFSPLUS:
     case ModuleFormat::DMG:
     case ModuleFormat::BTRFS:
+    case ModuleFormat::RESX:
+    case ModuleFormat::CUE_BIN:
         return ResourcePlatform::Other;
     case ModuleFormat::NTFS:
     case ModuleFormat::REGISTRY:
@@ -367,6 +369,16 @@ void OpenerSession::rebuildFolders()
             entry.type == QStringLiteral("WINCE_FILE") ||
             entry.type == QStringLiteral("OS2_PACK_FILE") ||
             entry.type == QStringLiteral("SZDD_FILE") ||
+            entry.type == QStringLiteral("RESX_DATA") ||
+            entry.type == QStringLiteral("RESX_METADATA") ||
+            entry.type == QStringLiteral("RESX_FILE_REF") ||
+            entry.type == QStringLiteral("RESX_BINARY") ||
+            entry.type == QStringLiteral("RESX_SERIALIZED_OBJECT") ||
+            entry.type == QStringLiteral("CUE_SHEET") ||
+            entry.type == QStringLiteral("CUE_METADATA") ||
+            entry.type == QStringLiteral("CUE_BINARY_FILE") ||
+            entry.type == QStringLiteral("CUE_DATA_TRACK") ||
+            entry.type == QStringLiteral("CUE_AUDIO_TRACK") ||
             entry.type == QStringLiteral("CAB_FILE") ||
             entry.type == QStringLiteral("ZIP_FILE") ||
             entry.type == QStringLiteral("TAR_FILE") ||

@@ -18,7 +18,9 @@ ModulePtr UdfModule::open(const fs::ByteStorePtr& disc, const QString& sourceNam
     module->info_.description = QStringLiteral("UDF volume");
 
     fs::ByteStorePtr content = disc;
-    if (content && fs::OpticalMode2Store::detectUdf(*content))
+    if (content && fs::OpticalMode1Store::detectUdf(*content))
+        content = std::make_shared<fs::OpticalMode1Store>(content);
+    else if (content && fs::OpticalMode2Store::detectUdf(*content))
         content = std::make_shared<fs::OpticalMode2Store>(content);
 
     auto reader = std::make_shared<fs::UdfReader>(content);

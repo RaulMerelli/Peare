@@ -1,17 +1,17 @@
 #include "CabModule.h"
 #include "Compat.h"
+#include "DeflateDecoder.h"
 
 #include "peare/lzx_frontends.h"
 
 #include <QFile>
 #include <QFileInfo>
 #include <QStringList>
-#include <miniz.h>
-
 #include <algorithm>
 #include <cstring>
 #include <map>
 #include <utility>
+#include <vector>
 
 namespace peare {
 namespace {
@@ -75,19 +75,23 @@ QStringList hierarchyForCabName(QString name) {
     return parts;
 }
 
-bool inflateRawDeflate(const QByteArray& src, quint32 expected, QByteArray* out) {
-    out->resize(int(expected));
-    z_stream stream;
-    std::memset(&stream, 0, sizeof(stream));
-    stream.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(src.constData()));
-    stream.avail_in = uInt(src.size());
-    stream.next_out = reinterpret_cast<Bytef*>(out->data());
-    stream.avail_out = uInt(out->size());
-    if (inflateInit2(&stream, -MAX_WBITS) != Z_OK) return false;
-    const int status = inflate(&stream, Z_FINISH);
-    const uLong produced = stream.total_out;
-    inflateEnd(&stream);
-    if (status != Z_STREAM_END || produced != expected) return false;
+bool inflateRawDeflate(const QByteArray& src, quint32 expected,
+                       const QByteArray& history, QByteArray* out) {
+    const std::uint8_t* input = reinterpret_cast<const std::uint8_t*>(src.constData());
+    std::vector<std::uint8_t> dictionary;
+    if (!history.isEmpty()) {
+        const qsizetype retained = std::min<qsizetype>(history.size(), 32768);
+        const std::uint8_t* begin = reinterpret_cast<const std::uint8_t*>(
+            history.constData() + history.size() - retained);
+        dictionary.assign(begin, begin + retained);
+    }
+    std::vector<std::uint8_t> decoded;
+    if (!compression::inflateRawExact(input, std::size_t(src.size()), expected,
+                                      &dictionary, &decoded))
+        return false;
+    *out = decoded.empty()
+        ? QByteArray()
+        : QByteArray(reinterpret_cast<const char*>(decoded.data()), int(decoded.size()));
     return true;
 }
 
@@ -134,7 +138,7 @@ bool decodeFolder(const QByteArray& cab, const CabFolder& folder, QByteArray* de
                 *error = QStringLiteral("Invalid CAB MSZIP block signature");
                 return false;
             }
-            if (!inflateRawDeflate(block.mid(2), cbUncomp, &plain)) {
+            if (!inflateRawDeflate(block.mid(2), cbUncomp, *decoded, &plain)) {
                 *error = QStringLiteral("CAB MSZIP decompression failed");
                 return false;
             }

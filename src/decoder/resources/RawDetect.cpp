@@ -5,6 +5,8 @@
 #include "RT_FONT/RT_FONT.h"
 #include "WSZ/WszDecoder.h"
 #include "FMIM/FMIM.h"
+#include "PCX/PcxDecoder.h"
+#include "GIF/GifRecovery.h"
 
 #include <QImage>
 #include <QTextCodec>
@@ -446,7 +448,31 @@ ResourcePreview RawDetect::Get(const ResourceEntry& entry)
     }
 
 
-    // Complete image files (PNG, JPEG, GIF, BMP, TIFF, ICO/CUR, WMF/EMF)
+    // PCX/PCC is decoded internally because Qt 5 installations often omit a
+    // PCX image plugin and historical files use several planar layouts.
+    QImage pcxImage;
+    QString pcxError;
+    if (PcxDecoder::TryDecode(resData, pcxImage, &pcxError) && !pcxImage.isNull())
+    {
+        preview.images.push_back(pcxImage);
+        preview.imageLabels.push_back(QStringLiteral("ZSoft PCX/PCC"));
+        return preview;
+    }
+
+    // Use the recovery decoder for GIF first. It delegates complete images to
+    // Qt, but can skip leading garbage and salvage valid regions from damaged
+    // or truncated first-frame LZW streams.
+    QImage gifImage;
+    QString gifDescription;
+    if (GifRecovery::TryDecode(resData, gifImage, &gifDescription) && !gifImage.isNull())
+    {
+        preview.images.push_back(gifImage);
+        preview.imageLabels.push_back(gifDescription.isEmpty()
+            ? QStringLiteral("GIF image") : gifDescription);
+        return preview;
+    }
+
+    // Complete image files (PNG, JPEG, BMP, TIFF, ICO/CUR, WMF/EMF)
     // can be decoded directly by Qt without knowing the resource type name.
     if (hasStandardImageSignature(resData))
     {

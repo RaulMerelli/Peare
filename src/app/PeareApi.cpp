@@ -32,6 +32,8 @@ QString containerName(peare_container_format format)
     case PEARE_CONTAINER_CON: return QStringLiteral("CON");
     case PEARE_CONTAINER_OS2_PACK: return QStringLiteral("OS/2 PACK");
     case PEARE_CONTAINER_OS2_EA: return QStringLiteral("OS/2 EA");
+    case PEARE_CONTAINER_RESX: return QStringLiteral("RESX");
+    case PEARE_CONTAINER_CUE_BIN: return QStringLiteral("BIN/CUE");
     case PEARE_CONTAINER_SZDD: return QStringLiteral("SZDD");
     case PEARE_CONTAINER_SIEMENS_IMG: return QStringLiteral("Siemens IMG");
     case PEARE_CONTAINER_SIEMENS_FWF: return QStringLiteral("Siemens FWF");

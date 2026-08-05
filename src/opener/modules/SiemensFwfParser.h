@@ -7,7 +7,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
-#include "EmbeddedZlibInflate.h"
+#include "DeflateDecoder.h"
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -105,16 +105,15 @@ std::vector<std::uint8_t> inflate_zlib(
     const std::vector<std::uint8_t>& input,
     prosave_optional<std::size_t> expected_size = {}) {
   if (!has_zlib_header(input)) throw Error("invalid zlib header");
-  try {
-    const std::size_t limit = expected_size ? *expected_size
-                                            : std::numeric_limits<std::size_t>::max();
-    std::vector<std::uint8_t> output = prosave_embedded::inflateZlib(input, limit);
-    if (expected_size && output.size() != *expected_size)
-      throw Error("zlib output does not match descriptor size");
-    return output;
-  } catch (const prosave_embedded::InflateError&) {
+  const std::size_t limit = expected_size ? *expected_size
+                                          : std::numeric_limits<std::size_t>::max();
+  std::vector<std::uint8_t> output;
+  std::string inflate_error;
+  if (!peare::compression::inflateZlib(input, limit, &output, &inflate_error))
     throw Error("zlib stream is truncated or invalid");
-  }
+  if (expected_size && output.size() != *expected_size)
+      throw Error("zlib output does not match descriptor size");
+  return output;
 }
 
 enum class FwfPayloadKind { Empty, Zlib, Fsf, Raw, Oms, FlashImage };

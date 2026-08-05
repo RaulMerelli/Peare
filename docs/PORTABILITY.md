@@ -15,9 +15,9 @@ This document distinguishes source portability from a verified, packaged applica
 - Windows resource decoding is implemented with Qt and fixed-width integer types rather than Win32 resource APIs.
 - The GUI icon defaults contain Windows file paths, but icon loading has a Qt-resource fallback and does not require `shell32.dll` to compile.
 - `resources/peare.rc` is added only when `WIN32` is true.
-- AES-128-CBC for encrypted XEX files is implemented by bundled portable C code and has no operating-system cryptography dependency.
+- AES-128-CBC for encrypted XEX files is implemented by internal portable C++ code and has no operating-system cryptography dependency.
 - Public C ABI exports use `__declspec` on Windows and default symbol visibility attributes on GCC-compatible compilers.
-- The LZX engine is C11 and is built as position-independent code.
+- The internal LZX decoder is C++11 and is built as part of PeareOpener.
 
 ## Work required for full parity
 

@@ -1,6 +1,6 @@
 #include "VmdkDisk.h"
 
-#include "../modules/EmbeddedZlibInflate.h"
+#include "../modules/DeflateDecoder.h"
 
 #include <algorithm>
 #include <cstring>
@@ -197,12 +197,9 @@ private:
         std::vector<std::uint8_t> compressed =
             file_->readRange(ref.dataOffset, ref.compressedSize);
         if (compressed.size() != ref.compressedSize) return &cache_;
-        try {
-            cache_ = prosave_embedded::inflateZlib(
-                compressed, static_cast<std::size_t>(grainBytes_));
-        } catch (...) {
+        if (!compression::inflateZlib(
+                compressed, static_cast<std::size_t>(grainBytes_), &cache_))
             cache_.clear();
-        }
         return &cache_;
     }
 

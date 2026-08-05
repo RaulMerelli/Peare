@@ -91,7 +91,9 @@ typedef enum peare_container_format {
     PEARE_CONTAINER_HPFS,
     PEARE_CONTAINER_FFU,
     PEARE_CONTAINER_SIEMENS_FSF,
-    PEARE_CONTAINER_OS2_EA
+    PEARE_CONTAINER_OS2_EA,
+    PEARE_CONTAINER_RESX,
+    PEARE_CONTAINER_CUE_BIN
 } peare_container_format;
 
 typedef enum peare_platform {

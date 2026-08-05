@@ -14,6 +14,8 @@
 #include "Os2PackModule.h"
 #include "Os2EaModule.h"
 #include "SzddModule.h"
+#include "ResxModule.h"
+#include "CueBinModule.h"
 #include "CabModule.h"
 #include "RawDiskModule.h"
 #include "FfuModule.h"
@@ -114,6 +116,8 @@ ModulePtr ModuleFactory::open(const QString& filePath)
     if (info.format == ModuleFormat::OS2_PACK) return Os2PackModule::open(filePath);
     if (info.format == ModuleFormat::OS2_EA) return Os2EaModule::open(filePath);
     if (info.format == ModuleFormat::SZDD) return SzddModule::open(filePath);
+    if (info.format == ModuleFormat::RESX) return ResxModule::open(filePath);
+    if (info.format == ModuleFormat::CUE_BIN) return CueBinModule::open(filePath);
     if (info.format == ModuleFormat::CAB) return CabModule::open(filePath);
     if (info.format == ModuleFormat::ZIP) return ZipModule::open(filePath);
     if (info.format == ModuleFormat::TAR) return TarModule::open(filePath);
@@ -167,7 +171,8 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
         detected.format != ModuleFormat::SIEMENS_IMG &&
         detected.format != ModuleFormat::SIEMENS_FWF &&
         detected.format != ModuleFormat::SIEMENS_FSF &&
-        detected.format != ModuleFormat::OS2_EA)
+        detected.format != ModuleFormat::OS2_EA &&
+        detected.format != ModuleFormat::RESX)
         return open(physicalPath);
 
     QFile file(physicalPath);
@@ -197,6 +202,8 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
         return SiemensFsfModule::open(data, logicalName);
     if (detected.format == ModuleFormat::OS2_EA)
         return Os2EaModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::RESX)
+        return ResxModule::open(data, logicalName);
     if (detected.format == ModuleFormat::CAB)
         return CabModule::open(data, logicalName);
     if (detected.format == ModuleFormat::TAR)
@@ -361,6 +368,8 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
         return SiemensFsfModule::open(data, logicalName);
     if (direct.format == ModuleFormat::OS2_EA)
         return Os2EaModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::RESX)
+        return ResxModule::open(data, logicalName);
 
     QTemporaryFile temporary;
     if (!temporary.open() || temporary.write(data) != data.size() || !temporary.flush()) {
@@ -399,6 +408,8 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
         return SiemensFsfModule::open(data, logicalName);
     if (detected.format == ModuleFormat::OS2_EA)
         return Os2EaModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::RESX)
+        return ResxModule::open(data, logicalName);
     return open(path);
 }
 

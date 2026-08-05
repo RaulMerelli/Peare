@@ -53,7 +53,9 @@ enum class ModuleFormat {
     DYNAMIC_DISK,
     WINCE_ROM,
     FFU,
-    OS2_EA
+    OS2_EA,
+    RESX,
+    CUE_BIN
 };
 
 struct ModuleFormatInfo {

@@ -8,9 +8,8 @@
 //
 // DiscUtils selects a codec per compressed resource (WIM: LZX or XPRESS) behind
 // this single interface. We keep the interface (the DiscUtils shape) and port
-// every codec from DiscUtils EXCEPT LZX: LZX is provided by our existing wimlib
-// engine (peare_lzx_wim_*), wrapped as an IBlockDecompressor so the WIM reader
-// selects it through the same interface DiscUtils uses.
+// every codec behind the same interface. LZX is implemented by Peare's internal
+// decoder and exposed through the peare_lzx_wim_* frontend.
 
 #include <cstddef>
 #include <cstdint>
@@ -36,10 +35,8 @@ public:
 
 typedef std::shared_ptr<IBlockDecompressor> BlockDecompressorPtr;
 
-// LZX decompressor for WIM chunks. This is the ONE codec we do not port from
-// DiscUtils: it adapts our wimlib-based engine to the DiscUtils interface. WIM
-// chunks are independent and their decompressed size is known (the chunk size),
-// so it maps directly onto peare_lzx_wim_decompress.
+// LZX decompressor for independent WIM chunks. The destination capacity is the
+// expected chunk size, so the frontend can validate the exact result.
 class LzxWimDecompressor : public IBlockDecompressor {
 public:
     explicit LzxWimDecompressor(std::size_t maxChunkSize) {
@@ -68,9 +65,8 @@ private:
     LzxWimDecompressor& operator=(const LzxWimDecompressor&);
 };
 
-// XPRESS (Huffman) decompressor, ported from DiscUtils.Core/Compression/
-// XpressHuffman.cs (+ XpressBitStream / XpressLz77 / Huffman helpers). Declared
-// here; implemented in XpressHuffman.cpp.
+// XPRESS LZ77+Huffman decoder used by compressed WIM resources.
+// The implementation is maintained locally in XpressDecoder.cpp.
 class XpressHuffmanDecompressor : public IBlockDecompressor {
 public:
     XpressHuffmanDecompressor();

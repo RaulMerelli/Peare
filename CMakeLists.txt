@@ -93,14 +93,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(PEARE_QT_CORE ${PEARE_QT_PACKAGE}::Core)
 set(PEARE_QT_GUI ${PEARE_QT_PACKAGE}::Gui)
 set(PEARE_QT_WIDGETS ${PEARE_QT_PACKAGE}::Widgets)
-# Decompression (deflate / zlib) is provided by the vendored miniz — a single
-# self-contained, zlib-compatible C file — so Peare depends on neither an external
-# nor a Qt-bundled zlib and stays portable (OS/2 included). It exposes the standard
-# zlib names (z_stream, inflate, uncompress, ...), so callers just include <miniz.h>.
-add_library(PeareMiniz STATIC third_party/miniz/miniz.c)
-target_include_directories(PeareMiniz PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniz)
-set_target_properties(PeareMiniz PROPERTIES POSITION_INDEPENDENT_CODE ON)
-set(PEARE_QT_ZLIB PeareMiniz)
 if(QT_VERSION_MAJOR EQUAL 6)
     set(PEARE_QT_CORE5COMPAT Qt6::Core5Compat)
 else()
@@ -118,26 +110,13 @@ else()
     message(STATUS "Peare targets: Peare + libPeareOpener + libPeareDecoder")
 endif()
 
-# Isolated upstream LZX engine.  Container-specific XEX framing remains outside
-# this target.  It is compiled independently so licensing and dependencies stay
-# explicit and the decoder can be adapted without coupling it to PeareOpener.
-add_library(PeareLzxEngine OBJECT
-    third_party/wimlib_lzx/src/lzx-common.c
-    third_party/wimlib_lzx/src/lzx-decompress.c
-    third_party/wimlib_lzx/src/decompress_common.c
-    third_party/wimlib_lzx/src/aligned_alloc_compat.c
-    third_party/wimlib_lzx/src/lzx-frontends.c
-)
-target_include_directories(PeareLzxEngine PUBLIC third_party/wimlib_lzx/include)
-set_target_properties(PeareLzxEngine PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
-if(NOT MSVC)
-    target_compile_options(PeareLzxEngine PRIVATE -std=gnu11)
-endif()
-
+# Internal LZX decoder used by WIM, CAB, XEX and Windows CE containers.
 add_library(PeareOpener SHARED
     src/opener/api/peare/peare_types.h
     src/opener/api/peare/peare_opener.h
     src/opener/api/Api.cpp
+    src/opener/compression/peare/lzx_frontends.h
+    src/opener/compression/LzxDecoder.cpp
     src/opener/api/PeareResourceSnapshot.h
     src/opener/OpenerSession.h
     src/opener/OpenerSession.cpp
@@ -161,8 +140,6 @@ add_library(PeareOpener SHARED
     src/opener/modules/XexModule.cpp
     src/opener/modules/Crypto.h
     src/opener/modules/Crypto.cpp
-    third_party/tiny_aes/aes.h
-    third_party/tiny_aes/aes.c
     src/opener/modules/XbeModule.h
     src/opener/modules/XbeModule.cpp
     src/opener/modules/XuizModule.h
@@ -180,6 +157,10 @@ add_library(PeareOpener SHARED
     src/opener/modules/Os2Pack2Tables.h
     src/opener/modules/SzddModule.h
     src/opener/modules/SzddModule.cpp
+    src/opener/modules/ResxModule.h
+    src/opener/modules/ResxModule.cpp
+    src/opener/modules/CueBinModule.h
+    src/opener/modules/CueBinModule.cpp
     src/opener/modules/SiemensImgModule.h
     src/opener/modules/SiemensImgModule.cpp
     src/opener/modules/SiemensFwfModule.h
@@ -190,7 +171,8 @@ add_library(PeareOpener SHARED
     src/opener/modules/WinceRomModule.cpp
     src/opener/modules/WinceCompression.h
     src/opener/modules/WinceCompression.cpp
-    src/opener/modules/EmbeddedZlibInflate.h
+    src/opener/modules/DeflateDecoder.h
+    src/opener/modules/DeflateDecoder.cpp
     src/opener/modules/SiemensImgParser.h
     src/opener/modules/SiemensFwfParser.h
     src/opener/modules/stfs/STFSCommon.h
@@ -209,7 +191,7 @@ add_library(PeareOpener SHARED
     src/opener/fs/Iso9660Reader.h
     src/opener/fs/Iso9660Reader.cpp
     src/opener/fs/BlockDecompressor.h
-    src/opener/fs/XpressHuffman.cpp
+    src/opener/fs/XpressDecoder.cpp
     src/opener/fs/WimReader.h
     src/opener/fs/WimReader.cpp
     src/opener/fs/FatReader.h
@@ -323,9 +305,9 @@ target_include_directories(PeareOpener
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/compression
 )
-target_link_libraries(PeareOpener PRIVATE ${PEARE_QT_CORE} ${PEARE_QT_ZLIB} PeareLzxEngine)
-target_include_directories(PeareOpener PRIVATE third_party/wimlib_lzx/include)
+target_link_libraries(PeareOpener PRIVATE ${PEARE_QT_CORE})
 set_target_properties(PeareOpener PROPERTIES
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES
@@ -349,6 +331,11 @@ add_library(PeareDecoder SHARED
     src/decoder/resources/ModuleResources.cpp
     src/decoder/resources/RawDetect.h
     src/decoder/resources/RawDetect.cpp
+    src/decoder/resources/PCX/PcxDecoder.h
+    src/decoder/resources/PCX/PcxDecoder.cpp
+    src/decoder/resources/PCX/LICENSE-Apache-2.0.txt
+    src/decoder/resources/GIF/GifRecovery.h
+    src/decoder/resources/GIF/GifRecovery.cpp
     src/decoder/ResourceExport.h
     src/decoder/ResourceExport.cpp
     src/decoder/resources/XBE_LOGO_RLE/XBE_LOGO_RLE.h

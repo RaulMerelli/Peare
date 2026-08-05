@@ -7,7 +7,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
-#include "EmbeddedZlibInflate.h"
+#include "DeflateDecoder.h"
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -619,17 +619,16 @@ std::vector<std::uint8_t> inflate_zlib(
   if (!has_zlib_header(input)) {
     throw Error("invalid zlib header");
   }
-  try {
-    const std::size_t limit = expected_size ? *expected_size
-                                            : std::numeric_limits<std::size_t>::max();
-    std::vector<std::uint8_t> output = prosave_embedded::inflateZlib(input, limit);
-    if (expected_size && output.size() != *expected_size) {
+  const std::size_t limit = expected_size ? *expected_size
+                                          : std::numeric_limits<std::size_t>::max();
+  std::vector<std::uint8_t> output;
+  std::string inflate_error;
+  if (!peare::compression::inflateZlib(input, limit, &output, &inflate_error))
+    throw Error("zlib stream is truncated or invalid");
+  if (expected_size && output.size() != *expected_size) {
       throw Error("zlib output does not match descriptor size");
     }
-    return output;
-  } catch (const prosave_embedded::InflateError&) {
-    throw Error("zlib stream is truncated or invalid");
-  }
+  return output;
 }
 
 void write_reconstructed_images(

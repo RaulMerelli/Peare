@@ -1,10 +1,9 @@
 #include "ZipModule.h"
 #include "Compat.h"
+#include "DeflateDecoder.h"
 
 #include <QFile>
 #include <QStringList>
-#include <miniz.h>
-
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -268,6 +267,42 @@ private:
     mutable bool failed_ = false;
 };
 
+class ZipCompressedInput final : public compression::InflateInput {
+public:
+    ZipCompressedInput(const fs::IByteStore& source, std::int64_t offset,
+                       std::int64_t length)
+        : source_(source), offset_(offset), length_(length), consumed_(0),
+          bufferPosition_(0), bufferSize_(0) {}
+
+    bool readByte(std::uint8_t* value) override {
+        if (!value || consumed_ >= length_) return false;
+        if (bufferPosition_ >= bufferSize_) {
+            const std::int64_t remaining = length_ - consumed_;
+            const int request = int(std::min<std::int64_t>(remaining, sizeof(buffer_)));
+            const int got = source_.read(offset_ + consumed_, buffer_, request);
+            if (got <= 0) return false;
+            bufferPosition_ = 0;
+            bufferSize_ = got;
+        }
+        *value = buffer_[bufferPosition_++];
+        ++consumed_;
+        return true;
+    }
+
+    std::size_t consumed() const override {
+        return consumed_ < 0 ? 0 : static_cast<std::size_t>(consumed_);
+    }
+
+private:
+    const fs::IByteStore& source_;
+    std::int64_t offset_;
+    std::int64_t length_;
+    std::int64_t consumed_;
+    std::uint8_t buffer_[64 * 1024];
+    int bufferPosition_;
+    int bufferSize_;
+};
+
 class ZipDeflateStore final : public fs::IByteStore {
 public:
     ZipDeflateStore(fs::ByteStorePtr source, std::int64_t offset,
@@ -295,70 +330,21 @@ private:
         if (failed_) return false;
         if (prefix_.size() >= wanted) return true;
         if (wanted > std::size_t(uncompressed_)) wanted = std::size_t(uncompressed_);
-
-        std::vector<std::uint8_t> output(wanted);
-        std::vector<std::uint8_t> input(64 * 1024);
-        z_stream stream;
-        std::memset(&stream, 0, sizeof(stream));
-        if (inflateInit2(&stream, -MAX_WBITS) != Z_OK) {
+        if (compressed_ < 0 || offset_ < 0 ||
+            offset_ > source_->capacity() - compressed_) {
             failed_ = true;
             return false;
         }
 
-        std::int64_t consumed = 0;
-        std::size_t produced = 0;
-        bool ended = false;
-        bool ok = true;
-        while (produced < wanted) {
-            if (stream.avail_in == 0 && consumed < compressed_) {
-                const int request = int(std::min<std::int64_t>(input.size(), compressed_ - consumed));
-                const int got = source_->read(offset_ + consumed, input.data(), request);
-                if (got <= 0) { ok = false; break; }
-                consumed += got;
-                stream.next_in = reinterpret_cast<Bytef*>(input.data());
-                stream.avail_in = uInt(got);
-            }
-
-            stream.next_out = reinterpret_cast<Bytef*>(output.data() + produced);
-            stream.avail_out = uInt(wanted - produced);
-            const uLong beforeOut = stream.total_out;
-            const uLong beforeIn = stream.total_in;
-            const int status = inflate(&stream, Z_NO_FLUSH);
-            produced = std::size_t(stream.total_out);
-            if (status == Z_STREAM_END) { ended = true; break; }
-            if (status != Z_OK) { ok = false; break; }
-            if (stream.total_out == beforeOut && stream.total_in == beforeIn &&
-                stream.avail_in == 0 && consumed >= compressed_) {
-                ok = false;
-                break;
-            }
-        }
-
-        if (wanted == std::size_t(uncompressed_)) {
-            while (ok && !ended) {
-                if (stream.avail_in == 0 && consumed < compressed_) {
-                    const int request = int(std::min<std::int64_t>(input.size(), compressed_ - consumed));
-                    const int got = source_->read(offset_ + consumed, input.data(), request);
-                    if (got <= 0) { ok = false; break; }
-                    consumed += got;
-                    stream.next_in = reinterpret_cast<Bytef*>(input.data());
-                    stream.avail_in = uInt(got);
-                }
-                std::uint8_t sink[1];
-                stream.next_out = sink;
-                stream.avail_out = 1;
-                const int status = inflate(&stream, Z_FINISH);
-                if (status == Z_STREAM_END) { ended = true; break; }
-                if (status != Z_BUF_ERROR && status != Z_OK) { ok = false; break; }
-                if (consumed >= compressed_ && stream.avail_in == 0) { ok = false; break; }
-            }
-            ok = ok && ended && stream.total_out == uLong(uncompressed_);
-        } else {
-            ok = ok && produced >= wanted;
-        }
-        inflateEnd(&stream);
+        ZipCompressedInput input(*source_, offset_, compressed_);
+        std::vector<std::uint8_t> output;
+        std::string error;
+        const bool ok = wanted == std::size_t(uncompressed_)
+            ? compression::inflateRawExact(input, wanted, nullptr, &output, &error)
+            : compression::inflateRawPrefix(input, wanted, &output, &error);
         if (!ok) {
             failed_ = true;
+            prefix_.clear();
             return false;
         }
         prefix_.swap(output);

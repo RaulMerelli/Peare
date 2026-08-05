@@ -1,11 +1,11 @@
 #include "SquashFsReader.h"
 
+#include "../modules/DeflateDecoder.h"
+
 #include <algorithm>
 #include <cstring>
 #include <memory>
 #include <utility>
-
-#include <miniz.h>
 
 namespace peare {
 namespace fs {
@@ -53,22 +53,10 @@ void splitPath(const std::string& path, std::vector<std::string>* out) {
     if (!cur.empty()) out->push_back(cur);
 }
 
-std::vector<std::uint8_t> inflateZlib(const std::vector<std::uint8_t>& data, std::size_t limit) {
-    std::vector<std::uint8_t> out(limit);
-    z_stream stream;
-    std::memset(&stream, 0, sizeof(stream));
-    stream.next_in = const_cast<Bytef*>(reinterpret_cast<const Bytef*>(data.data()));
-    stream.avail_in = static_cast<uInt>(data.size());
-    stream.next_out = reinterpret_cast<Bytef*>(out.data());
-    stream.avail_out = static_cast<uInt>(out.size());
-    if (inflateInit(&stream) != Z_OK)
-        return {};
-    const int status = inflate(&stream, Z_FINISH);
-    const bool ok = status == Z_STREAM_END;
-    const std::size_t produced = stream.total_out;
-    inflateEnd(&stream);
-    if (!ok) return {};
-    out.resize(produced);
+std::vector<std::uint8_t> inflateZlib(const std::vector<std::uint8_t>& data,
+                                      std::size_t limit) {
+    std::vector<std::uint8_t> out;
+    if (!compression::inflateZlib(data, limit, &out)) out.clear();
     return out;
 }
 

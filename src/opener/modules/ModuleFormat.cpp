@@ -2,6 +2,8 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <QDir>
+#include <QXmlStreamReader>
 
 #include <cstring>
 
@@ -10,6 +12,7 @@ namespace {
 
 const qint64 kOpticalMode2SectorSize = 2352;
 const qint64 kOpticalMode2PayloadOffset = 24;
+const qint64 kOpticalMode1PayloadOffset = 16;
 
 quint16 readLe16(const QByteArray &data, qsizetype offset)
 {
@@ -89,16 +92,18 @@ ModuleFormatInfo directOs2Executable(const QByteArray& data)
     return {};
 }
 
-bool isMode2IsoDescriptor(const QByteArray& data)
+bool isRawOpticalIsoDescriptor(const QByteArray& data, qint64 sectorSize,
+                                   qint64 payloadOffset)
 {
-    const qint64 pos = 16 * kOpticalMode2SectorSize + kOpticalMode2PayloadOffset + 1;
+    const qint64 pos = 16 * sectorSize + payloadOffset + 1;
     return data.size() >= pos + 5 && std::memcmp(data.constData() + pos, "CD001", 5) == 0;
 }
 
-bool isMode2UdfDescriptor(const QByteArray& data)
+bool isRawOpticalUdfDescriptor(const QByteArray& data, qint64 sectorSize,
+                               qint64 payloadOffset)
 {
     for (int i = 0; i < 64; ++i) {
-        const qint64 pos = (16 + i) * kOpticalMode2SectorSize + kOpticalMode2PayloadOffset;
+        const qint64 pos = (16 + i) * sectorSize + payloadOffset;
         if (pos + 6 > data.size()) break;
         const char* id = data.constData() + pos + 1;
         if (std::memcmp(id, "NSR02", 5) == 0 || std::memcmp(id, "NSR03", 5) == 0)
@@ -109,6 +114,18 @@ bool isMode2UdfDescriptor(const QByteArray& data)
             break;
     }
     return false;
+}
+
+bool isMode2IsoDescriptor(const QByteArray& data)
+{
+    return isRawOpticalIsoDescriptor(data, kOpticalMode2SectorSize,
+                                     kOpticalMode2PayloadOffset);
+}
+
+bool isMode2UdfDescriptor(const QByteArray& data)
+{
+    return isRawOpticalUdfDescriptor(data, kOpticalMode2SectorSize,
+                                     kOpticalMode2PayloadOffset);
 }
 
 bool looksPartitionedRawDisk(const QByteArray& data, qint64 totalSize)
@@ -406,6 +423,12 @@ bool isWindowsCeRomHeader(const QByteArray& data)
 ModuleFormatInfo detectOpticalBuffer(const QByteArray& data)
 {
     if (data.size() >= 17 * kOpticalMode2SectorSize) {
+        if (isRawOpticalUdfDescriptor(data, kOpticalMode2SectorSize,
+                                      kOpticalMode1PayloadOffset))
+            return {ModuleFormat::UDF, 0, QStringLiteral("UDF (raw Mode 1 optical image)"), {}};
+        if (isRawOpticalIsoDescriptor(data, kOpticalMode2SectorSize,
+                                      kOpticalMode1PayloadOffset))
+            return {ModuleFormat::ISO9660, 0, QStringLiteral("ISO 9660 (raw Mode 1 optical image)"), {}};
         if (isMode2UdfDescriptor(data))
             return {ModuleFormat::UDF, 0, QStringLiteral("UDF (raw Mode 2 optical image)"), {}};
         if (isMode2IsoDescriptor(data))
@@ -432,6 +455,110 @@ ModuleFormatInfo detectOpticalBuffer(const QByteArray& data)
     return {};
 }
 
+QString decodeCueProbe(const QByteArray& data)
+{
+    if (data.startsWith("\xEF\xBB\xBF"))
+        return QString::fromUtf8(data.constData() + 3, data.size() - 3);
+    if (data.size() >= 2 && quint8(data[0]) == 0xff && quint8(data[1]) == 0xfe) {
+        QVector<ushort> units((data.size() - 2) / 2);
+        for (int i = 0; i < units.size(); ++i)
+            units[i] = ushort(quint8(data[2 + i * 2])) |
+                       (ushort(quint8(data[3 + i * 2])) << 8);
+        return QString::fromUtf16(units.constData(), units.size());
+    }
+    if (data.size() >= 2 && quint8(data[0]) == 0xfe && quint8(data[1]) == 0xff) {
+        QVector<ushort> units((data.size() - 2) / 2);
+        for (int i = 0; i < units.size(); ++i)
+            units[i] = (ushort(quint8(data[2 + i * 2])) << 8) |
+                       ushort(quint8(data[3 + i * 2]));
+        return QString::fromUtf16(units.constData(), units.size());
+    }
+    if (data.contains('\0')) return {};
+    return QString::fromUtf8(data);
+}
+
+bool cueCommand(const QString& line, const QString& command)
+{
+    if (!line.startsWith(command, Qt::CaseInsensitive)) return false;
+    return line.size() == command.size() || line.at(command.size()).isSpace();
+}
+
+bool isCueSheetDocument(const QByteArray& data)
+{
+    const QString text = decodeCueProbe(data);
+    if (text.isEmpty()) return false;
+    bool haveFile = false;
+    bool haveTrack = false;
+    bool haveIndex01 = false;
+    const QStringList lines = text.split(QLatin1Char('\n'));
+    for (QString line : lines) {
+        line = line.trimmed();
+        if (line.isEmpty() || cueCommand(line, QStringLiteral("REM"))) continue;
+        if (cueCommand(line, QStringLiteral("FILE"))) {
+            haveFile = line.contains(QStringLiteral("BINARY"), Qt::CaseInsensitive);
+            continue;
+        }
+        if (haveFile && cueCommand(line, QStringLiteral("TRACK"))) {
+            const QString upper = line.toUpper();
+            haveTrack = upper.contains(QStringLiteral("AUDIO")) ||
+                        upper.contains(QStringLiteral("CDG")) ||
+                        upper.contains(QStringLiteral("MODE1/")) ||
+                        upper.contains(QStringLiteral("MODE2/")) ||
+                        upper.contains(QStringLiteral("CDI/"));
+            continue;
+        }
+        if (haveTrack && cueCommand(line, QStringLiteral("INDEX"))) {
+            const QString simplified = line.simplified();
+            if (simplified.startsWith(QStringLiteral("INDEX 01 "), Qt::CaseInsensitive))
+                haveIndex01 = true;
+        }
+    }
+    return haveFile && haveTrack && haveIndex01;
+}
+
+QString matchingCueBesideBin(const QString& binPath)
+{
+    const QFileInfo bin(binPath);
+    QDir dir = bin.dir();
+    const QFileInfoList candidates = dir.entryInfoList(QDir::Files | QDir::Readable);
+    for (const QFileInfo& cue : candidates) {
+        if (cue.suffix().compare(QStringLiteral("cue"), Qt::CaseInsensitive) != 0 ||
+            cue.completeBaseName().compare(bin.completeBaseName(), Qt::CaseInsensitive) != 0)
+            continue;
+        QFile file(cue.absoluteFilePath());
+        if (!file.open(QIODevice::ReadOnly) || file.size() > 16 * 1024 * 1024) continue;
+        if (isCueSheetDocument(file.readAll())) return cue.absoluteFilePath();
+    }
+    return {};
+}
+
+bool isResxDocument(const QByteArray& data)
+{
+    QXmlStreamReader xml(data);
+    xml.setEntityExpansionLimit(1024);
+    if (!xml.readNextStartElement() || xml.name() != QLatin1String("root"))
+        return false;
+
+    while (xml.readNextStartElement()) {
+        if (xml.name() != QLatin1String("resheader")) {
+            xml.skipCurrentElement();
+            continue;
+        }
+        const QString name = xml.attributes().value(QLatin1String("name")).toString();
+        QString value;
+        while (xml.readNextStartElement()) {
+            if (xml.name() == QLatin1String("value"))
+                value = xml.readElementText(QXmlStreamReader::IncludeChildElements);
+            else
+                xml.skipCurrentElement();
+        }
+        if (name.compare(QStringLiteral("resmimetype"), Qt::CaseInsensitive) == 0 &&
+            value.trimmed().compare(QStringLiteral("text/microsoft-resx"), Qt::CaseInsensitive) == 0)
+            return true;
+    }
+    return false;
+}
+
 } // namespace
 
 ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
@@ -440,6 +567,13 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
     if (!file.open(QIODevice::ReadOnly)) {
         return {ModuleFormat::Unknown, 0, {}, file.errorString()};
     }
+
+    // A same-basename CUE is authoritative for a .bin image: it carries track
+    // boundaries and sector modes that cannot be inferred reliably from BIN
+    // bytes alone.
+    if (QFileInfo(filePath).suffix().compare(QStringLiteral("bin"), Qt::CaseInsensitive) == 0 &&
+        !matchingCueBesideBin(filePath).isEmpty())
+        return {ModuleFormat::CUE_BIN, 0, QStringLiteral("CDRWIN BIN/CUE optical image"), {}};
 
     // Microsoft Full Flash Update: the security header starts at byte zero and
     // carries the 12-byte "SignedImage " signature at offset four.
@@ -492,6 +626,10 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
                            winceSuffix == QStringLiteral("fim") ||
                            winceSuffix == QStringLiteral("rom") ||
                            winceSuffix == QStringLiteral("imgfs");
+    if (isCueSheetDocument(winceHead)) {
+        file.seek(0);
+        return {ModuleFormat::CUE_BIN, 0, QStringLiteral("CDRWIN BIN/CUE optical image"), {}};
+    }
     const ModuleFormatInfo optical = detectOpticalBuffer(winceHead);
     if (optical.format != ModuleFormat::Unknown) {
         file.seek(0);
@@ -501,6 +639,10 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         (scanImgfs && file.size() > winceHead.size() && fileContainsImgfs(file))) {
         file.seek(0);
         return {ModuleFormat::WINCE_ROM, 0, QStringLiteral("Windows CE ROM / IMGFS"), {}};
+    }
+    if (isResxDocument(winceHead)) {
+        file.seek(0);
+        return {ModuleFormat::RESX, 0, QStringLiteral(".NET XML resource (RESX)"), {}};
     }
     file.seek(0);
 
@@ -904,6 +1046,10 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
                 QStringLiteral("Siemens FSF Windows CE flash-file archive"), {}};
     }
 
+    if (isResxDocument(data)) {
+        return {ModuleFormat::RESX, 0, QStringLiteral(".NET XML resource (RESX)"), {}};
+    }
+
     const bool fwfHeader = data.size() >= 2 &&
         static_cast<unsigned char>(data[0]) == 0x03 &&
         static_cast<unsigned char>(data[1]) == 0xA1;
@@ -1058,6 +1204,9 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
     if (isSiemensFwfHeader(data))
         return {ModuleFormat::SIEMENS_FWF, 0,
                 QStringLiteral("Siemens FWF OMS firmware archive"), {}};
+
+    if (isResxDocument(data))
+        return {ModuleFormat::RESX, 0, QStringLiteral(".NET XML resource (RESX)"), {}};
 
     const ModuleFormatInfo optical = detectOpticalBuffer(data);
     if (optical.format != ModuleFormat::Unknown)
@@ -1276,6 +1425,8 @@ ModuleFormatInfo ModuleFormatDetector::detectNestedBuffer(const QByteArray& data
     if (isSiemensFwfHeader(data))
         return {ModuleFormat::SIEMENS_FWF, 0,
                 QStringLiteral("Siemens FWF OMS firmware archive"), {}};
+    if (isResxDocument(data))
+        return {ModuleFormat::RESX, 0, QStringLiteral(".NET XML resource (RESX)"), {}};
     if (isB000ffHeader(data) ||
         (data.size() >= 6 && std::memcmp(data.constData(), "NOSAJ\0", 6) == 0) ||
         (data.size() >= 16 && std::memcmp(data.constData(), "ARNOLDBOOTBLOCK\0", 16) == 0) ||
@@ -1376,6 +1527,8 @@ QString ModuleFormatDetector::formatName(ModuleFormat format)
     case ModuleFormat::WINCE_ROM: return QStringLiteral("Windows CE ROM / IMGFS");
     case ModuleFormat::FFU: return QStringLiteral("FFU");
     case ModuleFormat::OS2_EA: return QStringLiteral("OS/2 EA");
+    case ModuleFormat::RESX: return QStringLiteral("RESX");
+    case ModuleFormat::CUE_BIN: return QStringLiteral("BIN/CUE");
     case ModuleFormat::Unknown: return QStringLiteral("Unknown");
     }
     return QStringLiteral("Unknown");

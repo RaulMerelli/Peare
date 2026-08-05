@@ -78,7 +78,16 @@ bool looksLikePcx(const QByteArray& data)
     if (data.size() < 128 || quint8(data.at(0)) != 0x0A) return false;
     const quint8 encoding = quint8(data.at(2));
     const quint8 bits = quint8(data.at(3));
-    return encoding == 1 && (bits == 1 || bits == 2 || bits == 4 || bits == 8);
+    if (encoding > 1 || (bits != 1 && bits != 2 && bits != 4 && bits != 8))
+        return false;
+    const quint16 xMin = read16(data, 4);
+    const quint16 yMin = read16(data, 6);
+    const quint16 xMax = read16(data, 8);
+    const quint16 yMax = read16(data, 10);
+    const quint8 planes = quint8(data.at(65));
+    const quint16 bytesPerLine = read16(data, 66);
+    return xMax >= xMin && yMax >= yMin && planes >= 1 && planes <= 4 &&
+           bytesPerLine >= ((quint32(xMax - xMin + 1) * bits + 7u) / 8u);
 }
 
 bool looksLikePortableAnymap(const QByteArray& data)

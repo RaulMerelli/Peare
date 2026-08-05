@@ -1,6 +1,5 @@
-// Windows CE LZX outer framing follows the MIT-licensed wince-decompr
-// implementation (see third_party/wince-decompr/LICENSE); the inner LZX engine
-// is Peare's existing wimlib/cabextract-derived decoder.
+// Windows CE framing is handled here; compressed payloads are decoded by
+// Peare's internal classic LZX implementation.
 #include "WinceCompression.h"
 
 #include <peare/lzx_frontends.h>

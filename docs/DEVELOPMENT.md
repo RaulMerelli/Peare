@@ -77,7 +77,7 @@ Confirm that the GUI links against both shared libraries and that `PeareDecoder`
 
 ## XEX AES image reconstruction
 
-`XexModule` supports normal XEX image encryption before applying the existing basic or LZX reconstruction path. The encrypted 16-byte image key is read from the XEX security information, decrypted with the known retail and development master-key candidates using AES-128-CBC with a zero IV, and then used as the session key for the complete image payload. For normal compression, a candidate is accepted only when the XEX block SHA-1 chain validates. Decryption is implemented by the bundled portable AES-128-CBC backend in `third_party/tiny_aes`, through the internal `src/opener/modules/Crypto.*` wrapper. It does not require Xbox hardware, a console-specific user key, or a platform cryptography framework.
+`XexModule` supports normal XEX image encryption before applying the existing basic or LZX reconstruction path. The encrypted 16-byte image key is read from the XEX security information, decrypted with the known retail and development master-key candidates using AES-128-CBC with a zero IV, and then used as the session key for the complete image payload. For normal compression, a candidate is accepted only when the XEX block SHA-1 chain validates. Decryption is implemented directly in `src/opener/modules/Crypto.cpp` by the project's internal AES-128-CBC implementation; no external cryptography backend is used. It does not require Xbox hardware, a console-specific user key, or a platform cryptography framework.
 
 ### Embedded module detection
 

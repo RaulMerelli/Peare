@@ -18,9 +18,12 @@ ModulePtr IsoModule::open(const fs::ByteStorePtr& disc, const QString& sourceNam
     module->info_.description = QStringLiteral("ISO 9660 image");
 
     fs::ByteStorePtr content = disc;
-    if (content && !fs::Iso9660Reader::detect(*content) &&
-        fs::OpticalMode2Store::detectIso9660(*content))
-        content = std::make_shared<fs::OpticalMode2Store>(content);
+    if (content && !fs::Iso9660Reader::detect(*content)) {
+        if (fs::OpticalMode1Store::detectIso9660(*content))
+            content = std::make_shared<fs::OpticalMode1Store>(content);
+        else if (fs::OpticalMode2Store::detectIso9660(*content))
+            content = std::make_shared<fs::OpticalMode2Store>(content);
+    }
 
     auto reader = std::make_shared<fs::Iso9660Reader>(content);
     if (!reader->valid()) {

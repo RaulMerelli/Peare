@@ -152,6 +152,68 @@ private:
     std::int64_t length_;
 };
 
+// View over raw CD-ROM Mode 1 sectors. A 2352-byte physical sector contains
+// 16 bytes of sync/header before its 2048-byte user-data area.
+class OpticalMode1Store : public IByteStore {
+public:
+    explicit OpticalMode1Store(ByteStorePtr parent) : parent_(std::move(parent)) {}
+
+    std::int64_t capacity() const override {
+        return parent_ ? (parent_->capacity() / kRawSectorSize) * kLogicalSectorSize : 0;
+    }
+
+    int read(std::int64_t pos, std::uint8_t* dst, int count) const override {
+        const std::int64_t total = capacity();
+        if (!parent_ || pos < 0 || count <= 0 || pos >= total) return 0;
+        const std::int64_t avail = total - pos;
+        int want = count < avail ? count : static_cast<int>(avail);
+        int produced = 0;
+        while (want > 0) {
+            const std::int64_t logical = pos + produced;
+            const std::int64_t sector = logical / kLogicalSectorSize;
+            const std::int64_t sectorOffset = logical - sector * kLogicalSectorSize;
+            const int n = static_cast<int>(std::min<std::int64_t>(
+                kLogicalSectorSize - sectorOffset, want));
+            const int got = parent_->read(sector * kRawSectorSize + kRawPrefixSize + sectorOffset,
+                                          dst + produced, n);
+            if (got <= 0) break;
+            produced += got;
+            want -= got;
+        }
+        return produced;
+    }
+
+    static bool detectIso9660(const IByteStore& raw) {
+        std::uint8_t id[5];
+        const std::int64_t pos = 16 * kRawSectorSize + kRawPrefixSize + 1;
+        return raw.read(pos, id, 5) == 5 && std::memcmp(id, "CD001", 5) == 0;
+    }
+
+    static bool detectUdf(const IByteStore& raw) {
+        std::uint8_t descriptor[6];
+        for (int i = 0; i < 64; ++i) {
+            const std::int64_t pos = (16 + i) * kRawSectorSize + kRawPrefixSize;
+            if (pos + 6 > raw.capacity()) break;
+            if (raw.read(pos, descriptor, 6) != 6) break;
+            const char* id = reinterpret_cast<const char*>(descriptor + 1);
+            if (std::memcmp(id, "NSR02", 5) == 0 || std::memcmp(id, "NSR03", 5) == 0)
+                return true;
+            if (std::memcmp(id, "BEA01", 5) != 0 && std::memcmp(id, "BOOT2", 5) != 0 &&
+                std::memcmp(id, "CD001", 5) != 0 && std::memcmp(id, "CDW02", 5) != 0 &&
+                std::memcmp(id, "TEA01", 5) != 0)
+                break;
+        }
+        return false;
+    }
+
+private:
+    static const std::int64_t kLogicalSectorSize = 2048;
+    static const std::int64_t kRawSectorSize = 2352;
+    static const std::int64_t kRawPrefixSize = 16;
+
+    ByteStorePtr parent_;
+};
+
 // View over raw CD-ROM Mode 2/Form 1 style sectors. DiscUtils.OpticalDisk's
 // Mode2Buffer exposes a 2048-byte logical stream by skipping the 24-byte raw
 // sector prefix in every 2352-byte physical sector.
