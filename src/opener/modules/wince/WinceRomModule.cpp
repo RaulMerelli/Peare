@@ -1,8 +1,9 @@
-// Windows CE container, XIP and IMGFS parsing is a clean C++11 adaptation of
-// the MIT-licensed CERF parser by Yaroslav Kibysh (see third_party/cerf/LICENSE).
+// Windows CE container, XIP and IMGFS parsing here is ported from the
+// MIT-licensed CERF project by Yaroslav Kibysh (gweslab). See CERF-LICENSE.txt in
+// this directory for the full licence and copyright notice.
 #include "WinceRomModule.h"
 #include "WinceCompression.h"
-#include "Compat.h"
+#include "../Compat.h"
 
 #include <QFile>
 #include <QFileInfo>

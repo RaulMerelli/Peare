@@ -46,6 +46,25 @@ QString containerName(peare_container_format format)
     case PEARE_CONTAINER_VMDK: return QStringLiteral("VMDK");
     case PEARE_CONTAINER_VHD: return QStringLiteral("VHD");
     case PEARE_CONTAINER_VDI: return QStringLiteral("VDI");
+    case PEARE_CONTAINER_QCOW: return QStringLiteral("QCOW");
+    case PEARE_CONTAINER_QCOW2: return QStringLiteral("QCOW2");
+    case PEARE_CONTAINER_FLOPPY_IMAGE: return QStringLiteral("Floppy image");
+    case PEARE_CONTAINER_PS3_PUP: return QStringLiteral("PS3 PUP");
+    case PEARE_CONTAINER_WAD: return QStringLiteral("WAD");
+    case PEARE_CONTAINER_MTF: return QStringLiteral("MTF / BKF");
+    case PEARE_CONTAINER_MDF_MDS: return QStringLiteral("MDF / MDS");
+    case PEARE_CONTAINER_PARALLELS_HDD: return QStringLiteral("Parallels HDD");
+    case PEARE_CONTAINER_PS2_ROMDIR: return QStringLiteral("PS2 ROMDIR");
+    case PEARE_CONTAINER_MSI: return QStringLiteral("MSI");
+    case PEARE_CONTAINER_MSG: return QStringLiteral("Outlook MSG");
+    case PEARE_CONTAINER_APPX: return QStringLiteral("APPX");
+    case PEARE_CONTAINER_MSIX: return QStringLiteral("MSIX");
+    case PEARE_CONTAINER_APPXBUNDLE: return QStringLiteral("APPXBUNDLE");
+    case PEARE_CONTAINER_EAPPX: return QStringLiteral("EAPPX");
+    case PEARE_CONTAINER_EMSIX: return QStringLiteral("EMSIX");
+    case PEARE_CONTAINER_EAPPXBUNDLE: return QStringLiteral("EAPPXBUNDLE");
+    case PEARE_CONTAINER_EMSIXBUNDLE: return QStringLiteral("EMSIXBUNDLE");
+    case PEARE_CONTAINER_XAP: return QStringLiteral("XAP");
     case PEARE_CONTAINER_VHDX: return QStringLiteral("VHDX");
     case PEARE_CONTAINER_SDI: return QStringLiteral("SDI");
     case PEARE_CONTAINER_XVA: return QStringLiteral("XVA");
@@ -220,6 +239,14 @@ peare_container_format Session::containerFormat() const
     peare_container_format format = PEARE_CONTAINER_UNKNOWN;
     return handle_ && peare_opener_get_container_format(handle_, &format) == PEARE_STATUS_OK
         ? format : PEARE_CONTAINER_UNKNOWN;
+}
+QString Session::description() const
+{
+    peare_blob b{};
+    if (!handle_ || peare_opener_get_description(handle_, &b) != PEARE_STATUS_OK) return {};
+    const QString result = blobToString(b);
+    peare_blob_free(&b);
+    return result;
 }
 size_t Session::folderCount() const { size_t n=0; return handle_ && peare_opener_get_folder_count(handle_,&n)==PEARE_STATUS_OK ? n : 0; }
 QString Session::folderType(size_t folder) const

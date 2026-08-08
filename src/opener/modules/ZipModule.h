@@ -7,6 +7,7 @@ namespace peare {
 class ZipModule final : public IModule, public IResourceContainer {
 public:
     static std::unique_ptr<ZipModule> open(const QString& filePath);
+    static std::unique_ptr<ZipModule> open(const QString& physicalPath, const QString& logicalName);
     static std::unique_ptr<ZipModule> open(const QByteArray& data, const QString& logicalName);
     static ModulePtr open(const fs::ByteStorePtr& file, const QString& sourceName);
 

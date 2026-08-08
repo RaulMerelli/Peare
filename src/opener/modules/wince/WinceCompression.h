@@ -1,5 +1,8 @@
 #pragma once
 
+// Ported from the MIT-licensed CERF project by Yaroslav Kibysh (gweslab).
+// See CERF-LICENSE.txt in this directory.
+
 #include <QByteArray>
 #include <QtGlobal>
 

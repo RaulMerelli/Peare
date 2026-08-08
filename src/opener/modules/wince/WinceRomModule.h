@@ -1,6 +1,9 @@
 #pragma once
 
-#include "Module.h"
+// Ported from the MIT-licensed CERF project by Yaroslav Kibysh (gweslab).
+// See CERF-LICENSE.txt in this directory.
+
+#include "../Module.h"
 
 namespace peare {
 

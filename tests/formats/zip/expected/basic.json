@@ -1,0 +1,19 @@
+{
+  "container_format": "ZIP",
+  "tree": [
+    {
+      "path": "data.bin",
+      "size": 1000,
+      "is_container": false,
+      "format": "ZIP",
+      "sha256": "57799de80e3dd6e2ac4d40c41a150d1662f7f87d0d994776a2fdc37c39b0ea4e"
+    },
+    {
+      "path": "readme.txt",
+      "size": 760,
+      "is_container": false,
+      "format": "ZIP",
+      "sha256": "65b3ddf42fc98acdc5f0f62a5e1b1376a79e3e89fdaef31e65d9e632588a1003"
+    }
+  ]
+}

@@ -8,6 +8,10 @@
 # define PEARE_COMMON_API __declspec(dllexport)
 #elif defined(_WIN32)
 # define PEARE_COMMON_API __declspec(dllimport)
+#elif defined(__OS2__) && (defined(PEARE_OPENER_BUILD) || defined(PEARE_DECODER_BUILD))
+# define PEARE_COMMON_API __declspec(dllexport)
+#elif defined(__OS2__)
+# define PEARE_COMMON_API __declspec(dllimport)
 #elif defined(__GNUC__) && __GNUC__ >= 4
 # define PEARE_COMMON_API __attribute__((visibility("default")))
 #else
@@ -93,7 +97,27 @@ typedef enum peare_container_format {
     PEARE_CONTAINER_SIEMENS_FSF,
     PEARE_CONTAINER_OS2_EA,
     PEARE_CONTAINER_RESX,
-    PEARE_CONTAINER_CUE_BIN
+    PEARE_CONTAINER_CUE_BIN,
+    /* Appended values preserve the numeric ABI of all earlier formats. */
+    PEARE_CONTAINER_QCOW,
+    PEARE_CONTAINER_QCOW2,
+    PEARE_CONTAINER_FLOPPY_IMAGE,
+    PEARE_CONTAINER_PS3_PUP,
+    PEARE_CONTAINER_APPX,
+    PEARE_CONTAINER_MSIX,
+    PEARE_CONTAINER_APPXBUNDLE,
+    PEARE_CONTAINER_XAP,
+    PEARE_CONTAINER_EAPPX,
+    PEARE_CONTAINER_EMSIX,
+    PEARE_CONTAINER_EAPPXBUNDLE,
+    PEARE_CONTAINER_EMSIXBUNDLE,
+    PEARE_CONTAINER_WAD,
+    PEARE_CONTAINER_MTF,
+    PEARE_CONTAINER_MDF_MDS,
+    PEARE_CONTAINER_PARALLELS_HDD,
+    PEARE_CONTAINER_PS2_ROMDIR,
+    PEARE_CONTAINER_MSI,
+    PEARE_CONTAINER_MSG
 } peare_container_format;
 
 typedef enum peare_platform {

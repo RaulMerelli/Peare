@@ -1,5 +1,7 @@
 // Windows CE framing is handled here; compressed payloads are decoded by
-// Peare's internal classic LZX implementation.
+// Peare's internal classic LZX implementation. The CE XPRESS/LZW/block-table
+// framing is ported from the MIT-licensed CERF project by Yaroslav Kibysh
+// (gweslab); see CERF-LICENSE.txt in this directory.
 #include "WinceCompression.h"
 
 #include <peare/lzx_frontends.h>

@@ -1,0 +1,26 @@
+{
+  "container_format": "RESX",
+  "tree": [
+    {
+      "path": "$this.Icon",
+      "size": 109211,
+      "is_container": false,
+      "format": "RESX",
+      "sha256": "39e75483cab411f5f9e4f0542a594bb74d1b45db95d43d164dd0fae934e03572"
+    },
+    {
+      "path": "AspettaColpo.TrayLocation",
+      "size": 7,
+      "is_container": false,
+      "format": "RESX",
+      "sha256": "06935dab82a55f3a9d56677412777a0112bfd3bd2a85acf858af3357691561be"
+    },
+    {
+      "path": "load_enemy_table.TrayLocation",
+      "size": 6,
+      "is_container": false,
+      "format": "RESX",
+      "sha256": "65e33ae8aac3d70286bdd28c271ea835fc08767746018686685bc286904c1dcd"
+    }
+  ]
+}

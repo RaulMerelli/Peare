@@ -1,0 +1,14 @@
+# Disk DescriptorFile
+version=1
+encoding="UTF-8"
+CID=12345678
+parentCID=ffffffff
+createType="monolithicFlat"
+
+# Extent description
+RW 2055 FLAT "disk-flat.vmdk" 0
+
+# The Disk Data Base
+#DDB
+ddb.adapterType = "ide"
+ddb.virtualHWVersion = "4"

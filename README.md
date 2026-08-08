@@ -79,7 +79,7 @@ Peare aims to:
 - stay extensible by porting new container, file-system, and disk formats directly into the core behind the same C ABI;
 - expand beyond currently supported formats to other packages that contain resources worth inspecting.
 
-Possible future package families include JAR, APK, APPX, XAP, MSI, and MSIX. These are project goals, not current compatibility claims.
+Possible future package families include JAR, APK, NSIS, RPM, and DEB. These are project goals, not current compatibility claims.
 
 ## Target operating systems
 
@@ -108,11 +108,7 @@ The GUI opens files, builds the resource tree, displays decoded results, compose
 
 The stateful Opener:
 
-- opens PE, NE, LE, LX, XBE, XEX, XUIZ, LIVE, PIRS, CON executables, OS/2 PACK/PACK2,
-  OS/2 FEALIST extended-attribute files, SZDD archives and .NET RESX resources, Siemens firmware, FFU, SDI and XVA deployment images, Linux swap, LVM, MD RAID and Windows Dynamic Disk/LDM, BIN/CUE optical images, ISO 9660 / WIM / FAT / exFAT / NTFS / ext / XFS / JFS / Btrfs / SquashFS / HFS+ / UDF disc images, and DMG / VMDK / VHD / VDI / VHDX virtual disks —
-  from a file path or any byte source, through one entry point;
-- opens Microsoft CAB archives, including uncompressed, MSZIP and LZX folders;
-- opens ZIP and TAR archives as virtual filesystems;
+- opens formats as archive from a file path or any byte source, through one entry point;
 - opens partitioned raw disk images as disk containers;
 - opens a contained file as a nested container on demand, with no image copy;
 - lists resource folders and entries;
@@ -137,7 +133,7 @@ It returns simple C ABI outputs:
 - typed metadata values;
 - rendered font text as PNG.
 
-When context is omitted, the Decoder examines the payload and uses RawDetect where useful. Raw image detection includes an internal ZSoft PCX/PCC decoder (uncompressed/RLE, 1/2/4/8-bit indexed and planar RGB/CMYK layouts) and best-effort recovery of damaged GIF first frames, including files with leading garbage and recoverable LZW suffixes.
+When context is omitted, the Decoder examines the payload and detect what format it is. Raw image detection includes an internal ZSoft PCX/PCC decoder (uncompressed/RLE, 1/2/4/8-bit indexed and planar RGB/CMYK layouts) and best-effort recovery of damaged GIF first frames, including files with leading garbage and recoverable LZW suffixes.
 
 Platform portability and packaging status is documented in `docs/PORTABILITY.md`.
 
@@ -164,13 +160,23 @@ The Opener additionally has support for uncommon archives:
 | Format | Description | Notes |
 |---|---|---|
 | Xbox 360 XUIZ | Resource archive |  |
+| Doom WAD | Game resource archive | IWAD/PWAD lump directory listed as members (Doom/Heretic/Hexen lineage) |
 | OS/2 UnPack | IBM/Microsoft OS/2 PACK and PACK2 archives | PACK v1 LZW and PACK2 FTCOMP `fT19`; member paths are exposed without an artificial archive-root folder |
 | OS/2 FEALIST | Extended-attribute list, commonly stored as `.EA_` | Exposes named EAs as binary or text resources; embedded image payloads remain available to the Decoder |
 | Microsoft Compress | SZDD archive (variant A) |  |
 | .NET RESX | XML resource container | String/typed text, metadata, file-reference descriptors and strict Base64 payload extraction; no .NET object deserialization |
+| PlayStation 3 PUP | System-update package | PUP v1 segment table; authoritative `SCEUF` detection before generic firmware heuristics; lazy segment access; automatic SELF, PKG, TAR, ZIP, CAB, XML and text naming; cryptographic signatures are reported but not verified |
+| PlayStation 2 ROMDIR / IOPRP | BIOS and IOP reboot image filesystem | Detects the required `RESET`, `ROMDIR`, `EXTINFO` entries at offset zero or inside BIOS dumps; 16-byte-aligned payloads, EXTINFO version/comment metadata, lazy file access and recursive nested ROMDIR images; no artificial root folder |
+| Microsoft MSI family | Windows Installer compound-file database (`.msi`, `.msm`, `.msp`, `.mst`, `.pcp`, `.cub`) | CFB v3/v4, FAT/DIFAT, mini-FAT and mini-stream; preserves real storage paths, decodes MSI-compressed stream names, exposes stream bytes lazily and reopens embedded CAB files; database-table rows are not yet decoded semantically |
+| Microsoft Outlook MSG | Outlook structured-storage message (`.msg`) | Content-based CFB/MAPI detection; exposes message properties, recipients and body streams, extracts attachment bytes with their MAPI filenames, and reopens supported attached containers recursively |
+| Microsoft APPX / MSIX | Windows application package | ZIP-backed lazy member access; validates `AppxManifest.xml` and `[Content_Types].xml`; extracts identity, version, architecture, display name and publisher metadata; encrypted `.eappx`/`.emsix` packages require an external key and are not decrypted |
+| Microsoft APPXBUNDLE | Windows application bundle | Validates `AppxMetadata/AppxBundleManifest.xml`; extracts bundle identity and package count; contained APPX packages reopen recursively |
+| Silverlight / Windows Phone XAP | Application package | Plain ZIP XAP validates `AppManifest.xaml` or `WMAppManifest.xml` and preserves its real directory tree. PlayReady Store envelopes (`PRE\x07`) contain one encrypted ZIP byte stream: Peare exposes only the clear PlayReady header and the encrypted payload region, without fabricating file names or folders. The matching license/content key is required before the ZIP directory can be read. |
 | CDRWIN BIN/CUE | Optical-disc descriptor plus binary tracks | Multi-file BINARY layouts, AUDIO/CDG and MODE1/MODE2/CDI tracks; data tracks normalised to 2048-byte sectors for nested ISO/UDF opening |
+| Alcohol MDF/MDS | Optical-disc image | Alcohol 120% / DAEMON Tools images; Mode1/Mode2 sectors normalised to 2048 bytes for nested ISO/UDF opening |
+| Microsoft Tape Format (MTF) | Backup archive, incl. NTBackup `.bkf` | Enumerates the backed-up file and directory stream entries |
 | Microsoft Cabinet | CAB archive | uncompressed, MSZIP and LZX folders |
-| ZIP | Virtual filesystem archive | stored, Shrink and Deflate entries; decompression is lazy; ZIP64/encrypted entries not yet |
+| ZIP | Virtual filesystem archive | stored, Shrink, Deflate and ZIP64; decompression is lazy; encrypted entries not yet |
 | TAR | Virtual filesystem archive | regular files and directories; hard links when target appears first; symlinks skipped |
 | Microsoft FFU | Full Flash Update image | Windows Phone/W10M and desktop v1/v2 stores; sparse write descriptors, GPT partitions and multi-store images |
 | Microsoft SDI | System Deployment Image | exposes sections such as PART and WIM as nested payloads |
@@ -181,7 +187,8 @@ The Opener additionally has support for uncommon archives:
 | Windows CE ROM / IMGFS | ROM and flash filesystem archive | B000FF, raw NB0/XIP, NOSAJ, ARNOLDBOOTBLOCK, iPAQ NBF, CE 1.x/2.x structural ROMs, IMGFS direct and FTL |
 | ISO 9660 | Optical disc image | Joliet; 2048-byte ISO and raw 2352-byte Mode2 BIN images |
 | Microsoft WIM | Windows Imaging Format | LZX and XPRESS chunks |
-| FAT | FAT12/16/32 volume | Floppies, EFI System Partitions, USB/firmware images |
+| Raw PC floppy IMG/IMA/VFD | Headerless floppy sector image | Standard 160 KiB–2.88 MiB geometries; FAT12/16 files are listed directly, while unformatted/non-FAT images remain accessible as raw sector data |
+| FAT | FAT12/16/32 volume | EFI System Partitions, USB/firmware images and non-floppy FAT volumes |
 | exFAT | Microsoft exFAT volume | SD cards, large USB media; contiguous and FAT-chained files |
 | NTFS | Microsoft NTFS volume | MFT + attributes, data-run runlists, $I30 index; LZNT1-compressed files not yet decoded |
 | ext2/3/4 | Linux ext volume | ext4 extent trees + ext2/3 indirect block maps |
@@ -212,17 +219,20 @@ lazy path.
 | Apple DMG / UDIF | Disk image | blkx resources with raw, zero and zlib-compressed runs |
 | Microsoft VHD | Virtual disk | fixed and dynamic; differencing parents not yet resolved |
 | VirtualBox VDI | Virtual disk | fixed and dynamic; differencing/undo parents not yet resolved |
+| QEMU QCOW/QCOW2 | Virtual disk | standalone v1/v2/v3; sparse, zero, zlib-compressed and Extended L2 clusters; backing/encrypted/external-data images not yet resolved |
 | Microsoft VHDX | Virtual disk | fixed and dynamic; differencing parents and dirty-log replay not yet resolved |
-| RAW | Raw disk image | MBR/GPT/APM partition table over `.img`/similar flat images |
+| Parallels HDD | Virtual disk | expandable (sparse) Parallels hard-disk image; partitions read through the same table layer |
+| RAW | Raw disk image | MBR/GPT/APM partition table over `.img`/similar flat images; standard IMG/IMA/VFD floppy capacities use the dedicated floppy container |
 
-The filesystem readers (ISO 9660, WIM, FAT, exFAT, NTFS, ext2/3/4, XFS, Btrfs, SquashFS, HFS+, UDF), the OpticalDisk Mode2 sector view, the RAW/VMDK/VHD/VDI/VHDX disk readers, the Linux MD RAID1 reader, the Windows LDM reader, the
+The filesystem readers (ISO 9660, WIM, FAT, exFAT, NTFS, ext2/3/4, XFS, Btrfs, SquashFS, HFS+, UDF), the OpticalDisk Mode2 sector view, the raw-floppy/RAW/VMDK/VHD/VDI/VHDX disk readers, the Linux MD RAID1 reader, the Windows LDM reader, the
 MBR/GPT/APM partition layer, and the underlying positioned byte-store / stream layer
 are clean-room C++ ports of **LTRData DiscUtils**, kept byte-compatible with it.
 They compose lazily so a file inside a partition inside a virtual disk opens
 without materialising anything.
 
-The JFS and HPFS readers are independent read-only implementations based on
-IBM OS/2 and Linux on-disk structures. The JFS reader handles both directory-entry
+The JFS, HPFS, QCOW/QCOW2 and Parallels HDD readers are independent read-only
+implementations with no DiscUtils counterpart, based on the respective published
+on-disk structures. The JFS reader handles both directory-entry
 layouts encountered in OS/2 and indexed JFS volumes, selects usable primary or
 secondary metadata, and can reconstruct segmented OS/2 LVM/DriveLink volumes.
 They use the same lazy byte-store and nested-container model as the other
@@ -337,7 +347,7 @@ two invariants: **byte-perfect extraction** of original payloads, and the
 **stability of the public C ABI**.
 
 Natural directions from here include exposing .NET resources inside PE files and
-opening further package formats (JAR, APK, APPX, MSI/MSIX).
+opening further package formats (JAR, APK, NSIS, RPM and DEB).
 
 ## Roadmap
 
@@ -346,21 +356,51 @@ by family; each is a candidate for a byte-exact reader behind the same C ABI.
 
 **File systems**
 
-
+- **APFS** — Apple File System, the modern macOS/iOS volume format.
 - **Legacy NTFS** — the early NTFS v1.x layout as written by Windows NT 3.1/3.5,
   which predates several structures the modern reader assumes.
+
+**Floppy and disk images**
+
+- **IMZ** (WinImage compressed floppy).
+- **ADF** and **ADZ** (Amiga floppy, plain and gzipped) and **DMS** (Amiga
+  DiskMasher).
+- **DC42** (Apple DiskCopy 4.2) and **DART** (Apple) floppy/disk images.
+- **ASDM image** (Cisco ASDM appliance image).
+
+**Backup and imaging**
+
+- **Acronis True Image** **TIB** and **TIBX**.
+- **Veeam** backup **VBK**, **VIM** and **VRB**.
+
+**Application and installer packages**
+
+- **OS/2 WarpIn (WPI)** package.
+- **The Sims 3 package** (`.sims3pack`).
+- **Symbian SIS / SISX** application packages.
+  (RPM and Debian DEB are already listed under the 7-Zip archivers below.)
+
+**Game, graphics and Xbox data**
+
+- **XNA XNB** content files.
+- **XDBF** — Xbox Data Base File (GPD/SPA profiles and achievements).
+- **DXBC** — DirectX shader bytecode container.
+- **Quake / Half-Life WAD2 / WAD3** — distinct from the supported Doom WAD.
+- **Console WAD variants with compressed lumps** (Atari Jaguar Doom, Doom 64).
 
 **Archives and compressors (the formats 7-Zip handles, that Peare does not yet)**
 
 - Archivers: **7z**, **RAR**, **LZH/LHA**, **ARJ**, **AR**, **CPIO**, **XAR**.
 - Compressors/streams: **GZIP**, **BZIP2**, **XZ / LZMA / LZMA2**, **Zstandard**,
   **Z** (compress).
-- Installers and packages: **MSI** (OLE / compound file), **NSIS**, **RPM**,
-  **DEB**, **CHM**, **CramFS**.
-- Disk/image extras 7-Zip exposes: **QCOW2**, **APFS**, Apple Partition Map.
+- Installers and packages: **NSIS**, **RPM**, **DEB**, **CHM**, **CramFS**.
 
 Where 7-Zip and Peare already overlap (ZIP, TAR, CAB, ISO, UDF, FAT, exFAT, NTFS,
-ext, HFS+, SquashFS, WIM, MBR/GPT, VHD/VHDX/VDI/VMDK/DMG) the work is done.
+ext, HFS+, SquashFS, WIM, MBR/GPT, VHD/VHDX/VDI/VMDK/QCOW/DMG) the work is done.
+
+**Executables**
+
+- **UPX-packed executables** — unpack the UPX layer to reach the original image.
 
 **Variants of formats already supported**
 
@@ -369,9 +409,26 @@ ext, HFS+, SquashFS, WIM, MBR/GPT, VHD/VHDX/VDI/VMDK/DMG) the work is done.
 
 **Refinements inside existing readers**
 
-- NTFS: **LZNT1** decompression and `$ATTRIBUTE_LIST`-split attributes.
+- NTFS: **LZNT1** decompression of compressed `$DATA` (`$ATTRIBUTE_LIST`-split
+  attributes are now handled).
 - UDF: metadata / sparable / virtual partition maps (rewritable and Blu-ray media).
 - Additional file-system compression codecs (e.g. Btrfs zstd, XFS/SquashFS xz/lzo).
+- **.NET RESX**: broader typed-object and resource-reference coverage.
+- **XBE**: a less artificial resource structure (the current layout is too synthetic).
+- **MSI**: correct the odd character encoding seen in some stream/table names.
+
+**Implemented but not yet verified against any real sample**
+
+These readers exist but have never been checked against an actual file, so they
+are the highest-priority verification targets:
+
+- **Microsoft Tape Format (MTF)** and **NTBackup BKF**.
+- **Doom WAD**,
+- **Parallels HDD** virtual disk.
+
+Verification here is constrained by test-data licensing: most real samples cannot
+be redistributed, so validation will rely on minimal **artificial fixtures** or on
+**licence-safe content** (such as FreeDoom) rather than copyrighted files.
 
 **In-place editing**
 
@@ -403,10 +460,9 @@ Historical executable formats contain undocumented structures, vendor variations
 | Qt | The Qt Company |
 | DiscUtils (filesystem/disk readers: ISO 9660, WIM, FAT, exFAT, NTFS, ext2/3/4, XFS, Btrfs, SquashFS, HFS+, UDF, Linux swap, LVM2, Linux MD RAID1, Windows LDM, Windows Registry hive and BCD BootConfig stores, DMG/UDIF, VMDK, VHD, VDI, VHDX, SDI, XVA, MBR/GPT/APM, stream/buffer layers) | Kenneth Bell / LTRData |
 | wmp-wsz-format (WMP skin WSZ layout) | Ted de Baets (tdebaets) |
-| CERF (Windows CE ROM/container and IMGFS parser reference) | Yaroslav Kibysh / gweslab |
+| CERF — Windows CE ROM/container and IMGFS parser, ported into `src/opener/modules/wince/` (MIT; licence retained there as `CERF-LICENSE.txt`) | Yaroslav Kibysh / gweslab |
 | Linux JFS on-disk format definitions (format reference only) | IBM and Linux JFS maintainers |
-| wince-decompr (Windows CE LZX stream framing reference) | KodaSec / Artificial |
-| WPInternals | ReneLergner, gus33000, WPInternals contributors |
+| WPInternals | FFU file format: ReneLergner, gus33000, WPInternals contributors |
 
 **Documentation and format references**
 
@@ -430,28 +486,8 @@ Historical executable formats contain undocumented structures, vendor variations
 All format specifications, product names, and trademarks referenced or supported
 by Peare are the property of their respective owners. Peare provides independent,
 clean-room readers and is not affiliated with, authorized by, or endorsed by any
-of them. Owners referenced include, among others:
-
-- **Microsoft Corporation** — Windows, MS-DOS, PE / NE / LE / LX consumers,
-  NTFS, exFAT, FAT, WIM, FFU, Microsoft Cabinet (CAB), Microsoft Compress (SZDD),
-  VHD and VHDX, the Windows registry hive, Boot Configuration Data (BCD),
-  System Deployment Image (SDI), and Xbox / Xbox 360 formats (XBE, XEX, XUIZ,
-  STFS: CON / LIVE / PIRS).
-- **IBM Corporation** — OS/2, the OS/2 PACK / UnPack format, HPFS, and JFS.
-- **Apple Inc.** — HFS+ / HFSX and the Apple Disk Image (DMG / UDIF) format.
-- **VMware, Inc.** — the Virtual Machine Disk (VMDK) format.
-- **Oracle Corporation** — the VirtualBox Virtual Disk Image (VDI) format.
-- **Citrix Systems / the Xen Project** — the Xen Virtual Appliance (XVA) format.
-- **Siemens AG** — the ProSave IMG, FWF, and embedded FSF firmware formats.
-- **OSTA, Ecma International, and ISO/IEC** — UDF and ISO 9660
-  (ECMA-119 / ECMA-167).
-- **PKWARE, Inc.** — the ZIP format.
-- The **Linux kernel community and other open-source authors** — ext2/3/4,
-  XFS (originally SGI), Btrfs, SquashFS, LVM2, Linux MD / RAID, the swap format,
-  and TAR.
-
-Trademarks are used only to identify the formats Peare reads; such use does not
-imply any endorsement.
+of them. See [COPYRIGHT.md](COPYRIGHT.md) for the full list of referenced owners
+and trademark notice.
 
 ## Documentation index
 
@@ -463,4 +499,5 @@ imply any endorsement.
 - [PeareDecoder API](docs/API_DECODER.md)
 - [Developer guide](docs/DEVELOPMENT.md)
 
-
+## Encrypted AppX/MSIX containers
+Peare recognises EAppX, EMsiX, EAppXBundle and EMsiXBundle envelopes (EXPH/EXSH/EXBH), uses the clear footer and AppxBlockMap.xml to reconstruct the real file tree, and exposes every encrypted payload separately without claiming to decrypt it.

@@ -1,0 +1,17 @@
+# Peare C++ formatting — matches the existing hand-written module style:
+# K&R attached braces, 4-space indent, un-indented namespaces, left-aligned
+# pointers/references, short inline member functions kept on one line.
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+NamespaceIndentation: None
+AccessModifierOffset: -4
+PointerAlignment: Left
+ReferenceAlignment: Left
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortBlocksOnASingleLine: Empty
+SortIncludes: false

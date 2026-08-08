@@ -70,7 +70,7 @@ name, subPath)`. So there is one navigation mechanism for both "a file that is a
 container" and "a directory". You get all of this for free by calling
 `buildFsLevel` — do not re-add a recursive `walk()`.
 
-### C. Virtual-disk container (VMDK, VHD, VDI, VHDX, and later raw)
+### C. Virtual-disk container (VMDK, VHD, VDI, QCOW, VHDX, and later raw)
 
 A virtual disk is not a file system: it exposes a raw disk, inside which a
 partition table (MBR/GPT) points at partitions, each holding a file system. The
@@ -78,7 +78,7 @@ module produces the logical-disk `ByteStore` (e.g. `fs/VmdkDisk` resolves VMDK
 grain tables), runs the shared `fs/PartitionTable` reader over it, and emits one
 `DISK_PARTITION` resource per partition whose `content` is a `SubStore` window over
 the disk. Because each partition is `isEmbeddedFile`, the session's peek detects
-the file system inside and opens it through the same nested path — so `VMDK/VHD/VDI/VHDX ->
+the file system inside and opens it through the same nested path — so `VMDK/VHD/VDI/QCOW/VHDX ->
 partition -> exFAT -> file` works with no new nesting code. Reuse `PartitionTable`
 for any future disk container; only the raw-disk producer is format-specific.
 

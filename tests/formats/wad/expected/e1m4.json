@@ -1,0 +1,82 @@
+{
+  "container_format": "WAD",
+  "tree": [
+    {
+      "path": "BLOCKMAP",
+      "size": 14210,
+      "is_container": false,
+      "format": "WAD",
+      "sha256": "b5c1b4476018a4f5fef147b86655d34b9e4a350272c8f737db50c03f426cbf40"
+    },
+    {
+      "path": "E1M4",
+      "size": 0,
+      "is_container": false,
+      "format": "WAD",
+      "sha256": ""
+    },
+    {
+      "path": "LINEDEFS",
+      "size": 31962,
+      "is_container": false,
+      "format": "WAD",
+      "sha256": "e2d3a0d9057ebd54d0043b880b7e4c895591e328899be834496edeb1d4b8b286"
+    },
+    {
+      "path": "NODES",
+      "size": 33628,
+      "is_container": false,
+      "format": "WAD",
+      "sha256": "a87de06a304772e0e5973a33b5405098f8a6254be94b5704cac34ef7fb49a1c0"
+    },
+    {
+      "path": "REJECT",
+      "size": 9385,
+      "is_container": false,
+      "format": "WAD",
+      "sha256": "1c9a2f2c00a806447097cdc9dfec69a5c6c2abfb2fb462cf4552b717d553a94e"
+    },
+    {
+      "path": "SECTORS",
+      "size": 7124,
+      "is_container": false,
+      "format": "WAD",
+      "sha256": "6498f258ccb3c9f566346e716bdf911ff4de3cc16ca1711c95d1c6163acd69c5"
+    },
+    {
+      "path": "SEGS",
+      "size": 42024,
+      "is_container": false,
+      "format": "WAD",
+      "sha256": "4515eaa098c2e53d00f59ff9759a9b534ee2227007e4ef14e7cf72e9362c05ec"
+    },
+    {
+      "path": "SIDEDEFS",
+      "size": 96330,
+      "is_container": false,
+      "format": "WAD",
+      "sha256": "8b76c8121c967887e5e6fbee4a959ac7b95c3d18a741d57715a802f445dc9f9f"
+    },
+    {
+      "path": "SSECTORS",
+      "size": 4808,
+      "is_container": false,
+      "format": "WAD",
+      "sha256": "0f184ebe2648fcdcc90bae1f0bf788112a696c92a22d5e282b0725c6a9ed28d6"
+    },
+    {
+      "path": "THINGS",
+      "size": 3780,
+      "is_container": false,
+      "format": "WAD",
+      "sha256": "c733bdbf230d374471efefb1f553c215d5192d01e61bfdabdab6f2557287613f"
+    },
+    {
+      "path": "VERTEXES",
+      "size": 9080,
+      "is_container": false,
+      "format": "WAD",
+      "sha256": "9d33872bb5839330489e674b260e75e52d0493db3d6f14920a2f506975fed831"
+    }
+  ]
+}

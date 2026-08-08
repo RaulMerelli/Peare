@@ -2,6 +2,9 @@
 #include "modules/Compat.h"
 
 #include "modules/ModuleFactory.h"
+#include "modules/Ps2RomdirParser.h"
+#include "modules/MsiModule.h"
+#include "modules/MsgModule.h"
 #include "fs/LinuxRaid.h"
 #include "fs/DynamicDisk.h"
 
@@ -24,6 +27,14 @@ ResourcePlatform platformFor(const ResourceEntry& entry)
     case ModuleFormat::WINCE_ROM:
     case ModuleFormat::FFU:
     case ModuleFormat::SIEMENS_FSF:
+    case ModuleFormat::APPX:
+    case ModuleFormat::MSIX:
+    case ModuleFormat::APPXBUNDLE:
+    case ModuleFormat::EAPPX:
+    case ModuleFormat::EMSIX:
+    case ModuleFormat::EAPPXBUNDLE:
+    case ModuleFormat::EMSIXBUNDLE:
+    case ModuleFormat::XAP:
         return ResourcePlatform::Windows;
     case ModuleFormat::LE:
     case ModuleFormat::LX:
@@ -53,8 +64,11 @@ ResourcePlatform platformFor(const ResourceEntry& entry)
     case ModuleFormat::EXFAT:
     case ModuleFormat::VMDK:
     case ModuleFormat::RAW_DISK:
+    case ModuleFormat::FLOPPY_IMAGE:
     case ModuleFormat::VHD:
     case ModuleFormat::VDI:
+    case ModuleFormat::QCOW:
+    case ModuleFormat::QCOW2:
     case ModuleFormat::VHDX:
     case ModuleFormat::SDI:
     case ModuleFormat::XVA:
@@ -71,7 +85,16 @@ ResourcePlatform platformFor(const ResourceEntry& entry)
     case ModuleFormat::BTRFS:
     case ModuleFormat::RESX:
     case ModuleFormat::CUE_BIN:
+    case ModuleFormat::PS3_PUP:
+    case ModuleFormat::WAD:
+    case ModuleFormat::MTF:
+    case ModuleFormat::MDF_MDS:
+    case ModuleFormat::PARALLELS_HDD:
+    case ModuleFormat::PS2_ROMDIR:
         return ResourcePlatform::Other;
+    case ModuleFormat::MSI:
+    case ModuleFormat::MSG:
+        return ResourcePlatform::Windows;
     case ModuleFormat::NTFS:
     case ModuleFormat::REGISTRY:
     case ModuleFormat::BOOTCONFIG:
@@ -298,6 +321,22 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
         const QByteArray prefix = readHead(512);
         ModuleFormat nestedFormat = prefix.isEmpty() ? ModuleFormat::Unknown
             : ModuleFormatDetector::detectNestedBuffer(prefix).format;
+        if (nestedFormat == ModuleFormat::ZIP) {
+            const ModuleFormat named = ModuleFormatDetector::zipPackageFormatForName(entry.name);
+            if (named != ModuleFormat::Unknown) nestedFormat = named;
+        }
+
+        if (nestedFormat == ModuleFormat::Unknown && MsiModule::hasCompoundMagic(prefix.left(8))) {
+            fs::ByteStorePtr compoundStore = entry.content;
+            if (!compoundStore && !entry.data.isEmpty())
+                compoundStore = std::make_shared<fs::MemoryStore>(
+                    reinterpret_cast<const std::uint8_t*>(entry.data.constData()),
+                    std::size_t(entry.data.size()));
+            if (compoundStore && MsgModule::isOutlookMessage(compoundStore))
+                nestedFormat = ModuleFormat::MSG;
+            else if (MsiModule::hasInstallerExtension(entry.name))
+                nestedFormat = ModuleFormat::MSI;
+        }
 
         // Siemens ProSave common-file IMG wraps payloads that can begin with a
         // stronger B000FF signature. Probe the footer only for .IMG resources or
@@ -322,6 +361,23 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
             const QByteArray header = readHead(0x14000);
             nestedFormat = header.isEmpty() ? ModuleFormat::Unknown
                 : ModuleFormatDetector::detectBuffer(header).format;
+        }
+
+        // A complete PS2 BIOS stores ROMDIR around 0x2700, but validating that
+        // directory also requires checking file ranges against the full 4 MiB
+        // image. A prefix-only QByteArray therefore looks truncated and was not
+        // marked expandable when it lived inside ZIP/TAR/CAB. Probe the actual
+        // lazy store for plausible PS2 image names, preserving lazy decompression.
+        if (nestedFormat == ModuleFormat::Unknown && entry.content &&
+            entry.isEmbeddedFile && entry.content->capacity() >= 64 &&
+            entry.content->capacity() <= 64LL * 1024LL * 1024LL &&
+            (entry.name.endsWith(QStringLiteral(".bin"), Qt::CaseInsensitive) ||
+             entry.name.endsWith(QStringLiteral(".rom"), Qt::CaseInsensitive) ||
+             entry.name.endsWith(QStringLiteral(".img"), Qt::CaseInsensitive))) {
+            const quint64 scan = std::min<quint64>(
+                quint64(entry.content->capacity()), 16ULL * 1024ULL * 1024ULL);
+            if (findPs2Romdir(entry.content, scan) >= 0)
+                nestedFormat = ModuleFormat::PS2_ROMDIR;
         }
 
         if (nestedFormat == ModuleFormat::Unknown && entry.content && entry.isEmbeddedFile &&
@@ -381,7 +437,18 @@ void OpenerSession::rebuildFolders()
             entry.type == QStringLiteral("CUE_AUDIO_TRACK") ||
             entry.type == QStringLiteral("CAB_FILE") ||
             entry.type == QStringLiteral("ZIP_FILE") ||
+            entry.type == QStringLiteral("APP_PACKAGE_FILE") ||
+            entry.type == QStringLiteral("APP_BUNDLE_FILE") ||
+            entry.type == QStringLiteral("XAP_FILE") ||
+            entry.type == QStringLiteral("XAP_METADATA") ||
+            entry.type == QStringLiteral("XAP_ENCRYPTED_ARCHIVE") ||
             entry.type == QStringLiteral("TAR_FILE") ||
+            entry.type == QStringLiteral("PUP_SEGMENT") ||
+            entry.type == QStringLiteral("WAD_LUMP") ||
+            entry.type == QStringLiteral("MDF_TRACK") ||
+            entry.type == QStringLiteral("PS2_ROM_FILE") ||
+            entry.type == QStringLiteral("MSI_STREAM") ||
+            entry.type == QStringLiteral("MSG_ATTACHMENT") ||
             entry.type == QStringLiteral("SIEMENS_IMG_FILE") ||
             entry.type == QStringLiteral("SIEMENS_FWF_FILE") ||
             entry.type == QStringLiteral("SIEMENS_FSF_FILE") ||

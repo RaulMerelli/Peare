@@ -6,22 +6,19 @@
 
 namespace peare {
 namespace {
-quint16 le16(const QByteArray& data, qsizetype offset)
-{
+quint16 le16(const QByteArray& data, qsizetype offset) {
     if (offset < 0 || offset + 2 > data.size()) return 0;
     const auto* p = reinterpret_cast<const uchar*>(data.constData() + offset);
     return quint16(p[0]) | (quint16(p[1]) << 8);
 }
 
-quint32 le32(const QByteArray& data, qsizetype offset)
-{
+quint32 le32(const QByteArray& data, qsizetype offset) {
     if (offset < 0 || offset + 4 > data.size()) return 0;
     const auto* p = reinterpret_cast<const uchar*>(data.constData() + offset);
     return quint32(p[0]) | (quint32(p[1]) << 8) | (quint32(p[2]) << 16) | (quint32(p[3]) << 24);
 }
 
-bool vaToOffset(quint32 address, quint32 baseAddress, qsizetype size, qsizetype* result)
-{
+bool vaToOffset(quint32 address, quint32 baseAddress, qsizetype size, qsizetype* result) {
     if (!result || address < baseAddress) return false;
     const quint64 offset = quint64(address) - baseAddress;
     if (offset >= quint64(size)) return false;
@@ -29,37 +26,32 @@ bool vaToOffset(quint32 address, quint32 baseAddress, qsizetype size, qsizetype*
     return true;
 }
 
-QString readAsciiZ(const QByteArray& data, qsizetype offset)
-{
+QString readAsciiZ(const QByteArray& data, qsizetype offset) {
     if (offset < 0 || offset >= data.size()) return {};
     const qsizetype end = data.indexOf('\0', offset);
-    const qsizetype length = end < 0 ? qMin<qsizetype>(64, data.size() - offset)
-                                     : qMin<qsizetype>(64, end - offset);
+    const qsizetype length =
+        end < 0 ? qMin<qsizetype>(64, data.size() - offset) : qMin<qsizetype>(64, end - offset);
     return QString::fromLatin1(data.constData() + offset, length);
 }
 
-QString readUtf16LeZ(const QByteArray& data, qsizetype offset, qsizetype codeUnits)
-{
-    if (offset < 0 || codeUnits < 0 || quint64(offset) + quint64(codeUnits) * 2u > quint64(data.size())) return {};
+QString readUtf16LeZ(const QByteArray& data, qsizetype offset, qsizetype codeUnits) {
+    if (offset < 0 || codeUnits < 0 ||
+        quint64(offset) + quint64(codeUnits) * 2u > quint64(data.size()))
+        return {};
     QString result;
     result.reserve(int(codeUnits));
     for (qsizetype i = 0; i < codeUnits; ++i) {
         const qsizetype p = offset + i * 2;
-        const ushort value = ushort(uchar(data.at(int(p)))) | (ushort(uchar(data.at(int(p + 1)))) << 8);
+        const ushort value =
+            ushort(uchar(data.at(int(p)))) | (ushort(uchar(data.at(int(p + 1)))) << 8);
         if (value == 0) break;
         result.append(QChar(value));
     }
     return result.trimmed();
 }
 
-void appendResource(QVector<ResourceEntry>* resources,
-                    ModuleFormat format,
-                    const QString& type,
-                    const QString& name,
-                    quint64 offset,
-                    const QByteArray& payload,
-                    int baseId)
-{
+void appendResource(QVector<ResourceEntry>* resources, ModuleFormat format, const QString& type,
+                    const QString& name, quint64 offset, const QByteArray& payload, int baseId) {
     if (!resources) return;
     ResourceEntry entry;
     entry.type = type;
@@ -74,9 +66,7 @@ void appendResource(QVector<ResourceEntry>* resources,
     resources->push_back(std::move(entry));
 }
 
-
-QString librarySummary(const QByteArray& record)
-{
+QString librarySummary(const QByteArray& record) {
     if (record.size() < 16) return {};
     const QString name = QString::fromLatin1(record.constData(), 8).trimmed();
     const quint16 major = le16(record, 8);
@@ -85,15 +75,18 @@ QString librarySummary(const QByteArray& record)
     const quint16 flags = le16(record, 14);
     return QStringLiteral("%1 %2.%3.%4 flags=0x%5")
         .arg(name.isEmpty() ? QStringLiteral("(unnamed)") : name)
-        .arg(major).arg(minor).arg(build)
-        .arg(flags, 4, 16, QLatin1Char('0')).toUpper();
+        .arg(major)
+        .arg(minor)
+        .arg(build)
+        .arg(flags, 4, 16, QLatin1Char('0'))
+        .toUpper();
 }
 
 void appendLibraryVersion(QVector<ResourceEntry>* resources, const QByteArray& data,
-                          quint32 address, quint32 baseAddress, const QString& name, int baseId)
-{
+                          quint32 address, quint32 baseAddress, const QString& name, int baseId) {
     qsizetype offset = 0;
-    if (!vaToOffset(address, baseAddress, data.size(), &offset) || offset + 16 > data.size()) return;
+    if (!vaToOffset(address, baseAddress, data.size(), &offset) || offset + 16 > data.size())
+        return;
     const QByteArray record = data.mid(offset, 16);
     appendResource(resources, ModuleFormat::XBE, QStringLiteral("XBE_LIBRARY_VERSION"),
                    name + QStringLiteral(".bin"), quint64(offset), record, baseId);
@@ -109,16 +102,14 @@ struct EmbeddedResourceCandidate {
     QString extension;
 };
 
-bool isXprMagic(const QByteArray& data, qsizetype offset)
-{
+bool isXprMagic(const QByteArray& data, qsizetype offset) {
     if (offset < 0 || offset + 4 > data.size()) return false;
     return data.mid(offset, 4) == QByteArrayLiteral("XPR0") ||
            data.mid(offset, 4) == QByteArrayLiteral("XPR1") ||
            data.mid(offset, 4) == QByteArrayLiteral("XPR2");
 }
 
-QVector<EmbeddedResourceCandidate> findEmbeddedResources(const QByteArray& section)
-{
+QVector<EmbeddedResourceCandidate> findEmbeddedResources(const QByteArray& section) {
     QVector<EmbeddedResourceCandidate> found;
     for (qsizetype offset = 0; offset + 4 <= section.size(); ++offset) {
         if (isXprMagic(section, offset)) {
@@ -126,7 +117,8 @@ QVector<EmbeddedResourceCandidate> findEmbeddedResources(const QByteArray& secti
             const quint32 totalSize = le32(section, offset + 4);
             const quint32 headerSize = le32(section, offset + 8);
             if (totalSize < 12 || headerSize < 12 || headerSize > totalSize ||
-                quint64(offset) + totalSize > quint64(section.size())) continue;
+                quint64(offset) + totalSize > quint64(section.size()))
+                continue;
             EmbeddedResourceCandidate candidate;
             candidate.relativeOffset = offset;
             candidate.size = qsizetype(totalSize);
@@ -158,15 +150,20 @@ QVector<EmbeddedResourceCandidate> findEmbeddedResources(const QByteArray& secti
 QByteArray xprMetadata(const QByteArray& xpr);
 
 void appendEmbeddedSectionResources(QVector<ResourceEntry>* resources, const QByteArray& section,
-                                    quint64 sectionFileOffset, const QString& sectionName, int sectionIndex)
-{
+                                    quint64 sectionFileOffset, const QString& sectionName,
+                                    int sectionIndex) {
     const auto candidates = findEmbeddedResources(section);
     int item = 0;
     for (const auto& candidate : candidates) {
         if (candidate.size <= 0 || candidate.relativeOffset < 0 ||
-            candidate.relativeOffset + candidate.size > section.size()) continue;
-        const QString safeSection = sectionName.isEmpty() ? QStringLiteral("section_%1").arg(sectionIndex) : sectionName;
-        const QString name = QStringLiteral("%1_embedded_%2%3").arg(safeSection).arg(item++).arg(candidate.extension);
+            candidate.relativeOffset + candidate.size > section.size())
+            continue;
+        const QString safeSection =
+            sectionName.isEmpty() ? QStringLiteral("section_%1").arg(sectionIndex) : sectionName;
+        const QString name = QStringLiteral("%1_embedded_%2%3")
+                                 .arg(safeSection)
+                                 .arg(item++)
+                                 .arg(candidate.extension);
         const QByteArray payload = section.mid(candidate.relativeOffset, candidate.size);
         appendResource(resources, ModuleFormat::XBE, candidate.type, name,
                        sectionFileOffset + quint64(candidate.relativeOffset), payload,
@@ -180,9 +177,7 @@ void appendEmbeddedSectionResources(QVector<ResourceEntry>* resources, const QBy
     }
 }
 
-
-QString sectionFlagsSummary(quint32 flags)
-{
+QString sectionFlagsSummary(quint32 flags) {
     QStringList names;
     if (flags & 0x00000001u) names << QStringLiteral("writable");
     if (flags & 0x00000002u) names << QStringLiteral("preload");
@@ -193,52 +188,54 @@ QString sectionFlagsSummary(quint32 flags)
     return names.isEmpty() ? QStringLiteral("none") : names.join(QStringLiteral(", "));
 }
 
-QString readDebugString(const QByteArray& data, quint32 address, quint32 baseAddress, bool unicode)
-{
+QString readDebugString(const QByteArray& data, quint32 address, quint32 baseAddress,
+                        bool unicode) {
     qsizetype offset = 0;
     if (!vaToOffset(address, baseAddress, data.size(), &offset)) return {};
     return unicode ? readUtf16LeZ(data, offset, qMin<qsizetype>(260, (data.size() - offset) / 2))
                    : readAsciiZ(data, offset);
 }
 
-QByteArray xprMetadata(const QByteArray& xpr)
-{
+QByteArray xprMetadata(const QByteArray& xpr) {
     if (xpr.size() < 12 || !isXprMagic(xpr, 0)) return {};
     const QString magic = QString::fromLatin1(xpr.constData(), 4);
     const quint32 totalSize = le32(xpr, 4);
     const quint32 headerSize = le32(xpr, 8);
     const quint32 payloadSize = totalSize >= headerSize ? totalSize - headerSize : 0;
     return QStringLiteral("Magic: %1\nTotal size: %2\nHeader size: %3\nPayload size: %4\n")
-        .arg(magic).arg(totalSize).arg(headerSize).arg(payloadSize).toUtf8();
+        .arg(magic)
+        .arg(totalSize)
+        .arg(headerSize)
+        .arg(payloadSize)
+        .toUtf8();
 }
 
-QString certificateSummary(quint32 titleId,
-                           const QString& title,
-                           quint32 allowedMedia,
-                           quint32 gameRegion,
-                           quint32 discNumber,
-                           quint32 version)
-{
+QString certificateSummary(quint32 titleId, const QString& title, quint32 allowedMedia,
+                           quint32 gameRegion, quint32 discNumber, quint32 version) {
     QStringList lines;
     lines << QStringLiteral("Title: %1").arg(title.isEmpty() ? QStringLiteral("(unnamed)") : title)
           << QStringLiteral("Title ID: 0x%1").arg(titleId, 8, 16, QLatin1Char('0')).toUpper()
-          << QStringLiteral("Allowed media: 0x%1").arg(allowedMedia, 8, 16, QLatin1Char('0')).toUpper()
+          << QStringLiteral("Allowed media: 0x%1")
+                 .arg(allowedMedia, 8, 16, QLatin1Char('0'))
+                 .toUpper()
           << QStringLiteral("Game region: 0x%1").arg(gameRegion, 8, 16, QLatin1Char('0')).toUpper()
           << QStringLiteral("Disc number: %1").arg(discNumber)
           << QStringLiteral("Version: %1").arg(version);
     return lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
 }
-}
+} // namespace
 
-std::unique_ptr<XbeModule> XbeModule::open(const QString& filePath)
-{
+std::unique_ptr<XbeModule> XbeModule::open(const QString& filePath) {
     auto module = std::unique_ptr<XbeModule>(new XbeModule);
     module->info_.filePath = filePath;
     module->info_.format = ModuleFormat::XBE;
     module->info_.description = QStringLiteral("Original Xbox Executable (XBE)");
 
     QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly)) { module->info_.error = file.errorString(); return module; }
+    if (!file.open(QIODevice::ReadOnly)) {
+        module->info_.error = file.errorString();
+        return module;
+    }
     const QByteArray data = file.readAll();
     if (data.size() < 0x178 || data.left(4) != QByteArrayLiteral("XBEH")) {
         module->info_.error = QStringLiteral("Invalid XBE header");
@@ -277,11 +274,11 @@ std::unique_ptr<XbeModule> XbeModule::open(const QString& filePath)
     // The 256-byte RSA signature is part of the original XBE image header.
     // Verification requires the appropriate Xbox public key, so the opener
     // exposes the byte-perfect signature without claiming authenticity.
-    appendResource(&module->resources_, ModuleFormat::XBE,
-                   QStringLiteral("XBE_HEADER_SIGNATURE"), QStringLiteral("header_signature.bin"),
-                   4, data.mid(4, 256), -30);
+    appendResource(&module->resources_, ModuleFormat::XBE, QStringLiteral("XBE_HEADER_SIGNATURE"),
+                   QStringLiteral("header_signature.bin"), 4, data.mid(4, 256), -30);
 
-    if (baseAddress == 0 || imageHeaderSize < 0x178 || headerSize < imageHeaderSize || headerSize > quint32(data.size())) {
+    if (baseAddress == 0 || imageHeaderSize < 0x178 || headerSize < imageHeaderSize ||
+        headerSize > quint32(data.size())) {
         module->info_.error = QStringLiteral("Invalid XBE base address or header size");
         return module;
     }
@@ -301,10 +298,12 @@ std::unique_ptr<XbeModule> XbeModule::open(const QString& filePath)
         }
         const QString debugPath = readDebugString(data, debugPathAddress, baseAddress, false);
         const QString debugFile = readDebugString(data, debugFileAddress, baseAddress, false);
-        const QString debugUnicodeFile = readDebugString(data, debugUnicodeFileAddress, baseAddress, true);
+        const QString debugUnicodeFile =
+            readDebugString(data, debugUnicodeFileAddress, baseAddress, true);
         QStringList lines;
         lines << QStringLiteral("Variant: %1").arg(variant)
-              << QStringLiteral("Initialization flags: 0x%1").arg(initializationFlags, 8, 16, QLatin1Char('0'))
+              << QStringLiteral("Initialization flags: 0x%1")
+                     .arg(initializationFlags, 8, 16, QLatin1Char('0'))
               << QStringLiteral("Entry point: 0x%1").arg(entryPoint, 8, 16, QLatin1Char('0'))
               << QStringLiteral("PE base: 0x%1").arg(peBaseAddress, 8, 16, QLatin1Char('0'))
               << QStringLiteral("PE image size: %1").arg(peImageSize)
@@ -315,14 +314,16 @@ std::unique_ptr<XbeModule> XbeModule::open(const QString& filePath)
               << QStringLiteral("Heap commit: %1").arg(peHeapCommit);
         if (!debugPath.isEmpty()) lines << QStringLiteral("Debug path: %1").arg(debugPath);
         if (!debugFile.isEmpty()) lines << QStringLiteral("Debug file: %1").arg(debugFile);
-        if (!debugUnicodeFile.isEmpty()) lines << QStringLiteral("Debug Unicode file: %1").arg(debugUnicodeFile);
+        if (!debugUnicodeFile.isEmpty())
+            lines << QStringLiteral("Debug Unicode file: %1").arg(debugUnicodeFile);
         appendResource(&module->resources_, ModuleFormat::XBE, QStringLiteral("XBE_IMAGE_METADATA"),
                        QStringLiteral("image_header.txt"), 0,
                        (lines.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8(), -20);
     }
 
     qsizetype certificateOffset = 0;
-    if (certificateAddress != 0 && vaToOffset(certificateAddress, baseAddress, data.size(), &certificateOffset) &&
+    if (certificateAddress != 0 &&
+        vaToOffset(certificateAddress, baseAddress, data.size(), &certificateOffset) &&
         certificateOffset + 0xB0 <= data.size()) {
         const quint32 certificateSize = le32(data, certificateOffset);
         const quint32 titleId = le32(data, certificateOffset + 0x08);
@@ -336,33 +337,39 @@ std::unique_ptr<XbeModule> XbeModule::open(const QString& filePath)
 
         const qsizetype available = data.size() - certificateOffset;
         const qsizetype boundedSize = certificateSize >= 0xB0
-            ? qMin<qsizetype>(qsizetype(certificateSize), available)
-            : qMin<qsizetype>(0xB0, available);
-        appendResource(&module->resources_, ModuleFormat::XBE,
-                       QStringLiteral("XBE_CERTIFICATE"), QStringLiteral("certificate.bin"),
-                       quint64(certificateOffset), data.mid(certificateOffset, boundedSize), -3);
-        appendResource(&module->resources_, ModuleFormat::XBE,
-                       QStringLiteral("XBE_METADATA"), QStringLiteral("certificate.txt"),
-                       quint64(certificateOffset),
-                       certificateSummary(titleId, title, allowedMedia, gameRegion, discNumber, version).toUtf8(), -2);
+                                          ? qMin<qsizetype>(qsizetype(certificateSize), available)
+                                          : qMin<qsizetype>(0xB0, available);
+        appendResource(&module->resources_, ModuleFormat::XBE, QStringLiteral("XBE_CERTIFICATE"),
+                       QStringLiteral("certificate.bin"), quint64(certificateOffset),
+                       data.mid(certificateOffset, boundedSize), -3);
+        appendResource(
+            &module->resources_, ModuleFormat::XBE, QStringLiteral("XBE_METADATA"),
+            QStringLiteral("certificate.txt"), quint64(certificateOffset),
+            certificateSummary(titleId, title, allowedMedia, gameRegion, discNumber, version)
+                .toUtf8(),
+            -2);
     }
 
     if (tlsAddress != 0) {
         qsizetype tlsOffset = 0;
-        if (vaToOffset(tlsAddress, baseAddress, data.size(), &tlsOffset) && tlsOffset + 24 <= data.size()) {
+        if (vaToOffset(tlsAddress, baseAddress, data.size(), &tlsOffset) &&
+            tlsOffset + 24 <= data.size()) {
             const QByteArray tls = data.mid(tlsOffset, 24);
             appendResource(&module->resources_, ModuleFormat::XBE, QStringLiteral("XBE_TLS"),
                            QStringLiteral("tls.bin"), quint64(tlsOffset), tls, -10);
-            const QString summary = QStringLiteral(
-                "Data start: 0x%1\nData end: 0x%2\nTLS index: 0x%3\nCallbacks: 0x%4\nZero fill: %5\nCharacteristics: 0x%6\n")
-                .arg(le32(tls, 0), 8, 16, QLatin1Char('0'))
-                .arg(le32(tls, 4), 8, 16, QLatin1Char('0'))
-                .arg(le32(tls, 8), 8, 16, QLatin1Char('0'))
-                .arg(le32(tls, 12), 8, 16, QLatin1Char('0'))
-                .arg(le32(tls, 16))
-                .arg(le32(tls, 20), 8, 16, QLatin1Char('0')).toUpper();
-            appendResource(&module->resources_, ModuleFormat::XBE, QStringLiteral("XBE_TLS_METADATA"),
-                           QStringLiteral("tls.txt"), quint64(tlsOffset), summary.toUtf8(), -11);
+            const QString summary =
+                QStringLiteral("Data start: 0x%1\nData end: 0x%2\nTLS index: 0x%3\nCallbacks: "
+                               "0x%4\nZero fill: %5\nCharacteristics: 0x%6\n")
+                    .arg(le32(tls, 0), 8, 16, QLatin1Char('0'))
+                    .arg(le32(tls, 4), 8, 16, QLatin1Char('0'))
+                    .arg(le32(tls, 8), 8, 16, QLatin1Char('0'))
+                    .arg(le32(tls, 12), 8, 16, QLatin1Char('0'))
+                    .arg(le32(tls, 16))
+                    .arg(le32(tls, 20), 8, 16, QLatin1Char('0'))
+                    .toUpper();
+            appendResource(&module->resources_, ModuleFormat::XBE,
+                           QStringLiteral("XBE_TLS_METADATA"), QStringLiteral("tls.txt"),
+                           quint64(tlsOffset), summary.toUtf8(), -11);
         }
     }
 
@@ -374,16 +381,20 @@ std::unique_ptr<XbeModule> XbeModule::open(const QString& filePath)
                 const qsizetype offset = librariesOffset + qsizetype(i) * 16;
                 const QByteArray record = data.mid(offset, 16);
                 const QString label = QStringLiteral("library_%1").arg(i);
-                appendResource(&module->resources_, ModuleFormat::XBE, QStringLiteral("XBE_LIBRARY_VERSION"),
-                               label + QStringLiteral(".bin"), quint64(offset), record, -100 - int(i));
-                appendResource(&module->resources_, ModuleFormat::XBE, QStringLiteral("XBE_LIBRARY_METADATA"),
-                               label + QStringLiteral(".txt"), quint64(offset),
-                               (librarySummary(record) + QLatin1Char('\n')).toUtf8(), -5000 - int(i));
+                appendResource(
+                    &module->resources_, ModuleFormat::XBE, QStringLiteral("XBE_LIBRARY_VERSION"),
+                    label + QStringLiteral(".bin"), quint64(offset), record, -100 - int(i));
+                appendResource(
+                    &module->resources_, ModuleFormat::XBE, QStringLiteral("XBE_LIBRARY_METADATA"),
+                    label + QStringLiteral(".txt"), quint64(offset),
+                    (librarySummary(record) + QLatin1Char('\n')).toUtf8(), -5000 - int(i));
             }
         }
     }
-    appendLibraryVersion(&module->resources_, data, kernelLibraryAddress, baseAddress, QStringLiteral("kernel"), -12);
-    appendLibraryVersion(&module->resources_, data, xapiLibraryAddress, baseAddress, QStringLiteral("xapi"), -14);
+    appendLibraryVersion(&module->resources_, data, kernelLibraryAddress, baseAddress,
+                         QStringLiteral("kernel"), -12);
+    appendLibraryVersion(&module->resources_, data, xapiLibraryAddress, baseAddress,
+                         QStringLiteral("xapi"), -14);
 
     if (encodedKernelThunkAddress != 0) {
         constexpr quint32 retailXor = 0x5B6D40B6u;
@@ -403,16 +414,23 @@ std::unique_ptr<XbeModule> XbeModule::open(const QString& filePath)
                 if (value == 0) break;
                 raw.append(data.mid(thunkOffset + qsizetype(i) * 4, 4));
                 imports << QStringLiteral("%1: ordinal %2 (0x%3)")
-                               .arg(i).arg(value & 0x7fffffffu)
-                               .arg(value, 8, 16, QLatin1Char('0')).toUpper();
+                               .arg(i)
+                               .arg(value & 0x7fffffffu)
+                               .arg(value, 8, 16, QLatin1Char('0'))
+                               .toUpper();
             }
             raw.append(QByteArray(4, char(0)));
-            appendResource(&module->resources_, ModuleFormat::XBE, QStringLiteral("XBE_KERNEL_THUNKS"),
-                           QStringLiteral("kernel_thunks.bin"), quint64(thunkOffset), raw, -16);
+            appendResource(&module->resources_, ModuleFormat::XBE,
+                           QStringLiteral("XBE_KERNEL_THUNKS"), QStringLiteral("kernel_thunks.bin"),
+                           quint64(thunkOffset), raw, -16);
             const QString text = QStringLiteral("Variant: %1\nDecoded address: 0x%2\n%3\n")
-                .arg(variant).arg(thunkAddress, 8, 16, QLatin1Char('0')).arg(imports.join(QLatin1Char('\n'))).toUpper();
-            appendResource(&module->resources_, ModuleFormat::XBE, QStringLiteral("XBE_KERNEL_IMPORTS"),
-                           QStringLiteral("kernel_imports.txt"), quint64(thunkOffset), text.toUtf8(), -17);
+                                     .arg(variant)
+                                     .arg(thunkAddress, 8, 16, QLatin1Char('0'))
+                                     .arg(imports.join(QLatin1Char('\n')))
+                                     .toUpper();
+            appendResource(
+                &module->resources_, ModuleFormat::XBE, QStringLiteral("XBE_KERNEL_IMPORTS"),
+                QStringLiteral("kernel_imports.txt"), quint64(thunkOffset), text.toUtf8(), -17);
         }
     }
 
@@ -420,8 +438,10 @@ std::unique_ptr<XbeModule> XbeModule::open(const QString& filePath)
         qsizetype importOffset = 0;
         if (vaToOffset(nonKernelImportAddress, baseAddress, data.size(), &importOffset)) {
             const qsizetype size = qMin<qsizetype>(256, data.size() - importOffset);
-            appendResource(&module->resources_, ModuleFormat::XBE, QStringLiteral("XBE_NON_KERNEL_IMPORT_DIRECTORY"),
-                           QStringLiteral("non_kernel_imports.bin"), quint64(importOffset), data.mid(importOffset, size), -18);
+            appendResource(&module->resources_, ModuleFormat::XBE,
+                           QStringLiteral("XBE_NON_KERNEL_IMPORT_DIRECTORY"),
+                           QStringLiteral("non_kernel_imports.bin"), quint64(importOffset),
+                           data.mid(importOffset, size), -18);
         }
     }
 
@@ -430,9 +450,8 @@ std::unique_ptr<XbeModule> XbeModule::open(const QString& filePath)
         if (vaToOffset(logoAddress, baseAddress, data.size(), &logoOffset) &&
             quint64(logoOffset) + logoSize <= quint64(data.size())) {
             const QByteArray encodedLogo = data.mid(logoOffset, qsizetype(logoSize));
-            appendResource(&module->resources_, ModuleFormat::XBE,
-                           QStringLiteral("XBE_LOGO_RLE"), QStringLiteral("logo.xprle"),
-                           quint64(logoOffset), encodedLogo, -1);
+            appendResource(&module->resources_, ModuleFormat::XBE, QStringLiteral("XBE_LOGO_RLE"),
+                           QStringLiteral("logo.xprle"), quint64(logoOffset), encodedLogo, -1);
         }
     }
 
@@ -444,7 +463,11 @@ std::unique_ptr<XbeModule> XbeModule::open(const QString& filePath)
     }
 
     module->resources_.reserve(module->resources_.size() + int(sectionCount));
-    struct SectionRange { quint64 offset; quint64 size; QString name; };
+    struct SectionRange {
+        quint64 offset;
+        quint64 size;
+        QString name;
+    };
     QVector<SectionRange> sectionRanges;
 
     for (quint32 index = 0; index < sectionCount; ++index) {
@@ -464,7 +487,8 @@ std::unique_ptr<XbeModule> XbeModule::open(const QString& filePath)
 
         qsizetype nameOffset = 0;
         QString name;
-        if (vaToOffset(nameAddress, baseAddress, data.size(), &nameOffset)) name = readAsciiZ(data, nameOffset);
+        if (vaToOffset(nameAddress, baseAddress, data.size(), &nameOffset))
+            name = readAsciiZ(data, nameOffset);
         if (name.isEmpty()) name = QStringLiteral("section_%1").arg(index);
 
         const QByteArray sectionData = data.mid(qsizetype(rawAddress), qsizetype(rawSize));
@@ -473,34 +497,42 @@ std::unique_ptr<XbeModule> XbeModule::open(const QString& filePath)
         range.size = rawSize;
         range.name = name;
         sectionRanges.push_back(range);
-        const QByteArray actualDigest = QCryptographicHash::hash(sectionData, QCryptographicHash::Sha1);
+        const QByteArray actualDigest =
+            QCryptographicHash::hash(sectionData, QCryptographicHash::Sha1);
         const bool digestPresent = expectedDigest != QByteArray(20, char(0));
         const bool digestMatches = digestPresent && expectedDigest == actualDigest;
-        const QString digestStatus = !digestPresent ? QStringLiteral("not present")
-                                                   : (digestMatches ? QStringLiteral("valid")
-                                                                    : QStringLiteral("mismatch"));
-        appendResource(&module->resources_, ModuleFormat::XBE,
-                       QStringLiteral("XBE_SECTION"), name,
+        const QString digestStatus =
+            !digestPresent ? QStringLiteral("not present")
+                           : (digestMatches ? QStringLiteral("valid") : QStringLiteral("mismatch"));
+        appendResource(&module->resources_, ModuleFormat::XBE, QStringLiteral("XBE_SECTION"), name,
                        rawAddress, sectionData, int(index));
         module->resources_.last().hierarchyPath = QStringList() << name;
-        appendResource(&module->resources_, ModuleFormat::XBE,
-                       QStringLiteral("XBE_SECTION_DIGEST"), name + QStringLiteral(".sha1"),
-                       quint64(h + 0x24), expectedDigest, 210000 + int(index));
-        const QString sectionText = QStringLiteral(
-            "Name: %1\nFlags: 0x%2 (%3)\nVirtual address: 0x%4\nVirtual size: %5\nRaw offset: 0x%6\nRaw size: %7\nName reference count: %8\nHead shared reference: 0x%9\nTail shared reference: 0x%10\nExpected SHA-1: %11\nActual SHA-1: %12\nDigest status: %13\n")
-            .arg(name)
-            .arg(flags, 8, 16, QLatin1Char('0')).arg(sectionFlagsSummary(flags))
-            .arg(virtualAddress, 8, 16, QLatin1Char('0')).arg(virtualSize)
-            .arg(rawAddress, 8, 16, QLatin1Char('0')).arg(rawSize).arg(nameReferenceCount)
-            .arg(headSharedReferenceAddress, 8, 16, QLatin1Char('0'))
-            .arg(tailSharedReferenceAddress, 8, 16, QLatin1Char('0'))
-            .arg(QString::fromLatin1(expectedDigest.toHex()))
-            .arg(QString::fromLatin1(actualDigest.toHex()))
-            .arg(digestStatus);
+        appendResource(&module->resources_, ModuleFormat::XBE, QStringLiteral("XBE_SECTION_DIGEST"),
+                       name + QStringLiteral(".sha1"), quint64(h + 0x24), expectedDigest,
+                       210000 + int(index));
+        const QString sectionText =
+            QStringLiteral("Name: %1\nFlags: 0x%2 (%3)\nVirtual address: 0x%4\nVirtual size: "
+                           "%5\nRaw offset: 0x%6\nRaw size: %7\nName reference count: %8\nHead "
+                           "shared reference: 0x%9\nTail shared reference: 0x%10\nExpected SHA-1: "
+                           "%11\nActual SHA-1: %12\nDigest status: %13\n")
+                .arg(name)
+                .arg(flags, 8, 16, QLatin1Char('0'))
+                .arg(sectionFlagsSummary(flags))
+                .arg(virtualAddress, 8, 16, QLatin1Char('0'))
+                .arg(virtualSize)
+                .arg(rawAddress, 8, 16, QLatin1Char('0'))
+                .arg(rawSize)
+                .arg(nameReferenceCount)
+                .arg(headSharedReferenceAddress, 8, 16, QLatin1Char('0'))
+                .arg(tailSharedReferenceAddress, 8, 16, QLatin1Char('0'))
+                .arg(QString::fromLatin1(expectedDigest.toHex()))
+                .arg(QString::fromLatin1(actualDigest.toHex()))
+                .arg(digestStatus);
         appendResource(&module->resources_, ModuleFormat::XBE,
                        QStringLiteral("XBE_SECTION_METADATA"), name + QStringLiteral(".txt"),
                        quint64(h), sectionText.toUtf8(), 200000 + int(index));
-        appendEmbeddedSectionResources(&module->resources_, sectionData, rawAddress, name, int(index));
+        appendEmbeddedSectionResources(&module->resources_, sectionData, rawAddress, name,
+                                       int(index));
     }
 
     for (ResourceEntry& entry : module->resources_) {

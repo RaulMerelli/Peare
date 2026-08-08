@@ -5,6 +5,10 @@
 # define PEARE_DECODER_API __declspec(dllexport)
 #elif defined(_WIN32)
 # define PEARE_DECODER_API __declspec(dllimport)
+#elif defined(__OS2__) && defined(PEARE_DECODER_BUILD)
+# define PEARE_DECODER_API __declspec(dllexport)
+#elif defined(__OS2__)
+# define PEARE_DECODER_API __declspec(dllimport)
 #elif defined(__GNUC__) && __GNUC__ >= 4
 # define PEARE_DECODER_API __attribute__((visibility("default")))
 #else

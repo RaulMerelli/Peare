@@ -1,0 +1,26 @@
+{
+  "container_format": "VMDK",
+  "tree": [
+    {
+      "path": "Partition 1 — FAT12",
+      "size": 3584,
+      "is_container": true,
+      "format": "FAT",
+      "sha256": ""
+    },
+    {
+      "path": "Partition 1 — FAT12/DATA.BIN",
+      "size": 600,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "919c808fb036c3878d57ee8d0618fccd2dc79f0b37c87adb4e23bc94cc446d41"
+    },
+    {
+      "path": "Partition 1 — FAT12/HELLO.TXT",
+      "size": 23,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "cf7f92c575954decf72a132d8017ca8143c4c40ac5efac9df457703dac28f1a7"
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "container_format": "PE",
+  "tree": [
+    {
+      "path": "#1",
+      "size": 9517,
+      "is_container": false,
+      "format": "PE",
+      "sha256": "d59c1eb229043dee0f6fd478363c50c3b4d10db6527bc5192e5ca6d31cacca66"
+    },
+    {
+      "path": "#1",
+      "size": 860,
+      "is_container": false,
+      "format": "PE",
+      "sha256": "63b2beb483eec39784aca597767c36d9e26fe450c544dd97c866183062c4373f"
+    },
+    {
+      "path": "#1",
+      "size": 490,
+      "is_container": false,
+      "format": "PE",
+      "sha256": "539dc26a14b6277e87348594ab7d6e932d16aabb18612d77f29fe421a9f1d46a"
+    },
+    {
+      "path": "#2",
+      "size": 67624,
+      "is_container": false,
+      "format": "PE",
+      "sha256": "48585884e8853c2bd58291b77cee72a3fdf8ea95ef27b4ae38ae684f11db24f6"
+    },
+    {
+      "path": "#3",
+      "size": 16936,
+      "is_container": false,
+      "format": "PE",
+      "sha256": "e0592ace4326c353ff29f721c8e23291e23600d72e4420b8b5e0294de916f01b"
+    },
+    {
+      "path": "#32512",
+      "size": 90,
+      "is_container": false,
+      "format": "PE",
+      "sha256": "853bdf0220e1c964f8d1f5d341b396404a7ad320f177c11ae884df6ab33d0199"
+    },
+    {
+      "path": "#4",
+      "size": 9640,
+      "is_container": false,
+      "format": "PE",
+      "sha256": "d6cfcfac4f932e34544caa01fbeda194dc64ad8a497fde8728e08233b9a1c7d6"
+    },
+    {
+      "path": "#5",
+      "size": 4264,
+      "is_container": false,
+      "format": "PE",
+      "sha256": "8a2909965104334b939b43b9e80a8fbf99b086501a5f9488d6f4b17dfc79f864"
+    },
+    {
+      "path": "#6",
+      "size": 1128,
+      "is_container": false,
+      "format": "PE",
+      "sha256": "f1a2e7c78b3079735634e4a35660fe55628b70007fd406cd47bb3017eeaa6fb4"
+    },
+    {
+      "path": ".reloc",
+      "size": 512,
+      "is_container": false,
+      "format": "UNKNOWN",
+      "sha256": "deafa380e83542a8c1f3ed69afb803da4cffee4ae11b7efe5e54bfc10e080b0a"
+    },
+    {
+      "path": ".rsrc",
+      "size": 111104,
+      "is_container": false,
+      "format": "UNKNOWN",
+      "sha256": "c57fe2d2b19e36d2bb0ffb7eaae133dcbbafb83afa782c40dc7f838ba0e5fa7b"
+    },
+    {
+      "path": ".text",
+      "size": 374272,
+      "is_container": false,
+      "format": "UNKNOWN",
+      "sha256": "2c8940413e499089a7b535a7552755ee2a3f99f7938e01a245a6cb6d1f212ff3"
+    },
+    {
+      "path": "headers",
+      "size": 512,
+      "is_container": false,
+      "format": "UNKNOWN",
+      "sha256": "ee3a6a8277163aee891691f4e4aa453c0f23dd51d3ee6b8d153e7bdbbfc0ff93"
+    }
+  ]
+}

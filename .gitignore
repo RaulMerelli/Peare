@@ -50,6 +50,16 @@ local.properties
 *.ilk
 *.pdb
 
+# Python (test harness in tests/)
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+
+# Backup files from in-place edits
+*.os2
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db

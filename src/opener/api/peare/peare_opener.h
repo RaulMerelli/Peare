@@ -5,6 +5,10 @@
 # define PEARE_OPENER_API __declspec(dllexport)
 #elif defined(_WIN32)
 # define PEARE_OPENER_API __declspec(dllimport)
+#elif defined(__OS2__) && defined(PEARE_OPENER_BUILD)
+# define PEARE_OPENER_API __declspec(dllexport)
+#elif defined(__OS2__)
+# define PEARE_OPENER_API __declspec(dllimport)
 #elif defined(__GNUC__) && __GNUC__ >= 4
 # define PEARE_OPENER_API __attribute__((visibility("default")))
 #else
@@ -33,6 +37,8 @@ PEARE_OPENER_API peare_status peare_opener_open_file(peare_opener_handle opener,
 PEARE_OPENER_API peare_status peare_opener_close(peare_opener_handle opener);
 PEARE_OPENER_API peare_status peare_opener_get_container_format(
     peare_opener_handle opener, peare_container_format *out_format);
+PEARE_OPENER_API peare_status peare_opener_get_description(
+    peare_opener_handle opener, peare_blob *out_description_utf8);
 PEARE_OPENER_API peare_status peare_opener_get_folder_count(peare_opener_handle opener, size_t *out_count);
 PEARE_OPENER_API peare_status peare_opener_get_folder_type(peare_opener_handle opener,
                                                     size_t folder_index,

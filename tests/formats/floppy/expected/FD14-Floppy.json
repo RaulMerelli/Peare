@@ -1,0 +1,782 @@
+{
+  "container_format": "ZIP",
+  "tree": [
+    {
+      "path": "x86BOOT.img",
+      "size": 737280,
+      "is_container": true,
+      "format": "FAT",
+      "sha256": ""
+    },
+    {
+      "path": "x86BOOT.img/KERNEL.SYS",
+      "size": 46485,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "f34a7483c575fcf2709d9a7d0bc3db81c6211c279530f9e1bf78576b9233924d"
+    },
+    {
+      "path": "x86BOOT.img/fdauto.bat",
+      "size": 1476,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "193b356df218e68117fcd5af11b2305c4c5fd88671ec4d555aef01a0530c42a0"
+    },
+    {
+      "path": "x86BOOT.img/fdconfig.sys",
+      "size": 392,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "aece52eb1f13f090640423c09eed43fd400cf9552e2a00ad463c909658e7f671"
+    },
+    {
+      "path": "x86BOOT.img/freedos",
+      "size": 0,
+      "is_container": true,
+      "format": "FLOPPY_IMAGE",
+      "sha256": ""
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin",
+      "size": 0,
+      "is_container": true,
+      "format": "FAT",
+      "sha256": ""
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/attrib.com",
+      "size": 5044,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "63e5932a6f6604c584f77691ba55f882439f1c4c8637fb6e45f4ee5bc41f0414"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/command.com",
+      "size": 87772,
+      "is_container": true,
+      "format": "DOS_MZ",
+      "sha256": ""
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/country.sys",
+      "size": 30250,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "f641d6eb65a392ef449e4e873e9ec4ae648d43e7358052ae9fee28a120b1e4da"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/cp850.v8f",
+      "size": 3103,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "69a7bac2cb83201d2e59d624bcbc675cded04bfbc0a48d90c850f5817f79bf69"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/cp857.v8f",
+      "size": 3132,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "bef70f051f22a61c6748ee8146ed24b834ebfa8ceae05d49d3a4b1699518f575"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/cp858.v8f",
+      "size": 1060,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "4e9bbdebb5fb9dd3db09c4b6cbfe6af31e4c59fe21a1a2c88822a078530bf3d8"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/cp866.v8f",
+      "size": 1277,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "f94336d043119e0db9327b4e5a8238f1541980bcbd0376f95d5fe4f65f91365f"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/deltree.com",
+      "size": 3339,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "72b6b5596048979a7a8526c73753892e0b13408821441cd3154e8d0b5fb013cb"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/fasthelp.bat",
+      "size": 64,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "e237660bb4053e6e3c28227d0fcc5472109eae4ffcfcc0935c27c118c9f3fa38"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/fc.exe",
+      "size": 14835,
+      "is_container": true,
+      "format": "DOS_MZ",
+      "sha256": ""
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/fdapm.com",
+      "size": 7434,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "8e670866c16c9cfb10796f33a785aa55e4ae94f4eabcff3fea0cfd5449a8ac73"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/fdbanner.com",
+      "size": 475,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "0c9c7d565c28416cf08133485ae717fab170dd495bb15415dcf5e1f9967d5ebf"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/fdisk.exe",
+      "size": 39859,
+      "is_container": true,
+      "format": "DOS_MZ",
+      "sha256": ""
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/fdisk.ini",
+      "size": 7046,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "de3c2dcbd0ca175bfd72007e6cd6fb4259ac48a3983749d46bee7df1eefbad17"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/fdwrapup.bat",
+      "size": 757,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "450a4b2b47577403ef2746bc12d57bf4a66b12094b9289ec0013718e753cf894"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/format.exe",
+      "size": 42424,
+      "is_container": true,
+      "format": "DOS_MZ",
+      "sha256": ""
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/kernl386.sys",
+      "size": 46256,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "932c0c155701eddb7b902f7269a1b2ce31f5c82a6dc195172f2336d18a74e1fb"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/mem.exe",
+      "size": 15028,
+      "is_container": true,
+      "format": "DOS_MZ",
+      "sha256": ""
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/more.exe",
+      "size": 6942,
+      "is_container": true,
+      "format": "DOS_MZ",
+      "sha256": ""
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/setlang.bat",
+      "size": 5322,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "dd15099d8e4efeaa806ecac08953ed7cdaad9439be4a361c2811b4ea3ca6eb35"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/setver.sys",
+      "size": 109,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "bc67a19e687fc9a01f1c9e27ca7f9f17b7970822d10278d1d8198e74f7ea0ba7"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/slicerex.exe",
+      "size": 29234,
+      "is_container": true,
+      "format": "DOS_MZ",
+      "sha256": ""
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/sys.com",
+      "size": 11727,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "74e663071019cf6447d43af8245e65948d8b864ffb4f08842467c579fdf89bdd"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/vask.com",
+      "size": 3159,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "f710372e071b2505595e7402bc760d92b5ffe5edcd5b85a853ec4c1472d59670"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/vchoice.com",
+      "size": 2904,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "fdefe05bf1601ba89dfec459b8f2ec3712f1326a7752e6fefec7c481f9b03d8b"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/vcls.com",
+      "size": 1976,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "86f0f881b164b0af472ecd90e873a5a03814835164aa5b74e6ec0c8173fefe53"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/vcursor.com",
+      "size": 1342,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "c5ee4f90278514ba2924da51cd4cdcf623a5137a360719ffe13c936aa4ac1ae2"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/vdelay.com",
+      "size": 1360,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "7daa53d304b0992cbeaa768dfbb0b9377f96170c6b4263f62642debd5d928f38"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/veach.com",
+      "size": 3166,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "11b763ce4099467b6b8039d89d03762fbe8ac20c77a56b657e8a59d4a7377313"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/vecho.com",
+      "size": 2196,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "f38fef1c4f5c72922699afcf3b4cd8e45fd5c975a1dc0c45b7719b462eb3f1d1"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/verrlvl.com",
+      "size": 1083,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "274a8b6abe0c278770d986e06d57ffb34afbb197883d79e02c47dd3eb020ced2"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/vfdutil.com",
+      "size": 2334,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "4ebb9473ca0428a2a97c8db2c370828a7be56ca9eeb9584cab69c54893c88ee2"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/vfont.com",
+      "size": 1970,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "8acb7a777cfac75619fad9562170c569b1554c6fd441268e01bf48e4d8ce7ac4"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/vframe.com",
+      "size": 2492,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "e6adb7a64b8baa20906d2215398f7a3843ab631c80e6503b27c8ac9615c758fd"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/vgotoxy.com",
+      "size": 2085,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "908671805e0929a8bcdd9f95bc26c8fe71b18ae1e19d6e01d2dd69baebc5764e"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/vinfo.com",
+      "size": 3112,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "71fff0ec4f570f9bbc3f3997c64625eb12832dc263d54ba7b17471f690635e1d"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/vline.com",
+      "size": 2144,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "1972ec10bcd5c9d60056356a18b78a4cba92eae4e65c36a99c920f2812098326"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/vpause.com",
+      "size": 2012,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "e98cac140c50331ff51ce779217dcfeabdf58c7752d46a6822a140fb451c1e63"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/vprogres.com",
+      "size": 2424,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "0a688188075b6831ed9ece8a0e34aa57a4e0930876fe220ecc288a548bba8a58"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/vstr.com",
+      "size": 2387,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "2e026fd3e2dd8f31b2f4df4b839977b410b608457b47e667f8c08641ba55e1d1"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/vtest.com",
+      "size": 2791,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "db5fdd1a5f26ea8a5d4914ff7e25572543ab285f970966118ec8d1cbd00019a8"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/welcome.bat",
+      "size": 923,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "b9b570389d951b217c8a2c06f60ceca2aac21dbb6b213bbccaa9879b640ce8cc"
+    },
+    {
+      "path": "x86BOOT.img/freedos/bin/xcopy.exe",
+      "size": 22685,
+      "is_container": true,
+      "format": "DOS_MZ",
+      "sha256": ""
+    },
+    {
+      "path": "x86BOOT.img/freedos/configs",
+      "size": 0,
+      "is_container": true,
+      "format": "FAT",
+      "sha256": ""
+    },
+    {
+      "path": "x86BOOT.img/freedos/configs/autoexec.086",
+      "size": 1841,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "7e3702e736d7db69da540311cd8c3703516232a727ca3d4b6465a01c7e24bfae"
+    },
+    {
+      "path": "x86BOOT.img/freedos/configs/autoexec.186",
+      "size": 1841,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "7e3702e736d7db69da540311cd8c3703516232a727ca3d4b6465a01c7e24bfae"
+    },
+    {
+      "path": "x86BOOT.img/freedos/configs/autoexec.286",
+      "size": 1985,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "085dd180b55966633c1eed801a07848d5060fc865d2420bb44d6e3d790f6e99a"
+    },
+    {
+      "path": "x86BOOT.img/freedos/configs/autoexec.dbx",
+      "size": 2799,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "656b39cd74048ac595e30dd0922c8ddb607f273726732a795e34b4364675065a"
+    },
+    {
+      "path": "x86BOOT.img/freedos/configs/autoexec.def",
+      "size": 2343,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "247beb00dfc04804d7fb9770112776e460e63a3518ee36ddd276bcb4e76c61cf"
+    },
+    {
+      "path": "x86BOOT.img/freedos/configs/autoexec.vbx",
+      "size": 2331,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "8fc045e563f8dc3b8ab5754be6bb32e5e69c3eadaefed69ac0353701b953db1e"
+    },
+    {
+      "path": "x86BOOT.img/freedos/configs/config.086",
+      "size": 327,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "805d70480ad08cda30f5fc03ece8da3fc9d7c55b1071a371c08f2f7f61ace703"
+    },
+    {
+      "path": "x86BOOT.img/freedos/configs/config.186",
+      "size": 327,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "805d70480ad08cda30f5fc03ece8da3fc9d7c55b1071a371c08f2f7f61ace703"
+    },
+    {
+      "path": "x86BOOT.img/freedos/configs/config.286",
+      "size": 601,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "41bc050cf5bfa5620eba4c15e6b980759a5780362d42a92a372614c5cf5a8e2f"
+    },
+    {
+      "path": "x86BOOT.img/freedos/configs/config.dbx",
+      "size": 49,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "b8a4301f5d0b1c681243cd02dab23f215959af962c27660b5e9108c81cbdce8a"
+    },
+    {
+      "path": "x86BOOT.img/freedos/configs/config.def",
+      "size": 954,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "febb68c68da8cbacd07378fb30dbb5bba107d4177efac9803b571cc6e0fea45b"
+    },
+    {
+      "path": "x86BOOT.img/freedos/configs/config.vbx",
+      "size": 866,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "308f2c5c0436a2f82329eb7927a17453cbc0d94470b7634719f8d1d5c24c026a"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls",
+      "size": 0,
+      "is_container": true,
+      "format": "FAT",
+      "sha256": ""
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/setup.de",
+      "size": 8784,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "27d2250adc5901c766fff8cf53f357c35aa03651a7bfcbd586f8b45f89393f56"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/setup.en",
+      "size": 7948,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "caee16a04c46b5c8d719e9693ab3610a2210659e511f46a6bcc2a9f082692512"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/setup.es",
+      "size": 7877,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "30268f4b2cf0559f8e0f70cdf9caeb26f85a565dafa7ab375f3517a1532d140d"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/setup.fr",
+      "size": 8660,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "b3ef0f3c9d5980ff561fef2ed240f51c5c2c4249c472dcfca1f8bd1b0c72373c"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/setup.sv",
+      "size": 8096,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "485b0bb505bb59395465204430523fd0e7d6ce1038f86b0dd03933a408e7e646"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/setup.tr",
+      "size": 7773,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "a16ddffc1be3fa6824c32dc49b50d4d6413fedc2e4274f1d3f1657fc38146d85"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/slicer.de",
+      "size": 7030,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "52c2a44f6368dffef5e2d1e77f38e4664515cf26ef99bfcdaba6c3ea8b992045"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/slicer.en",
+      "size": 6321,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "2b5ed4e87fa0ad4cbc588950c9c7faa91130b866d184d4b71a995f4708d4879a"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/slicer.es",
+      "size": 6880,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "f2e760a837bceb1cedbafc9df7c513f35a03d486be12314ea0b4684c430af555"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/slicer.fr",
+      "size": 7233,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "3b55c8081c816b73b6501e07fefd24c49c0a98d6fda88b2fceebb2840311d8a6"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/slicer.sv",
+      "size": 6501,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "5cfab4c8a01bb77fe98451c6024c3f0bfebf86cc58ec21dd47f8952ebe32d96f"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/slicer.tr",
+      "size": 6778,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "f60abe885304165ae9b5b75911f94bd13f4f8e49f01bc4d5cf06a38a53ab5aa1"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/welcome.de",
+      "size": 294,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "62c0a646afea7b44bb6a2cf6e7d79649079ae9e1624c4ceb661d8e3fcc823221"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/welcome.en",
+      "size": 253,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "dd7e2e91107cb11bb1c3d65a2866940330e6d32953e6a97b6b7710b799533762"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/welcome.eo",
+      "size": 274,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "760dfafa6bd4ba86603e7fc95b0abf49fc0863ca01add63d76dd2e355208d5b6"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/welcome.es",
+      "size": 295,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "76ea3b0697773334ab56246e4ced5a5f3d61294edda40282d8dcec304a9c1684"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/welcome.fr",
+      "size": 305,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "0cc9c8faad9c677b5f85f07b2793958202183c607e6754e35e9432a42105ac5a"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/welcome.nl",
+      "size": 270,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "10f81ba6c09ead4f28386e2a115d33a6ee1f844df643c1e2db179d282509a402"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/welcome.sv",
+      "size": 262,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "a66e1429972892431eefb066e6821f6d82ae6e5d2be035dded66963000e1dfde"
+    },
+    {
+      "path": "x86BOOT.img/freedos/nls/welcome.tr",
+      "size": 251,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "1e1550fe417f46e5f8d8ffbf5836eca95fa2808de396ae9f52b6bd59ffbd3457"
+    },
+    {
+      "path": "x86BOOT.img/freedos/version.fdi",
+      "size": 51,
+      "is_container": false,
+      "format": "FAT",
+      "sha256": "40066993c6bc408e12358913314a0cbfc1908ff13b3906ba0857e6b3d0b3958a"
+    },
+    {
+      "path": "x86BOOT.img/setup.bat",
+      "size": 39560,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "e9d60e8099efabec00fe7003260a9bea0fb3297b19cff70340a02fd819818a9e"
+    },
+    {
+      "path": "x86DSK01.img",
+      "size": 737280,
+      "is_container": true,
+      "format": "FAT",
+      "sha256": ""
+    },
+    {
+      "path": "x86DSK01.img/freedos.001",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "b0f66bd27d9a50f678fac9cd2b87588b3ae1c9f1a89928b7294a58a84dbeaf31"
+    },
+    {
+      "path": "x86DSK01.img/freedos.002",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "22630a5fba0f566990e212f16e9ea10e0f0f82e50913d9ce02aa5477ae900d8b"
+    },
+    {
+      "path": "x86DSK01.img/freedos.003",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "6ec740693e92fbe464f377c1ef8556a2bde688fb29fd5aa96f66cb2d291abe2a"
+    },
+    {
+      "path": "x86DSK01.img/freedos.004",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "49e27a0c0395197174d0feef293f099ff1a123d242aadd802e7582801c64d287"
+    },
+    {
+      "path": "x86DSK01.img/freedos.005",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "1dae224ed027284d30549b2dc28f9e9a6abf2e60ec8bc2c8804ea9b1875ee72f"
+    },
+    {
+      "path": "x86DSK01.img/freedos.006",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "048ec097afd154bbf7a4d16f701f4ed5c4e9af29b91a2dfc3a1df22cbfdc05fa"
+    },
+    {
+      "path": "x86DSK01.img/freedos.007",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "8f09c1436df350461fb45497c3afe4da7fd800855a522d7529e4fc071e0995fa"
+    },
+    {
+      "path": "x86DSK01.img/freedos.008",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "f51aeae35265a28e323d16464a6fc4f22708e77fde0af1f834a6cc518d9e5317"
+    },
+    {
+      "path": "x86DSK01.img/freedos.009",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "ef4e9cfb7ce03ab2c922baccf8a35cbc1ba1e25181462a2c2abe6674b7726dfd"
+    },
+    {
+      "path": "x86DSK01.img/freedos.010",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "67275575f0bd37d4ec899036b449a324e0da1ebcab16003de46a150660331aa9"
+    },
+    {
+      "path": "x86DSK01.img/freedos.011",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "f7e7a616bf84aa41f0f6781c5c48e05cadf381f09b57fc510a2b64e369c23636"
+    },
+    {
+      "path": "x86DSK01.img/freedos.saf",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "4064bb67a61c177ac4cde7d9cbc12294728f921e863c0ef9777804668d5a37cb"
+    },
+    {
+      "path": "x86DSK02.img",
+      "size": 737280,
+      "is_container": true,
+      "format": "FAT",
+      "sha256": ""
+    },
+    {
+      "path": "x86DSK02.img/freedos.012",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "b949529d569b120d1ec4e2d76c4504375cfd0f341803d3eceadc449de580bb89"
+    },
+    {
+      "path": "x86DSK02.img/freedos.013",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "1739cda48b4c7dd3872ec0a095f750aa0df1bf52ae361c53d46051639c865b87"
+    },
+    {
+      "path": "x86DSK02.img/freedos.014",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "d14384d5f7bed30e48007d4291d38621d3e76228adc3ad3894ba54d2f3cd3380"
+    },
+    {
+      "path": "x86DSK02.img/freedos.015",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "45dd1b9b85788e76a6312c00290cbb5cea63687e60dc7f0d266c279a4ef06a15"
+    },
+    {
+      "path": "x86DSK02.img/freedos.016",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "dbb939f0024e45e7945e5a24e0e9d6574779566ed394ab51bdbc9db4be766014"
+    },
+    {
+      "path": "x86DSK02.img/freedos.017",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "485bf660c434aceff5349e7071395642b32acf8f0274c3f9dbb3a18b494c3496"
+    },
+    {
+      "path": "x86DSK02.img/freedos.018",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "39215cb593ccff4de3967960a536715f19348ece5cd4019a411f9aa68fd519f6"
+    },
+    {
+      "path": "x86DSK02.img/freedos.019",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "4ffa31b65fa3ae785dd1ff01cfa1952e16b4a2ff0c994a2dbfc425b95f050426"
+    },
+    {
+      "path": "x86DSK02.img/freedos.020",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "b594246b66ad7e3301f76363fd0fb9b767d4acac51acf09015a83ee4a5fbd60d"
+    },
+    {
+      "path": "x86DSK02.img/freedos.021",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "49bf33db9f8d39ef1059efc693403b8aaf93e2f856d1504c6a8d57cbd5f0b637"
+    },
+    {
+      "path": "x86DSK02.img/freedos.022",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "d6edb85bb0ccaf2c924d0716d1f3961091126e6417277fbdcd7d09a6f8e4e4dc"
+    },
+    {
+      "path": "x86DSK02.img/freedos.023",
+      "size": 60416,
+      "is_container": false,
+      "format": "FLOPPY_IMAGE",
+      "sha256": "933ea6ba5b331697249c86447966d453ecc3126a4f6686dbf078141ac815910b"
+    }
+  ]
+}

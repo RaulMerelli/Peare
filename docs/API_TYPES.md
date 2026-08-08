@@ -125,3 +125,8 @@ Colors use the `0xRRGGBBAA` format.
 ## XEX container
 
 `PEARE_CONTAINER_XEX` identifies Xbox 360 XEX1 and XEX2 containers. Resources extracted from an embedded PE image retain XEX as their public container format and use `PEARE_PLATFORM_OTHER`; internally they are decoded with PE resource layouts.
+
+
+## Appended container values
+
+`PEARE_CONTAINER_QCOW` and `PEARE_CONTAINER_QCOW2` distinguish QCOW v1 from QCOW2 v2/v3 in the public ABI. `PEARE_CONTAINER_FLOPPY_IMAGE` identifies standard-capacity raw PC floppy IMG/IMA/VFD images independently of the filesystem stored inside them. `PEARE_CONTAINER_PS3_PUP` identifies PlayStation 3 PUP v1 system-update packages. `PEARE_CONTAINER_APPX`, `PEARE_CONTAINER_MSIX`, `PEARE_CONTAINER_APPXBUNDLE`, and `PEARE_CONTAINER_XAP` identify the supported ZIP-based application-package families. These values were appended to preserve the numeric values of the earlier enum members. `PEARE_CONTAINER_MSG` identifies Microsoft Outlook structured-storage messages and is likewise appended without renumbering prior ABI values.

@@ -64,6 +64,7 @@ public:
     void close();
     bool isOpen() const { return open_; }
     peare_container_format containerFormat() const;
+    QString description() const;
     size_t folderCount() const;
     QString folderType(size_t folder) const;
     size_t resourceCount(size_t folder) const;

@@ -89,6 +89,13 @@ set(CMAKE_CXX_STANDARD ${PEARE_EFFECTIVE_CXX_STANDARD})
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Treat sources as UTF-8 on MSVC too. Without this, non-ASCII characters in string
+# literals (e.g. the "—" in partition names) are read in the system codepage and
+# mangled into mojibake at runtime. GCC/Clang already default to UTF-8.
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 
 set(PEARE_QT_CORE ${PEARE_QT_PACKAGE}::Core)
 set(PEARE_QT_GUI ${PEARE_QT_PACKAGE}::Gui)
@@ -167,10 +174,10 @@ add_library(PeareOpener SHARED
     src/opener/modules/SiemensFwfModule.cpp
     src/opener/modules/SiemensFsfModule.h
     src/opener/modules/SiemensFsfModule.cpp
-    src/opener/modules/WinceRomModule.h
-    src/opener/modules/WinceRomModule.cpp
-    src/opener/modules/WinceCompression.h
-    src/opener/modules/WinceCompression.cpp
+    src/opener/modules/wince/WinceRomModule.h
+    src/opener/modules/wince/WinceRomModule.cpp
+    src/opener/modules/wince/WinceCompression.h
+    src/opener/modules/wince/WinceCompression.cpp
     src/opener/modules/DeflateDecoder.h
     src/opener/modules/DeflateDecoder.cpp
     src/opener/modules/SiemensImgParser.h
@@ -196,6 +203,8 @@ add_library(PeareOpener SHARED
     src/opener/fs/WimReader.cpp
     src/opener/fs/FatReader.h
     src/opener/fs/FatReader.cpp
+    src/opener/fs/FloppyImage.h
+    src/opener/fs/FloppyImage.cpp
     src/opener/fs/UdfReader.h
     src/opener/fs/UdfReader.cpp
     src/opener/fs/ExFatReader.h
@@ -206,6 +215,10 @@ add_library(PeareOpener SHARED
     src/opener/fs/VhdDisk.cpp
     src/opener/fs/VdiDisk.h
     src/opener/fs/VdiDisk.cpp
+    src/opener/fs/QcowDisk.h
+    src/opener/fs/QcowDisk.cpp
+    src/opener/fs/ParallelsDisk.h
+    src/opener/fs/ParallelsDisk.cpp
     src/opener/fs/VhdxDisk.h
     src/opener/fs/VhdxDisk.cpp
     src/opener/fs/PartitionTable.h
@@ -251,6 +264,20 @@ add_library(PeareOpener SHARED
     src/opener/modules/VhdModule.cpp
     src/opener/modules/VdiModule.h
     src/opener/modules/VdiModule.cpp
+    src/opener/modules/QcowModule.h
+    src/opener/modules/QcowModule.cpp
+    src/opener/modules/ParallelsModule.h
+    src/opener/modules/ParallelsModule.cpp
+    src/opener/modules/Ps2RomdirParser.h
+    src/opener/modules/Ps2RomdirParser.cpp
+    src/opener/modules/Ps2RomdirModule.h
+    src/opener/modules/Ps2RomdirModule.cpp
+    src/opener/modules/OleCompound.h
+    src/opener/modules/OleCompound.cpp
+    src/opener/modules/MsiModule.h
+    src/opener/modules/MsiModule.cpp
+    src/opener/modules/MsgModule.h
+    src/opener/modules/MsgModule.cpp
     src/opener/modules/VhdxModule.h
     src/opener/modules/VhdxModule.cpp
     src/opener/modules/SdiModule.h
@@ -291,12 +318,26 @@ add_library(PeareOpener SHARED
     src/opener/modules/CabModule.cpp
     src/opener/modules/RawDiskModule.h
     src/opener/modules/RawDiskModule.cpp
+    src/opener/modules/FloppyImageModule.h
+    src/opener/modules/FloppyImageModule.cpp
     src/opener/modules/FfuModule.h
     src/opener/modules/FfuModule.cpp
     src/opener/modules/ZipModule.h
     src/opener/modules/ZipModule.cpp
     src/opener/modules/TarModule.h
     src/opener/modules/TarModule.cpp
+    src/opener/modules/Ps3PupModule.h
+    src/opener/modules/Ps3PupModule.cpp
+    src/opener/modules/WadModule.h
+    src/opener/modules/WadModule.cpp
+    src/opener/modules/MtfModule.h
+    src/opener/modules/MtfModule.cpp
+    src/opener/modules/MdfMdsModule.h
+    src/opener/modules/MdfMdsModule.cpp
+    src/opener/modules/PlayReadyXapModule.h
+    src/opener/modules/PlayReadyXapModule.cpp
+    src/opener/modules/EAppxModule.h
+    src/opener/modules/EAppxModule.cpp
 )
 target_compile_definitions(PeareOpener PRIVATE PEARE_OPENER_BUILD)
 target_include_directories(PeareOpener

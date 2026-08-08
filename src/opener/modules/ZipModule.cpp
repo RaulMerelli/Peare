@@ -3,7 +3,9 @@
 #include "DeflateDecoder.h"
 
 #include <QFile>
+#include <QFileInfo>
 #include <QStringList>
+#include <QXmlStreamReader>
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -29,6 +31,10 @@ quint16 le16(const std::uint8_t* p) {
 quint32 le32(const std::uint8_t* p) {
     return quint32(p[0]) | (quint32(p[1]) << 8) |
            (quint32(p[2]) << 16) | (quint32(p[3]) << 24);
+}
+
+quint64 le64(const std::uint8_t* p) {
+    return quint64(le32(p)) | (quint64(le32(p + 4)) << 32);
 }
 
 bool readExact(const fs::IByteStore& store, std::int64_t offset,
@@ -375,10 +381,201 @@ std::int64_t findEocd(const fs::IByteStore& store) {
     return -1;
 }
 
+
+QString resourcePath(const ResourceEntry& entry) {
+    QStringList path = entry.hierarchyPath;
+    path.push_back(entry.name);
+    return path.join(QLatin1Char('/'));
+}
+
+const ResourceEntry* findResource(const QVector<ResourceEntry>& resources,
+                                  const QString& wanted) {
+    for (const ResourceEntry& entry : resources)
+        if (resourcePath(entry).compare(wanted, Qt::CaseInsensitive) == 0)
+            return &entry;
+    return nullptr;
+}
+
+bool hasResource(const QVector<ResourceEntry>& resources, const QString& wanted) {
+    return findResource(resources, wanted) != nullptr;
+}
+
+QByteArray resourceBytes(const QVector<ResourceEntry>& resources,
+                         const QString& wanted,
+                         std::int64_t maximum = 2 * 1024 * 1024) {
+    const ResourceEntry* entry = findResource(resources, wanted);
+    if (!entry) return QByteArray();
+    if (!entry->data.isEmpty())
+        return entry->data.size() <= maximum ? entry->data : QByteArray();
+    if (!entry->content || entry->content->capacity() < 0 ||
+        entry->content->capacity() > maximum)
+        return QByteArray();
+    const std::vector<std::uint8_t> bytes = entry->content->readAll();
+    return QByteArray(reinterpret_cast<const char*>(bytes.data()), int(bytes.size()));
+}
+
+QString xmlAttribute(const QXmlStreamAttributes& attributes, const QString& name) {
+    for (const QXmlStreamAttribute& attribute : attributes)
+        if (attribute.name().compare(name, Qt::CaseInsensitive) == 0)
+            return attribute.value().toString().trimmed();
+    return QString();
+}
+
+QString compactMetadata(QString value) {
+    value.replace(QLatin1Char('\r'), QLatin1Char(' '));
+    value.replace(QLatin1Char('\n'), QLatin1Char(' '));
+    value = value.simplified();
+    if (value.size() > 160) value = value.left(157) + QStringLiteral("...");
+    return value;
+}
+
+void appendMetadata(QStringList* values, const QString& label, const QString& value) {
+    const QString clean = compactMetadata(value);
+    if (!clean.isEmpty()) values->push_back(label + QLatin1Char('=') + clean);
+}
+
+ModuleFormat classifyPackage(const QVector<ResourceEntry>& resources,
+                             const QString& sourceName) {
+    if (hasResource(resources, QStringLiteral("AppxMetadata/AppxBundleManifest.xml")))
+        return ModuleFormat::APPXBUNDLE;
+    if (hasResource(resources, QStringLiteral("AppxManifest.xml")) &&
+        hasResource(resources, QStringLiteral("[Content_Types].xml"))) {
+        return ModuleFormatDetector::zipPackageFormatForName(sourceName) == ModuleFormat::MSIX
+            ? ModuleFormat::MSIX : ModuleFormat::APPX;
+    }
+    if (hasResource(resources, QStringLiteral("AppManifest.xaml")) ||
+        hasResource(resources, QStringLiteral("WMAppManifest.xml")))
+        return ModuleFormat::XAP;
+    return ModuleFormat::ZIP;
+}
+
+QString appPackageDescription(const QVector<ResourceEntry>& resources,
+                              ModuleFormat format) {
+    const QByteArray manifest = resourceBytes(resources, QStringLiteral("AppxManifest.xml"));
+    QString name, publisher, version, architecture, displayName;
+    QXmlStreamReader xml(manifest);
+    xml.setEntityExpansionLimit(1024);
+    while (!xml.atEnd()) {
+        xml.readNext();
+        if (!xml.isStartElement()) continue;
+        if (xml.name().compare(QLatin1String("Identity"), Qt::CaseInsensitive) == 0) {
+            name = xmlAttribute(xml.attributes(), QStringLiteral("Name"));
+            publisher = xmlAttribute(xml.attributes(), QStringLiteral("Publisher"));
+            version = xmlAttribute(xml.attributes(), QStringLiteral("Version"));
+            architecture = xmlAttribute(xml.attributes(), QStringLiteral("ProcessorArchitecture"));
+        } else if (displayName.isEmpty() &&
+                   xml.name().compare(QLatin1String("DisplayName"), Qt::CaseInsensitive) == 0) {
+            displayName = xml.readElementText(QXmlStreamReader::IncludeChildElements).trimmed();
+        }
+    }
+
+    QStringList details;
+    appendMetadata(&details, QStringLiteral("Name"), name);
+    appendMetadata(&details, QStringLiteral("DisplayName"), displayName);
+    appendMetadata(&details, QStringLiteral("Version"), version);
+    appendMetadata(&details, QStringLiteral("Architecture"), architecture);
+    appendMetadata(&details, QStringLiteral("Publisher"), publisher);
+    details.push_back(QStringLiteral("%1 files").arg(resources.size()));
+    const QString label = format == ModuleFormat::MSIX
+        ? QStringLiteral("Microsoft MSIX application package")
+        : QStringLiteral("Microsoft APPX application package");
+    return label + QStringLiteral(" — ") + details.join(QStringLiteral("; "));
+}
+
+QString appBundleDescription(const QVector<ResourceEntry>& resources) {
+    const QByteArray manifest = resourceBytes(
+        resources, QStringLiteral("AppxMetadata/AppxBundleManifest.xml"));
+    QString name, publisher, version;
+    int packageCount = 0;
+    QXmlStreamReader xml(manifest);
+    xml.setEntityExpansionLimit(1024);
+    while (!xml.atEnd()) {
+        xml.readNext();
+        if (!xml.isStartElement()) continue;
+        if (xml.name().compare(QLatin1String("Identity"), Qt::CaseInsensitive) == 0) {
+            name = xmlAttribute(xml.attributes(), QStringLiteral("Name"));
+            publisher = xmlAttribute(xml.attributes(), QStringLiteral("Publisher"));
+            version = xmlAttribute(xml.attributes(), QStringLiteral("Version"));
+        } else if (xml.name().compare(QLatin1String("Package"), Qt::CaseInsensitive) == 0) {
+            ++packageCount;
+        }
+    }
+
+    QStringList details;
+    appendMetadata(&details, QStringLiteral("Name"), name);
+    appendMetadata(&details, QStringLiteral("Version"), version);
+    appendMetadata(&details, QStringLiteral("Publisher"), publisher);
+    details.push_back(QStringLiteral("%1 package entries").arg(packageCount));
+    details.push_back(QStringLiteral("%1 files").arg(resources.size()));
+    return QStringLiteral("Microsoft APPX application bundle — ") +
+           details.join(QStringLiteral("; "));
+}
+
+QString xapDescription(const QVector<ResourceEntry>& resources) {
+    QByteArray manifest = resourceBytes(resources, QStringLiteral("WMAppManifest.xml"));
+    if (manifest.isEmpty())
+        manifest = resourceBytes(resources, QStringLiteral("AppManifest.xaml"));
+    QString title, version, productId, entryAssembly, entryType, runtimeVersion;
+    QXmlStreamReader xml(manifest);
+    xml.setEntityExpansionLimit(1024);
+    while (!xml.atEnd()) {
+        xml.readNext();
+        if (!xml.isStartElement()) continue;
+        if (xml.name().compare(QLatin1String("Deployment"), Qt::CaseInsensitive) == 0) {
+            entryAssembly = xmlAttribute(xml.attributes(), QStringLiteral("EntryPointAssembly"));
+            entryType = xmlAttribute(xml.attributes(), QStringLiteral("EntryPointType"));
+            runtimeVersion = xmlAttribute(xml.attributes(), QStringLiteral("RuntimeVersion"));
+        } else if (xml.name().compare(QLatin1String("App"), Qt::CaseInsensitive) == 0) {
+            title = xmlAttribute(xml.attributes(), QStringLiteral("Title"));
+            version = xmlAttribute(xml.attributes(), QStringLiteral("Version"));
+            productId = xmlAttribute(xml.attributes(), QStringLiteral("ProductID"));
+            if (productId.isEmpty())
+                productId = xmlAttribute(xml.attributes(), QStringLiteral("ProductId"));
+        }
+    }
+
+    QStringList details;
+    appendMetadata(&details, QStringLiteral("Title"), title);
+    appendMetadata(&details, QStringLiteral("Version"), version);
+    appendMetadata(&details, QStringLiteral("ProductID"), productId);
+    appendMetadata(&details, QStringLiteral("EntryAssembly"), entryAssembly);
+    appendMetadata(&details, QStringLiteral("EntryType"), entryType);
+    appendMetadata(&details, QStringLiteral("Runtime"), runtimeVersion);
+    details.push_back(QStringLiteral("%1 files").arg(resources.size()));
+    return QStringLiteral("Silverlight / Windows Phone XAP package — ") +
+           details.join(QStringLiteral("; "));
+}
+
+QString invalidPackageError(ModuleFormat expected) {
+    switch (expected) {
+    case ModuleFormat::APPX:
+    case ModuleFormat::MSIX:
+        return QStringLiteral("Invalid APPX/MSIX package: AppxManifest.xml or [Content_Types].xml is missing");
+    case ModuleFormat::APPXBUNDLE:
+        return QStringLiteral("Invalid APPXBUNDLE package: AppxMetadata/AppxBundleManifest.xml is missing");
+    case ModuleFormat::XAP:
+        return QStringLiteral("Invalid XAP package: AppManifest.xaml or WMAppManifest.xml is missing");
+    default:
+        return QString();
+    }
+}
+
+bool packageMatchesExpectation(ModuleFormat actual, ModuleFormat expected) {
+    if (expected == ModuleFormat::Unknown) return true;
+    if (expected == ModuleFormat::APPX || expected == ModuleFormat::MSIX)
+        return actual == ModuleFormat::APPX || actual == ModuleFormat::MSIX;
+    return actual == expected;
+}
+
 }  // namespace
 
 std::unique_ptr<ZipModule> ZipModule::open(const QString& filePath) {
-    ModulePtr base = open(storeForFile(filePath), filePath);
+    return open(filePath, filePath);
+}
+
+std::unique_ptr<ZipModule> ZipModule::open(const QString& physicalPath,
+                                           const QString& logicalName) {
+    ModulePtr base = open(storeForFile(physicalPath), logicalName);
     return std::unique_ptr<ZipModule>(static_cast<ZipModule*>(base.release()));
 }
 
@@ -407,24 +604,49 @@ ModulePtr ZipModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
         module->info_.error = QStringLiteral("ZIP end of central directory not found");
         return ModulePtr(std::move(module));
     }
-    const quint16 disk = le16(end + 4);
-    const quint16 centralDisk = le16(end + 6);
-    const quint16 entriesOnDisk = le16(end + 8);
-    const quint16 entries = le16(end + 10);
-    const quint32 cdSize = le32(end + 12);
-    const quint32 cdOffset = le32(end + 16);
+    quint64 disk = le16(end + 4);
+    quint64 centralDisk = le16(end + 6);
+    quint64 entriesOnDisk = le16(end + 8);
+    quint64 entries = le16(end + 10);
+    quint64 cdSize = le32(end + 12);
+    quint64 cdOffset = le32(end + 16);
+
+    const bool needsZip64 = entries == 0xffffu || entriesOnDisk == 0xffffu ||
+                            cdSize == 0xffffffffu || cdOffset == 0xffffffffu;
+    if (needsZip64) {
+        std::uint8_t locator[20];
+        if (eocd < 20 || !readExact(*file, eocd - 20, locator, sizeof(locator)) ||
+            le32(locator) != 0x07064b50u) {
+            module->info_.error = QStringLiteral("Invalid ZIP64 locator");
+            return ModulePtr(std::move(module));
+        }
+        const quint64 zip64Offset = le64(locator + 8);
+        std::uint8_t z64[56];
+        if (zip64Offset > quint64(file->capacity()) - sizeof(z64) ||
+            !readExact(*file, std::int64_t(zip64Offset), z64, sizeof(z64)) ||
+            le32(z64) != 0x06064b50u) {
+            module->info_.error = QStringLiteral("Invalid ZIP64 end of central directory");
+            return ModulePtr(std::move(module));
+        }
+        disk = le32(z64 + 16);
+        centralDisk = le32(z64 + 20);
+        entriesOnDisk = le64(z64 + 24);
+        entries = le64(z64 + 32);
+        cdSize = le64(z64 + 40);
+        cdOffset = le64(z64 + 48);
+    }
     if (disk || centralDisk || entriesOnDisk != entries) {
         module->info_.error = QStringLiteral("Multi-disk ZIP archives are not supported");
         return ModulePtr(std::move(module));
     }
-    if (cdOffset == 0xffffffffu || cdSize == 0xffffffffu ||
-        std::int64_t(cdOffset) > file->capacity() - std::int64_t(cdSize)) {
-        module->info_.error = QStringLiteral("ZIP64 archives are not supported yet");
+    if (entries > 1000000 || cdOffset > quint64(file->capacity()) ||
+        cdSize > quint64(file->capacity()) - cdOffset) {
+        module->info_.error = QStringLiteral("Invalid ZIP central directory range");
         return ModulePtr(std::move(module));
     }
 
-    std::int64_t pos = cdOffset;
-    for (quint16 i = 0; i < entries; ++i) {
+    std::int64_t pos = std::int64_t(cdOffset);
+    for (quint64 i = 0; i < entries; ++i) {
         std::uint8_t central[46];
         if (!readExact(*file, pos, central, sizeof(central)) ||
             le32(central) != kZipCentralHeader) {
@@ -504,6 +726,35 @@ ModulePtr ZipModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
         entry.hierarchyPath = hierarchy;
         entry.content = content;
         module->resources_.push_back(std::move(entry));
+    }
+
+    const ModuleFormat expected = ModuleFormatDetector::zipPackageFormatForName(sourceName);
+    const ModuleFormat actual = classifyPackage(module->resources_, sourceName);
+    if (!packageMatchesExpectation(actual, expected)) {
+        module->info_.format = expected;
+        module->info_.description = ModuleFormatDetector::formatName(expected);
+        module->info_.error = invalidPackageError(expected);
+        return ModulePtr(std::move(module));
+    }
+
+    module->info_.format = actual;
+    if (actual == ModuleFormat::APPX || actual == ModuleFormat::MSIX)
+        module->info_.description = appPackageDescription(module->resources_, actual);
+    else if (actual == ModuleFormat::APPXBUNDLE)
+        module->info_.description = appBundleDescription(module->resources_);
+    else if (actual == ModuleFormat::XAP)
+        module->info_.description = xapDescription(module->resources_);
+
+    const QString resourceType = actual == ModuleFormat::APPXBUNDLE
+        ? QStringLiteral("APP_BUNDLE_FILE")
+        : (actual == ModuleFormat::APPX || actual == ModuleFormat::MSIX)
+            ? QStringLiteral("APP_PACKAGE_FILE")
+            : actual == ModuleFormat::XAP
+                ? QStringLiteral("XAP_FILE")
+                : QStringLiteral("ZIP_FILE");
+    for (ResourceEntry& entry : module->resources_) {
+        entry.type = resourceType;
+        entry.format = actual;
     }
     return ModulePtr(std::move(module));
 }

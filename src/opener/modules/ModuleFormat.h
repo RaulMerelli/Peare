@@ -29,6 +29,8 @@ enum class ModuleFormat {
     VMDK,
     VHD,
     VDI,
+    QCOW,
+    QCOW2,
     VHDX,
     SDI,
     XVA,
@@ -55,7 +57,24 @@ enum class ModuleFormat {
     FFU,
     OS2_EA,
     RESX,
-    CUE_BIN
+    CUE_BIN,
+    FLOPPY_IMAGE,
+    PS3_PUP,
+    APPX,
+    MSIX,
+    APPXBUNDLE,
+    EAPPX,
+    EMSIX,
+    EAPPXBUNDLE,
+    EMSIXBUNDLE,
+    XAP,
+    WAD,
+    MTF,
+    MDF_MDS,
+    PARALLELS_HDD,
+    PS2_ROMDIR,
+    MSI,
+    MSG
 };
 
 struct ModuleFormatInfo {
@@ -82,6 +101,9 @@ public:
     // detectBuffer(), this never performs structural scans and is therefore
     // safe to run over every executable resource using only a small prefix.
     static ModuleFormatInfo detectNestedBuffer(const QByteArray &data);
+    // Extension-level specialization for ZIP-based application packages. The
+    // ZIP module validates the required internal manifest before accepting it.
+    static ModuleFormat zipPackageFormatForName(const QString &fileName);
     static QString formatName(ModuleFormat format);
 };
 

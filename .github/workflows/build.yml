@@ -45,6 +45,14 @@ jobs:
           cp README.md dist/ 2>/dev/null || true
           ls -la dist
 
+      - name: Run Opener tests
+        run: |
+          python3 -m pip install --upgrade --quiet pytest
+          python3 -m pytest tests -q
+        env:
+          PEARE_OPENER_LIB: dist/libPeareOpener.so
+          LD_LIBRARY_PATH: ${{ env.QT_ROOT_DIR }}/lib
+
       - uses: actions/upload-artifact@v4
         with:
           name: peare-linux-x64
@@ -81,6 +89,14 @@ jobs:
           "%QT_ROOT_DIR%\bin\windeployqt.exe" --release --no-translations dist\Peare.exe
           copy README.md dist\ >nul 2>&1
           dir dist
+
+      - name: Run Opener tests
+        shell: cmd
+        run: |
+          python -m pip install --upgrade --quiet pytest
+          python -m pytest tests -q
+        env:
+          PEARE_OPENER_LIB: dist\PeareOpener.dll
 
       - uses: actions/upload-artifact@v4
         with:

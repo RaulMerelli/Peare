@@ -5,7 +5,13 @@
 #include <QDir>
 #include <QXmlStreamReader>
 
+#include "../fs/FloppyImage.h"
+#include "Ps2RomdirParser.h"
+#include "MsiModule.h"
+#include "MsgModule.h"
+
 #include <cstring>
+#include <limits>
 
 namespace peare {
 namespace {
@@ -13,6 +19,25 @@ namespace {
 const qint64 kOpticalMode2SectorSize = 2352;
 const qint64 kOpticalMode2PayloadOffset = 24;
 const qint64 kOpticalMode1PayloadOffset = 16;
+
+bool hasRawPcFloppyExtension(const QString& fileName)
+{
+    const QString suffix = QFileInfo(fileName).suffix().toLower();
+    return suffix == QStringLiteral("img") || suffix == QStringLiteral("ima") ||
+           suffix == QStringLiteral("vfd");
+}
+
+QString floppyDescription(const fs::FloppyGeometry& geometry)
+{
+    return QStringLiteral("Raw PC floppy disk image — %1; %2 cylinders × %3 × "
+                          "%4 sectors/track × %5 bytes/sector")
+        .arg(QString::fromStdString(geometry.nominalSize))
+        .arg(geometry.cylinders)
+        .arg(geometry.heads == 1 ? QStringLiteral("1 head")
+                                 : QStringLiteral("%1 heads").arg(geometry.heads))
+        .arg(geometry.sectorsPerTrack)
+        .arg(geometry.bytesPerSector);
+}
 
 quint16 readLe16(const QByteArray &data, qsizetype offset)
 {
@@ -40,6 +65,47 @@ quint16 readBe16(const QByteArray& data, qsizetype offset)
     if (offset < 0 || offset + 2 > data.size()) return 0;
     const auto* p = reinterpret_cast<const unsigned char*>(data.constData() + offset);
     return (quint16(p[0]) << 8) | quint16(p[1]);
+}
+
+quint64 readBe64(const QByteArray& data, qsizetype offset)
+{
+    if (offset < 0 || offset + 8 > data.size()) return 0;
+    const auto* p = reinterpret_cast<const unsigned char*>(data.constData() + offset);
+    quint64 value = 0;
+    for (int i = 0; i < 8; ++i) value = (value << 8) | quint64(p[i]);
+    return value;
+}
+
+quint64 readLe64(const QByteArray& data, qsizetype offset)
+{
+    if (offset < 0 || offset + 8 > data.size()) return 0;
+    const auto* p = reinterpret_cast<const unsigned char*>(data.constData() + offset);
+    quint64 value = 0;
+    for (int i = 7; i >= 0; --i) value = (value << 8) | quint64(p[i]);
+    return value;
+}
+
+bool hasPs3PupMagic(const QByteArray& data)
+{
+    return data.size() >= 8 &&
+           std::memcmp(data.constData(), "SCEUF", 5) == 0 &&
+           data.at(5) == '\0' && data.at(6) == '\0' && data.at(7) == '\0';
+}
+
+bool isPs3PupHeader(const QByteArray& data)
+{
+    if (data.size() < 0x30 || !hasPs3PupMagic(data))
+        return false;
+    const bool littleEndian = false;
+    const quint64 segments = readBe64(data, 0x18);
+    const quint64 headerLength = readBe64(data, 0x20);
+    if (segments == 0 || segments > 4096 || segments > (std::numeric_limits<quint64>::max() - 0x50) / 0x40)
+        return false;
+    if (!littleEndian)
+        return headerLength >= 0x50 + segments * 0x40;
+    if (segments > (std::numeric_limits<quint64>::max() - 0xA0) / 0x60)
+        return false;
+    return headerLength >= 0xA0 + segments * 0x60;
 }
 
 
@@ -252,6 +318,20 @@ bool isZipHeader(const QByteArray& data)
            (std::memcmp(data.constData(), "PK\003\004", 4) == 0 ||
             std::memcmp(data.constData(), "PK\005\006", 4) == 0 ||
             std::memcmp(data.constData(), "PK\007\010", 4) == 0);
+}
+
+bool isPlayReadyXapHeader(const QByteArray& data)
+{
+    if (data.size() < 0x20 || readLe32(data, 0) != 0x07455250U ||
+        readLe32(data, 4) != 1 || readLe32(data, 8) != 0x20 ||
+        readLe32(data, 12) != 0x20)
+        return false;
+    const quint32 drmLength = readLe32(data, 0x10);
+    const quint32 payloadOffset = readLe32(data, 0x14);
+    const quint32 encryptedLength = readLe32(data, 0x18);
+    const quint32 clearLength = readLe32(data, 0x1c);
+    return drmLength >= 32 && (drmLength & 1U) == 0 &&
+           payloadOffset == 0x20U + drmLength && encryptedLength >= clearLength;
 }
 
 int b000ffSignatureLength(const QByteArray& data)
@@ -575,6 +655,31 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         !matchingCueBesideBin(filePath).isEmpty())
         return {ModuleFormat::CUE_BIN, 0, QStringLiteral("CDRWIN BIN/CUE optical image"), {}};
 
+    const QString sourceSuffix = QFileInfo(filePath).suffix().toLower();
+    if (sourceSuffix == QStringLiteral("mds")) {
+        const QByteArray mdsHead = file.read(16); file.seek(0);
+        if (mdsHead == QByteArray("MEDIA DESCRIPTOR", 16))
+            return {ModuleFormat::MDF_MDS, 0, QStringLiteral("Alcohol/DAEMON MDF/MDS optical image"), {}};
+    }
+    if (sourceSuffix == QStringLiteral("mdf"))
+        return {ModuleFormat::MDF_MDS, 0, QStringLiteral("Alcohol/DAEMON MDF optical image"), {}};
+
+    if (file.size() >= 64) {
+        const QByteArray ph = file.read(64); file.seek(0);
+        if (ph.startsWith("WithoutFreeSpace") || ph.startsWith("WithouFreSpacExt"))
+            return {ModuleFormat::PARALLELS_HDD, 0, QStringLiteral("Parallels expandable hard disk image"), {}};
+    }
+
+    if (file.size() >= 8) {
+        const QByteArray oleHead = file.read(8); file.seek(0);
+        if (MsiModule::hasCompoundMagic(oleHead)) {
+            if (MsgModule::isOutlookMessageFile(filePath))
+                return {ModuleFormat::MSG, 0, QStringLiteral("Microsoft Outlook MSG message"), {}};
+            if (MsiModule::hasInstallerExtension(filePath))
+                return {ModuleFormat::MSI, 0, QStringLiteral("Windows Installer database"), {}};
+        }
+    }
+
     // Microsoft Full Flash Update: the security header starts at byte zero and
     // carries the 12-byte "SignedImage " signature at offset four.
     if (file.size() >= 16) {
@@ -585,6 +690,55 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
             return {ModuleFormat::FFU, 0, QStringLiteral("Microsoft Full Flash Update (FFU)"), {}};
         }
         file.seek(0);
+    }
+
+    if (file.size() >= 52) {
+        const QByteArray mtfHead = file.read(52); file.seek(0);
+        if (mtfHead.startsWith("TAPE") && readLe64(mtfHead, 20) == 0)
+            return {ModuleFormat::MTF, 0, QStringLiteral("Microsoft Tape Format / NTBackup BKF"), {}};
+    }
+
+    if (file.size() >= 12) {
+        const QByteArray wadHead = file.read(12); file.seek(0);
+        if (wadHead.startsWith("IWAD") || wadHead.startsWith("PWAD"))
+            return {ModuleFormat::WAD, 0, QStringLiteral("Doom WAD archive"), {}};
+    }
+
+    // SCE PUP magic is authoritative and must precede loose firmware probes.
+    if (file.size() >= 8) {
+        const QByteArray pupHead = file.read(qMin<qint64>(file.size(), 0x80));
+        file.seek(0);
+        if (hasPs3PupMagic(pupHead))
+            return {ModuleFormat::PS3_PUP, 0,
+                    QStringLiteral("Sony Computer Entertainment Update Package (PUP)"), {}};
+    }
+
+    // PlayStation 2 ROMDIR can begin at offset zero (IOPRP images) or later
+    // inside a 4 MiB BIOS dump. The required RESET/ROMDIR/EXTINFO triplet and
+    // section sizes make this substantially stronger than an extension guess.
+    if (file.size() >= 64) {
+        const qint64 probeSize = qMin<qint64>(file.size(), 16LL * 1024LL * 1024LL);
+        const QByteArray romProbe = file.read(probeSize);
+        file.seek(0);
+        const qint64 romdirOffset = findPs2Romdir(romProbe);
+        if (romdirOffset >= 0)
+            return {ModuleFormat::PS2_ROMDIR, quint32(romdirOffset),
+                    QStringLiteral("PlayStation 2 ROMDIR / IOPRP image"), {}};
+    }
+
+    // Encrypted AppX/MSIX family (EXPH/EXBH/EXSH). The clear footer and
+    // AppxBlockMap preserve the file tree while individual payloads remain encrypted.
+    if (file.size() >= 6) {
+        const QByteArray eaxHead = file.read(6);
+        file.seek(0);
+        if (eaxHead.startsWith("EXPH") || eaxHead.startsWith("EXSH") || eaxHead.startsWith("EXBH")) {
+            const QString suffix = QFileInfo(filePath).suffix().toLower();
+            if (eaxHead.startsWith("EXBH"))
+                return {suffix.contains(QStringLiteral("msix")) ? ModuleFormat::EMSIXBUNDLE : ModuleFormat::EAPPXBUNDLE, 0,
+                        QStringLiteral("Encrypted AppX/MSIX bundle"), {}};
+            return {suffix.contains(QStringLiteral("msix")) ? ModuleFormat::EMSIX : ModuleFormat::EAPPX, 0,
+                    QStringLiteral("Encrypted AppX/MSIX package"), {}};
+        }
     }
 
     // Siemens containers must be recognised from positioned reads. Falling
@@ -609,6 +763,39 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
                 file.seek(0);
                 return {ModuleFormat::SIEMENS_IMG, 0,
                         QStringLiteral("Siemens ProSave IMG firmware container"), {}};
+            }
+        }
+        file.seek(0);
+    }
+
+    // Windows Phone Store XAP envelope: clear PlayReady header followed by an
+    // encrypted application payload. It is not a ZIP until decrypted.
+    if (file.size() >= 0x20) {
+        const QByteArray xapHead = file.read(0x20);
+        file.seek(0);
+        if (isPlayReadyXapHeader(xapHead))
+            return {ModuleFormat::XAP, 0,
+                    QStringLiteral("Windows Phone XAP (PlayReady encrypted)"), {}};
+    }
+
+    // QCOW/QCOW2: big-endian QFI\xFB magic followed by version 1, 2 or 3.
+    if (file.size() >= 8) {
+        char magic[8];
+        if (file.seek(0) && file.read(magic, 8) == 8 &&
+            static_cast<unsigned char>(magic[0]) == 0x51 &&
+            static_cast<unsigned char>(magic[1]) == 0x46 &&
+            static_cast<unsigned char>(magic[2]) == 0x49 &&
+            static_cast<unsigned char>(magic[3]) == 0xFB) {
+            const quint32 version =
+                (quint32(static_cast<unsigned char>(magic[4])) << 24) |
+                (quint32(static_cast<unsigned char>(magic[5])) << 16) |
+                (quint32(static_cast<unsigned char>(magic[6])) << 8) |
+                quint32(static_cast<unsigned char>(magic[7]));
+            if (version >= 1 && version <= 3) {
+                file.seek(0);
+                return {version == 1 ? ModuleFormat::QCOW : ModuleFormat::QCOW2, 0,
+                        version == 1 ? QStringLiteral("QEMU Copy-On-Write image (QCOW)")
+                                     : QStringLiteral("QEMU Copy-On-Write image (QCOW2)"), {}};
             }
         }
         file.seek(0);
@@ -645,6 +832,16 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         return {ModuleFormat::RESX, 0, QStringLiteral(".NET XML resource (RESX)"), {}};
     }
     file.seek(0);
+
+    // IMG/IMA/VFD are headerless raw sector streams. The extension identifies
+    // the family and an exact standard capacity supplies the geometry. Strong
+    // firmware/optical signatures above retain priority because .img is shared.
+    if (hasRawPcFloppyExtension(filePath) &&
+        !looksPartitionedRawDisk(winceHead, file.size())) {
+        const fs::FloppyGeometry geometry = fs::floppyGeometryForCapacity(file.size());
+        if (geometry.valid())
+            return {ModuleFormat::FLOPPY_IMAGE, 0, floppyDescription(geometry), {}};
+    }
 
     // VMDK: KDMV sparse magic, or a text disk descriptor, at offset 0. Probed
     // before the full read below so multi-GB virtual disks are never slurped into
@@ -698,6 +895,15 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         const QByteArray head = file.read(512);
         if (isZipHeader(head)) {
             file.seek(0);
+            const ModuleFormat named = zipPackageFormatForName(filePath);
+            if (named == ModuleFormat::APPX)
+                return {named, 0, QStringLiteral("Microsoft APPX application package"), {}};
+            if (named == ModuleFormat::MSIX)
+                return {named, 0, QStringLiteral("Microsoft MSIX application package"), {}};
+            if (named == ModuleFormat::APPXBUNDLE)
+                return {named, 0, QStringLiteral("Microsoft APPX application bundle"), {}};
+            if (named == ModuleFormat::XAP)
+                return {named, 0, QStringLiteral("Silverlight / Windows Phone XAP package"), {}};
             return {ModuleFormat::ZIP, 0, QStringLiteral("ZIP archive"), {}};
         }
         if (isTarHeader(head)) {
@@ -1053,8 +1259,10 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
     const bool fwfHeader = data.size() >= 2 &&
         static_cast<unsigned char>(data[0]) == 0x03 &&
         static_cast<unsigned char>(data[1]) == 0xA1;
-    if (fwfHeader || data.contains("InPlaceBlob") ||
-        data.contains("FirmwareFile") || data.contains("FWF_")) {
+    const bool fwfName = QFileInfo(filePath).suffix().compare(
+        QStringLiteral("fwf"), Qt::CaseInsensitive) == 0;
+    if (fwfHeader || (fwfName && (data.contains("InPlaceBlob") ||
+        data.contains("FirmwareFile") || data.contains("FWF_")))) {
         return {ModuleFormat::SIEMENS_FWF, 0, QStringLiteral("Siemens FWF OMS firmware archive"), {}};
     }
 
@@ -1192,6 +1400,29 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
 
 ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
 {
+    if (MsgModule::hasDirectoryMarkers(data))
+        return {ModuleFormat::MSG, 0, QStringLiteral("Microsoft Outlook MSG message"), {}};
+    if (data.startsWith("EXPH") || data.startsWith("EXSH"))
+        return {ModuleFormat::EAPPX, 0, QStringLiteral("Encrypted AppX/MSIX package"), {}};
+    if (data.startsWith("EXBH"))
+        return {ModuleFormat::EAPPXBUNDLE, 0, QStringLiteral("Encrypted AppX/MSIX bundle"), {}};
+
+    if (data.size() >= 52 && data.startsWith("TAPE") && readLe64(data, 20) == 0)
+        return {ModuleFormat::MTF, 0, QStringLiteral("Microsoft Tape Format / NTBackup BKF"), {}};
+
+    if (data.startsWith("IWAD") || data.startsWith("PWAD"))
+        return {ModuleFormat::WAD, 0, QStringLiteral("Doom WAD archive"), {}};
+
+    if (hasPs3PupMagic(data))
+        return {ModuleFormat::PS3_PUP, 0,
+                QStringLiteral("PlayStation 3 Update Package (PUP)"), {}};
+    const qint64 ps2RomdirOffset = findPs2Romdir(data);
+    if (ps2RomdirOffset >= 0)
+        return {ModuleFormat::PS2_ROMDIR, quint32(ps2RomdirOffset),
+                QStringLiteral("PlayStation 2 ROMDIR / IOPRP image"), {}};
+    if (isPlayReadyXapHeader(data))
+        return {ModuleFormat::XAP, 0,
+                QStringLiteral("Windows Phone XAP (PlayReady encrypted)"), {}};
     if (data.size() >= 16 && std::memcmp(data.constData() + 4, "SignedImage ", 12) == 0)
         return {ModuleFormat::FFU, 0, QStringLiteral("Microsoft Full Flash Update (FFU)"), {}};
 
@@ -1238,6 +1469,22 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
 
     if (data.size() >= 72 && readLe32(data, 64) == 0xBEDA107FU)
         return {ModuleFormat::VDI, 0, QStringLiteral("VirtualBox Disk Image (VDI)"), {}};
+
+    if (data.size() >= 8 &&
+        static_cast<unsigned char>(data[0]) == 0x51 &&
+        static_cast<unsigned char>(data[1]) == 0x46 &&
+        static_cast<unsigned char>(data[2]) == 0x49 &&
+        static_cast<unsigned char>(data[3]) == 0xFB) {
+        const quint32 version =
+            (quint32(static_cast<unsigned char>(data[4])) << 24) |
+            (quint32(static_cast<unsigned char>(data[5])) << 16) |
+            (quint32(static_cast<unsigned char>(data[6])) << 8) |
+            quint32(static_cast<unsigned char>(data[7]));
+        if (version >= 1 && version <= 3)
+            return {version == 1 ? ModuleFormat::QCOW : ModuleFormat::QCOW2, 0,
+                    version == 1 ? QStringLiteral("QEMU Copy-On-Write image (QCOW)")
+                                 : QStringLiteral("QEMU Copy-On-Write image (QCOW2)"), {}};
+    }
 
     if (data.size() >= 8 && std::memcmp(data.constData(), "vhdxfile", 8) == 0)
         return {ModuleFormat::VHDX, 0, QStringLiteral("Microsoft Virtual Hard Disk v2 (VHDX)"), {}};
@@ -1408,6 +1655,23 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
 
 ModuleFormatInfo ModuleFormatDetector::detectNestedBuffer(const QByteArray& data)
 {
+    if (MsgModule::hasDirectoryMarkers(data))
+        return {ModuleFormat::MSG, 0, QStringLiteral("Microsoft Outlook MSG message"), {}};
+    if (data.startsWith("EXPH") || data.startsWith("EXSH"))
+        return {ModuleFormat::EAPPX, 0, QStringLiteral("Encrypted AppX/MSIX package"), {}};
+    if (data.startsWith("EXBH"))
+        return {ModuleFormat::EAPPXBUNDLE, 0, QStringLiteral("Encrypted AppX/MSIX bundle"), {}};
+
+    if (hasPs3PupMagic(data))
+        return {ModuleFormat::PS3_PUP, 0,
+                QStringLiteral("PlayStation 3 Update Package (PUP)"), {}};
+    const qint64 ps2RomdirOffset = findPs2Romdir(data);
+    if (ps2RomdirOffset >= 0)
+        return {ModuleFormat::PS2_ROMDIR, quint32(ps2RomdirOffset),
+                QStringLiteral("PlayStation 2 ROMDIR / IOPRP image"), {}};
+    if (isPlayReadyXapHeader(data))
+        return {ModuleFormat::XAP, 0,
+                QStringLiteral("Windows Phone XAP (PlayReady encrypted)"), {}};
     if (isOs2EaList(data))
         return {ModuleFormat::OS2_EA, 0, QStringLiteral("OS/2 extended attribute list (FEALIST)"), {}};
     const ModuleFormatInfo direct = directOs2Executable(data);
@@ -1444,6 +1708,21 @@ ModuleFormatInfo ModuleFormatDetector::detectNestedBuffer(const QByteArray& data
         return {ModuleFormat::WIM, 0, QStringLiteral("Windows Imaging (WIM) image"), {}};
     if (data.size() >= 4 && std::memcmp(data.constData(), "KDMV", 4) == 0)
         return {ModuleFormat::VMDK, 0, QStringLiteral("VMware Virtual Disk (VMDK)"), {}};
+    if (data.size() >= 8 &&
+        static_cast<unsigned char>(data[0]) == 0x51 &&
+        static_cast<unsigned char>(data[1]) == 0x46 &&
+        static_cast<unsigned char>(data[2]) == 0x49 &&
+        static_cast<unsigned char>(data[3]) == 0xFB) {
+        const quint32 version =
+            (quint32(static_cast<unsigned char>(data[4])) << 24) |
+            (quint32(static_cast<unsigned char>(data[5])) << 16) |
+            (quint32(static_cast<unsigned char>(data[6])) << 8) |
+            quint32(static_cast<unsigned char>(data[7]));
+        if (version >= 1 && version <= 3)
+            return {version == 1 ? ModuleFormat::QCOW : ModuleFormat::QCOW2, 0,
+                    version == 1 ? QStringLiteral("QEMU Copy-On-Write image (QCOW)")
+                                 : QStringLiteral("QEMU Copy-On-Write image (QCOW2)"), {}};
+    }
     if (data.size() >= 8 && std::memcmp(data.constData(), "vhdxfile", 8) == 0)
         return {ModuleFormat::VHDX, 0, QStringLiteral("Microsoft Virtual Hard Disk v2 (VHDX)"), {}};
     if (data.size() >= 8 && std::memcmp(data.constData(), "$SDI0001", 8) == 0)
@@ -1476,6 +1755,17 @@ ModuleFormatInfo ModuleFormatDetector::detectNestedBuffer(const QByteArray& data
     return {};
 }
 
+
+ModuleFormat ModuleFormatDetector::zipPackageFormatForName(const QString& fileName)
+{
+    const QString suffix = QFileInfo(fileName).suffix().toLower();
+    if (suffix == QStringLiteral("appx")) return ModuleFormat::APPX;
+    if (suffix == QStringLiteral("msix")) return ModuleFormat::MSIX;
+    if (suffix == QStringLiteral("appxbundle")) return ModuleFormat::APPXBUNDLE;
+    if (suffix == QStringLiteral("xap")) return ModuleFormat::XAP;
+    return ModuleFormat::Unknown;
+}
+
 QString ModuleFormatDetector::formatName(ModuleFormat format)
 {
     switch (format) {
@@ -1502,6 +1792,8 @@ QString ModuleFormatDetector::formatName(ModuleFormat format)
     case ModuleFormat::VMDK: return QStringLiteral("VMDK");
     case ModuleFormat::VHD: return QStringLiteral("VHD");
     case ModuleFormat::VDI: return QStringLiteral("VDI");
+    case ModuleFormat::QCOW: return QStringLiteral("QCOW");
+    case ModuleFormat::QCOW2: return QStringLiteral("QCOW2");
     case ModuleFormat::VHDX: return QStringLiteral("VHDX");
     case ModuleFormat::SDI: return QStringLiteral("SDI");
     case ModuleFormat::XVA: return QStringLiteral("XVA");
@@ -1529,6 +1821,23 @@ QString ModuleFormatDetector::formatName(ModuleFormat format)
     case ModuleFormat::OS2_EA: return QStringLiteral("OS/2 EA");
     case ModuleFormat::RESX: return QStringLiteral("RESX");
     case ModuleFormat::CUE_BIN: return QStringLiteral("BIN/CUE");
+    case ModuleFormat::FLOPPY_IMAGE: return QStringLiteral("Floppy image");
+    case ModuleFormat::PS3_PUP: return QStringLiteral("PS3 PUP");
+    case ModuleFormat::APPX: return QStringLiteral("APPX");
+    case ModuleFormat::MSIX: return QStringLiteral("MSIX");
+    case ModuleFormat::APPXBUNDLE: return QStringLiteral("APPXBUNDLE");
+    case ModuleFormat::EAPPX: return QStringLiteral("EAPPX");
+    case ModuleFormat::EMSIX: return QStringLiteral("EMSIX");
+    case ModuleFormat::EAPPXBUNDLE: return QStringLiteral("EAPPXBUNDLE");
+    case ModuleFormat::EMSIXBUNDLE: return QStringLiteral("EMSIXBUNDLE");
+    case ModuleFormat::XAP: return QStringLiteral("XAP");
+    case ModuleFormat::WAD: return QStringLiteral("WAD");
+    case ModuleFormat::MTF: return QStringLiteral("MTF / BKF");
+    case ModuleFormat::MDF_MDS: return QStringLiteral("MDF / MDS");
+    case ModuleFormat::PARALLELS_HDD: return QStringLiteral("Parallels HDD");
+    case ModuleFormat::PS2_ROMDIR: return QStringLiteral("PS2 ROMDIR");
+    case ModuleFormat::MSI: return QStringLiteral("MSI");
+    case ModuleFormat::MSG: return QStringLiteral("MSG");
     case ModuleFormat::Unknown: return QStringLiteral("Unknown");
     }
     return QStringLiteral("Unknown");

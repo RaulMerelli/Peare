@@ -1,0 +1,12 @@
+{
+  "container_format": "CAB",
+  "tree": [
+    {
+      "path": "README.md",
+      "size": 30892,
+      "is_container": false,
+      "format": "CAB",
+      "sha256": "2709e7c6a379270a75fab71ccad78186e3487d9f3ae1afbca8890aaed080f54d"
+    }
+  ]
+}

@@ -66,7 +66,7 @@ Exports all original payloads in a directory structure organized by resource typ
 
 ## Open-file filters
 
-The file dialog lists all currently supported module families: DOS/Windows/OS/2 executables, PE, NE, LE/LX, Xbox executables, and Xbox 360 archives/packages. These filters only help navigation. Peare always identifies the selected file from its binary signature, so extensionless embedded modules and files with unusual extensions remain supported through **All files**.
+The file dialog lists all currently supported module families: DOS/Windows/OS/2 executables, PE, NE, LE/LX, Xbox executables, Xbox 360 archives/packages, disk images, PS3 PUP updates, Outlook MSG messages, and APPX/MSIX/APPXBUNDLE/XAP application packages. These filters only help navigation. Peare always identifies the selected file from its binary signature, so extensionless embedded modules and files with unusual extensions remain supported through **All files**.
 
 ## Native application menu
 
