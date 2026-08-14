@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QSettings>
 #include <QPixmap>
+#include <QSet>
 
 namespace {
 struct DefaultSection {
@@ -41,6 +42,23 @@ QString normalizedName(QString value)
     if (value.startsWith(QLatin1Char('#')))
         value.remove(0, 1);
     return value;
+}
+
+int visibleColorCount(const QImage& image)
+{
+    if (image.isNull())
+        return 0;
+
+    QSet<QRgb> colors;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QRgb pixel = image.pixel(x, y);
+            if (qAlpha(pixel) == 0)
+                continue;
+            colors.insert(qRgb(qRed(pixel), qGreen(pixel), qBlue(pixel)));
+        }
+    }
+    return colors.size();
 }
 }
 
@@ -152,11 +170,34 @@ QIcon SettingsIcons::loadConfiguredIcon(const QString& section,
 QIcon SettingsIcons::selectBest16(const pearegui::Preview& preview)
 {
     const QImage* selected = nullptr;
+    int selectedColors = -1;
     for (const QImage& image : preview.images) {
         if (image.width() != 16 || image.height() != 16)
             continue;
-        if (!selected || image.depth() >= selected->depth())
+        const int colors = visibleColorCount(image);
+        if (!selected || colors > selectedColors) {
             selected = &image;
+            selectedColors = colors;
+        }
+    }
+    return selected ? QIcon(QPixmap::fromImage(*selected)) : QIcon();
+}
+
+QIcon SettingsIcons::selectBestSmall(const pearegui::Preview& preview)
+{
+    const QImage* selected = nullptr;
+    int selectedColors = -1;
+    for (const QImage& image : preview.images) {
+        if (image.isNull())
+            continue;
+        const int colors = visibleColorCount(image);
+        if (!selected ||
+            image.width() * image.height() < selected->width() * selected->height() ||
+            (image.width() * image.height() == selected->width() * selected->height() &&
+             colors > selectedColors)) {
+            selected = &image;
+            selectedColors = colors;
+        }
     }
     return selected ? QIcon(QPixmap::fromImage(*selected)) : QIcon();
 }
@@ -197,6 +238,83 @@ QIcon SettingsIcons::iconForFileName(const QString& fileName) const
     if (icon.isNull())
         icon = defaultIcon();
     resourceIconCache_.insert(key, icon);
+    return icon;
+}
+
+QIcon SettingsIcons::iconForEmbeddedFile(const QString& fileName,
+                                         const pearegui::Session* session,
+                                         size_t folder, size_t resource) const
+{
+    const QIcon fallback = iconForFileName(fileName);
+    if (!session)
+        return fallback;
+
+    const int dot = fileName.lastIndexOf(QLatin1Char('.'));
+    const QString ext = dot > 0 ? fileName.mid(dot + 1).toLower() : QString();
+    if (ext != QStringLiteral("exe"))
+        return fallback;
+
+    pearegui::Resource sourceResource = session->openResource(folder, resource);
+    const pearegui::ResourceContext sourceContext =
+        sourceResource.isValid() ? sourceResource.context() : pearegui::ResourceContext{};
+    const QString cacheKey =
+        QStringLiteral("embedded:%1:%2:%3:%4")
+            .arg(sourceContext.sourceName, sourceContext.identifier)
+            .arg(sourceContext.dataOffset)
+            .arg(sourceContext.dataSize);
+    const auto cached = resourceIconCache_.constFind(cacheKey);
+    if (cached != resourceIconCache_.constEnd())
+        return cached.value();
+
+    QIcon icon;
+    std::unique_ptr<pearegui::Session> nested = session->openNested(folder, resource);
+    if (nested) {
+        // Same intent as Disk Manager's old PeareModule path, but entirely through
+        // the unified Qt Peare opener/decoder and without a temporary .exe file.
+        // OS/2 NE/LE/LX modules use RT_POINTER for their program icon, while PE
+        // and Windows NE use RT_GROUP_ICON.
+        bool isOs2 = false;
+        for (size_t f = 0; f < nested->folderCount() && !isOs2; ++f) {
+            for (size_t r = 0; r < nested->resourceCount(f); ++r) {
+                pearegui::Resource candidate = nested->openResource(f, r);
+                if (candidate.isValid() && candidate.context().platform == PEARE_PLATFORM_OS2) {
+                    isOs2 = true;
+                    break;
+                }
+            }
+        }
+
+        const QString primaryType = isOs2 ? QStringLiteral("RT_POINTER")
+                                          : QStringLiteral("RT_GROUP_ICON");
+        const QString secondaryType = isOs2 ? QStringLiteral("RT_GROUP_ICON")
+                                            : QStringLiteral("RT_POINTER");
+        const QString types[] = {primaryType, secondaryType};
+
+        for (const QString& desiredType : types) {
+            for (size_t f = 0; f < nested->folderCount() && icon.isNull(); ++f) {
+                for (size_t r = 0; r < nested->resourceCount(f); ++r) {
+                    pearegui::Resource iconResource = nested->openResource(f, r);
+                    if (!iconResource.isValid())
+                        continue;
+                    const pearegui::ResourceContext context = iconResource.context();
+                    if (context.type.compare(desiredType, Qt::CaseInsensitive) != 0)
+                        continue;
+                    const pearegui::Preview preview = pearegui::decode(iconResource, nested.get());
+                    icon = selectBest16(preview);
+                    if (icon.isNull())
+                        icon = selectBestSmall(preview);
+                    if (!icon.isNull())
+                        break;
+                }
+            }
+            if (!icon.isNull())
+                break;
+        }
+    }
+
+    if (icon.isNull())
+        icon = fallback;
+    resourceIconCache_.insert(cacheKey, icon);
     return icon;
 }
 

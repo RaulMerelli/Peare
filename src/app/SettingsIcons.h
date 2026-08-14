@@ -15,6 +15,10 @@ public:
     QIcon resourceIcon(const QString& type) const;
     // Icon chosen from a file name's extension (for filesystem file entries).
     QIcon iconForFileName(const QString& fileName) const;
+    // For executable files exposed by an opened container, ask Peare itself for
+    // the first embedded RT_GROUP_ICON instead of relying on the shell suffix.
+    QIcon iconForEmbeddedFile(const QString& fileName, const pearegui::Session* session,
+                              size_t folder, size_t resource) const;
     QIcon folderOpenIcon() const;
     QIcon folderCloseIcon() const;
     QIcon defaultIcon() const;
@@ -31,6 +35,7 @@ private:
     static QIcon loadConfiguredIcon(const QString& section,
                                     const IconSetting& setting);
     static QIcon selectBest16(const pearegui::Preview& preview);
+    static QIcon selectBestSmall(const pearegui::Preview& preview);
     static QString defaultExtensionForType(const QString& type);
 
     QString filePath_;

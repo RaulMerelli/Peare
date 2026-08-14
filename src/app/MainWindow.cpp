@@ -3,6 +3,8 @@
 #include "IconFromExt.h"
 
 #include <QAction>
+#include <QActionGroup>
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QDesktopServices>
 #include <QDialog>
@@ -12,8 +14,10 @@
 #include <QDir>
 #include <QFrame>
 #include <QFontDatabase>
+#include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -22,9 +26,14 @@
 #include <QPushButton>
 #include <QPixmap>
 #include <QScrollArea>
+#include <QSignalBlocker>
+#include <QStackedWidget>
+#include <QStyle>
 #include <QSizePolicy>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -39,7 +48,9 @@ enum ItemRole {
     FolderIndexRole,
     ResourceIndexRole,
     SessionRole, // pearegui::Session* that owns this item's folder/resource index
-    PendingRole  // true: a lazy container whose children are not populated yet
+    PendingRole, // true: a lazy container whose children are not populated yet
+    EmbeddedIconQueuedRole,
+    DetailsSourceRole = Qt::UserRole + 100 // QTreeWidgetItem* backing a Details row
 };
 
 bool hasVisibleLanguage(const QString& language) {
@@ -53,6 +64,50 @@ bool hasVisibleLanguage(const QString& language) {
     bool numeric = false;
     const uint languageId = value.toUInt(&numeric, 0);
     return !numeric || languageId != 0;
+}
+
+QString formatDetailsSize(qulonglong bytes) {
+    static const char* units[] = {"B", "KB", "MB", "GB", "TB"};
+    double value = static_cast<double>(bytes);
+    int unit = 0;
+    while (value >= 1024.0 && unit < 4) {
+        value /= 1024.0;
+        ++unit;
+    }
+    const int precision = unit == 0 ? 0 : (value < 10.0 ? 2 : (value < 100.0 ? 1 : 0));
+    return QStringLiteral("%1 %2").arg(QString::number(value, 'f', precision),
+                                       QString::fromLatin1(units[unit]));
+}
+
+QString fileNameExtension(QString fileName) {
+    const int slash = qMax(fileName.lastIndexOf(QLatin1Char('/')),
+                           fileName.lastIndexOf(QLatin1Char('\\')));
+    if (slash >= 0)
+        fileName.remove(0, slash + 1);
+
+    const int dot = fileName.lastIndexOf(QLatin1Char('.'));
+    if (dot <= 0 || dot == fileName.size() - 1)
+        return {};
+    return fileName.mid(dot + 1).toLower();
+}
+
+bool hasFileExtension(const QString& fileName) {
+    return !fileNameExtension(fileName).isEmpty();
+}
+
+bool hasEmbeddedExecutableIcon(const QString& fileName) {
+    return fileNameExtension(fileName) == QStringLiteral("exe");
+}
+
+QString iconNameForItem(QTreeWidgetItem* item) {
+    if (!item)
+        return {};
+    const QString resourceName = item->data(0, NameRole).toString();
+    return resourceName.isEmpty() ? item->text(0) : resourceName;
+}
+
+bool itemHasFileExtension(QTreeWidgetItem* item) {
+    return hasFileExtension(iconNameForItem(item));
 }
 
 QString formatRawDump(const QByteArray& data) {
@@ -156,6 +211,18 @@ void MainWindow::buildMenus() {
     resourceMenu_->setEnabled(false);
 
     QMenu* viewMenu = applicationMenuBar->addMenu(QStringLiteral("&View"));
+    QActionGroup* viewModeGroup = new QActionGroup(this);
+    viewModeGroup->setExclusive(true);
+    QAction* treeModeAction = viewMenu->addAction(QStringLiteral("&Tree"));
+    QAction* detailsModeAction = viewMenu->addAction(QStringLiteral("&Details"));
+    treeModeAction->setCheckable(true);
+    detailsModeAction->setCheckable(true);
+    treeModeAction->setChecked(true);
+    viewModeGroup->addAction(treeModeAction);
+    viewModeGroup->addAction(detailsModeAction);
+    connect(treeModeAction, &QAction::triggered, this, [this] { setDetailsMode(false); });
+    connect(detailsModeAction, &QAction::triggered, this, [this] { setDetailsMode(true); });
+    viewMenu->addSeparator();
     viewMenu->addAction(expandAction);
     viewMenu->addAction(collapseAction);
 
@@ -171,13 +238,76 @@ void MainWindow::buildCentralUi() {
     root->setContentsMargins(0, 1, 12, 0);
     root->setSpacing(7);
 
-    treeView_ = new QTreeWidget(central);
+    navigationPane_ = new QWidget(central);
+    auto* navigationLayout = new QVBoxLayout(navigationPane_);
+    navigationLayout->setContentsMargins(0, 0, 0, 0);
+    navigationLayout->setSpacing(3);
+    navigationPane_->setFixedWidth(341);
+
+    navigationBar_ = new QWidget(navigationPane_);
+    auto* barLayout = new QHBoxLayout(navigationBar_);
+    barLayout->setContentsMargins(2, 0, 2, 0);
+    barLayout->setSpacing(2);
+
+    backButton_ = new QToolButton(navigationBar_);
+    forwardButton_ = new QToolButton(navigationBar_);
+    upButton_ = new QToolButton(navigationBar_);
+    backButton_->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
+    forwardButton_->setIcon(style()->standardIcon(QStyle::SP_ArrowForward));
+    upButton_->setIcon(style()->standardIcon(QStyle::SP_ArrowUp));
+    backButton_->setToolTip(QStringLiteral("Back (Alt+Left)"));
+    forwardButton_->setToolTip(QStringLiteral("Forward (Alt+Right)"));
+    upButton_->setToolTip(QStringLiteral("Up (Alt+Up)"));
+    backButton_->setAutoRaise(true);
+    forwardButton_->setAutoRaise(true);
+    upButton_->setAutoRaise(true);
+    barLayout->addWidget(backButton_);
+    barLayout->addWidget(forwardButton_);
+    barLayout->addWidget(upButton_);
+
+    addressEdit_ = new QLineEdit(navigationBar_);
+    addressEdit_->setPlaceholderText(QStringLiteral("\\"));
+    addressEdit_->setClearButtonEnabled(false);
+    barLayout->addWidget(addressEdit_, 1);
+    navigationLayout->addWidget(navigationBar_);
+
+    navigationStack_ = new QStackedWidget(navigationPane_);
+
+    treeView_ = new QTreeWidget(navigationStack_);
     treeView_->setHeaderHidden(true);
-    treeView_->setFixedWidth(341);
     treeView_->setIndentation(18);
     treeView_->setUniformRowHeights(true);
     treeView_->setFrameShape(QFrame::StyledPanel);
-    root->addWidget(treeView_);
+    navigationStack_->addWidget(treeView_);
+
+    detailsView_ = new QTreeWidget(navigationStack_);
+    detailsView_->setColumnCount(4);
+    detailsView_->setHeaderLabels(QStringList() << QStringLiteral("Name") << QStringLiteral("Type")
+                                                << QStringLiteral("Size") << QStringLiteral("Offset"));
+    detailsView_->setRootIsDecorated(false);
+    detailsView_->setItemsExpandable(false);
+    detailsView_->setUniformRowHeights(true);
+    detailsView_->setAllColumnsShowFocus(true);
+    detailsView_->setSelectionMode(QAbstractItemView::SingleSelection);
+    detailsView_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    detailsView_->setFrameShape(QFrame::StyledPanel);
+    detailsView_->header()->setStretchLastSection(false);
+    detailsView_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    detailsView_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    detailsView_->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    detailsView_->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    navigationStack_->addWidget(detailsView_);
+    navigationLayout->addWidget(navigationStack_, 1);
+    navigationBar_->setVisible(false);
+    root->addWidget(navigationPane_);
+
+    detailsIconTimer_ = new QTimer(this);
+    detailsIconTimer_->setSingleShot(true);
+    connect(detailsIconTimer_, &QTimer::timeout, this, [this] { loadNextDetailsIcon(); });
+
+    treeIconTimer_ = new QTimer(this);
+    treeIconTimer_->setSingleShot(true);
+    connect(treeIconTimer_, &QTimer::timeout, this, [this] { loadNextTreeIcon(); });
 
     QWidget* right = new QWidget(central);
     auto* rightLayout = new QVBoxLayout(right);
@@ -205,11 +335,369 @@ void MainWindow::buildCentralUi() {
     connect(treeView_, &QTreeWidget::itemSelectionChanged, this, &MainWindow::showSelectedResource);
     connect(treeView_, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* item) {
         expandContainerItem(item); // lazily open a nested container
-        if (item && item->childCount() > 0) item->setIcon(0, settingsIcons_.folderOpenIcon());
+        if (item && item->childCount() > 0 && !itemHasFileExtension(item))
+            item->setIcon(0, settingsIcons_.folderOpenIcon());
     });
     connect(treeView_, &QTreeWidget::itemCollapsed, this, [this](QTreeWidgetItem* item) {
-        if (item && item->childCount() > 0) item->setIcon(0, settingsIcons_.folderCloseIcon());
+        if (item && item->childCount() > 0 && !itemHasFileExtension(item))
+            item->setIcon(0, settingsIcons_.folderCloseIcon());
     });
+
+    connect(detailsView_, &QTreeWidget::itemSelectionChanged, this, [this] {
+        const QList<QTreeWidgetItem*> rows = detailsView_->selectedItems();
+        if (rows.isEmpty())
+            return;
+        QTreeWidgetItem* source = detailsSourceItem(rows.first());
+        if (source)
+            treeView_->setCurrentItem(source);
+    });
+    connect(detailsView_, &QTreeWidget::itemActivated, this,
+            [this](QTreeWidgetItem* row, int) {
+                QTreeWidgetItem* source = detailsSourceItem(row);
+                if (!source)
+                    return;
+                if (source->data(0, PendingRole).toBool() || source->childCount() > 0)
+                    navigateDetailsTo(source);
+                else
+                    treeView_->setCurrentItem(source);
+            });
+
+    connect(backButton_, &QToolButton::clicked, this, [this] { navigateDetailsBack(); });
+    connect(forwardButton_, &QToolButton::clicked, this, [this] { navigateDetailsForward(); });
+    connect(upButton_, &QToolButton::clicked, this, [this] { navigateDetailsUp(); });
+    connect(addressEdit_, &QLineEdit::returnPressed, this, [this] { navigateDetailsAddress(); });
+
+    QAction* backShortcut = new QAction(this);
+    backShortcut->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Left));
+    addAction(backShortcut);
+    connect(backShortcut, &QAction::triggered, this, [this] { if (detailsMode_) navigateDetailsBack(); });
+    QAction* forwardShortcut = new QAction(this);
+    forwardShortcut->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Right));
+    addAction(forwardShortcut);
+    connect(forwardShortcut, &QAction::triggered, this, [this] { if (detailsMode_) navigateDetailsForward(); });
+    QAction* upShortcut = new QAction(this);
+    upShortcut->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Up));
+    addAction(upShortcut);
+    connect(upShortcut, &QAction::triggered, this, [this] { if (detailsMode_) navigateDetailsUp(); });
+}
+
+void MainWindow::setDetailsMode(bool enabled) {
+    if (!navigationStack_ || !treeView_ || !detailsView_)
+        return;
+    if (detailsMode_ == enabled && navigationStack_->currentWidget() == (enabled ? detailsView_ : treeView_))
+        return;
+
+    QTreeWidgetItem* selected = treeView_->currentItem();
+    detailsMode_ = enabled;
+    if (!enabled && detailsIconTimer_)
+        detailsIconTimer_->stop();
+    navigationPane_->setFixedWidth(enabled ? 500 : 341);
+    navigationBar_->setVisible(enabled);
+    navigationStack_->setCurrentWidget(enabled ? static_cast<QWidget*>(detailsView_)
+                                                : static_cast<QWidget*>(treeView_));
+
+    if (enabled) {
+        QTreeWidgetItem* location = selected;
+        if (location && !location->data(0, PendingRole).toBool() && location->childCount() == 0)
+            location = location->parent();
+        currentDetailsLocation_ = nullptr;
+        previousLocations_.clear();
+        nextLocations_.clear();
+        navigateDetailsTo(location, false);
+        if (selected && selected->parent() == currentDetailsLocation_)
+            selectDetailsSource(selected);
+    } else if (selected) {
+        treeView_->scrollToItem(selected);
+    } else if (currentDetailsLocation_) {
+        treeView_->setCurrentItem(currentDetailsLocation_);
+        treeView_->scrollToItem(currentDetailsLocation_);
+    }
+    updateNavigationUi();
+}
+
+QString MainWindow::detailsPath(QTreeWidgetItem* item) const {
+    if (!item)
+        return QStringLiteral("\\");
+    QStringList parts;
+    for (QTreeWidgetItem* current = item; current; current = current->parent())
+        parts.prepend(current->text(0));
+    return QStringLiteral("\\") + parts.join(QLatin1Char('\\')) + QStringLiteral("\\");
+}
+
+QTreeWidgetItem* MainWindow::findDetailsPath(const QString& input) const {
+    QString path = input.trimmed();
+    path.replace(QLatin1Char('/'), QLatin1Char('\\'));
+    while (path.startsWith(QLatin1Char('\\')))
+        path.remove(0, 1);
+    while (path.endsWith(QLatin1Char('\\')))
+        path.chop(1);
+    if (path.isEmpty())
+        return nullptr;
+
+    const QStringList parts = path.split(QLatin1Char('\\'), Qt::SkipEmptyParts);
+    QTreeWidgetItem* parent = nullptr;
+    for (const QString& part : parts) {
+        QTreeWidgetItem* match = nullptr;
+        const int count = parent ? parent->childCount() : treeView_->topLevelItemCount();
+        for (int i = 0; i < count; ++i) {
+            QTreeWidgetItem* child = parent ? parent->child(i) : treeView_->topLevelItem(i);
+            if (child && child->text(0).compare(part, Qt::CaseInsensitive) == 0) {
+                match = child;
+                break;
+            }
+        }
+        if (!match)
+            return nullptr;
+        parent = match;
+        if (parent->data(0, PendingRole).toBool())
+            const_cast<MainWindow*>(this)->expandContainerItem(parent);
+    }
+    return parent;
+}
+
+QTreeWidgetItem* MainWindow::detailsSourceItem(QTreeWidgetItem* row) const {
+    if (!row)
+        return nullptr;
+    const quintptr ptr = static_cast<quintptr>(row->data(0, DetailsSourceRole).toULongLong());
+    return reinterpret_cast<QTreeWidgetItem*>(ptr);
+}
+
+void MainWindow::selectDetailsSource(QTreeWidgetItem* source) {
+    if (!detailsView_ || !source)
+        return;
+    for (int i = 0; i < detailsView_->topLevelItemCount(); ++i) {
+        QTreeWidgetItem* row = detailsView_->topLevelItem(i);
+        if (detailsSourceItem(row) == source) {
+            detailsView_->setCurrentItem(row);
+            detailsView_->scrollToItem(row);
+            return;
+        }
+    }
+}
+
+void MainWindow::refreshDetailsView() {
+    if (!detailsView_)
+        return;
+
+    if (detailsIconTimer_)
+        detailsIconTimer_->stop();
+    detailsIconIndex_ = 0;
+
+    QTreeWidgetItem* previouslySelected = treeView_->currentItem();
+    QSignalBlocker blocker(detailsView_);
+    detailsView_->clear();
+
+    const int count = currentDetailsLocation_ ? currentDetailsLocation_->childCount()
+                                              : treeView_->topLevelItemCount();
+    for (int i = 0; i < count; ++i) {
+        QTreeWidgetItem* source = currentDetailsLocation_ ? currentDetailsLocation_->child(i)
+                                                         : treeView_->topLevelItem(i);
+        if (!source || (!source->data(0, TypeRole).isValid() && source->text(0) == QStringLiteral("...")))
+            continue;
+
+        QString typeText;
+        QString sizeText;
+        QString offsetText;
+        const bool hasResource = source->data(0, TypeRole).isValid();
+        const QString resourceType = source->data(0, TypeRole).toString();
+        if (!hasResource) {
+            typeText = QStringLiteral("Folder");
+        } else if (resourceType.endsWith(QStringLiteral("_DIR"), Qt::CaseInsensitive)) {
+            typeText = QStringLiteral("Folder");
+        } else {
+            typeText = resourceType;
+            sizeText = formatDetailsSize(source->data(0, SizeRole).toULongLong());
+            offsetText = QStringLiteral("0x%1")
+                             .arg(QString::number(source->data(0, OffsetRole).toULongLong(), 16).toUpper());
+        }
+
+        auto* row = new QTreeWidgetItem(detailsView_,
+                                        QStringList() << source->text(0) << typeText
+                                                      << sizeText << offsetText);
+        row->setIcon(0, source->icon(0));
+        row->setData(0, DetailsSourceRole,
+                     QVariant::fromValue<qulonglong>(reinterpret_cast<quintptr>(source)));
+        row->setTextAlignment(2, Qt::AlignRight | Qt::AlignVCenter);
+        row->setTextAlignment(3, Qt::AlignRight | Qt::AlignVCenter);
+    }
+
+    const bool selectedIsVisible = previouslySelected &&
+        ((currentDetailsLocation_ && previouslySelected->parent() == currentDetailsLocation_) ||
+         (!currentDetailsLocation_ && !previouslySelected->parent()));
+    if (selectedIsVisible) {
+        selectDetailsSource(previouslySelected);
+    } else if (currentDetailsLocation_) {
+        treeView_->setCurrentItem(currentDetailsLocation_);
+    } else if (previouslySelected) {
+        treeView_->clearSelection();
+    }
+
+    scheduleDetailsIconLoading();
+}
+
+void MainWindow::scheduleDetailsIconLoading() {
+    if (!detailsMode_ || !detailsIconTimer_ || !detailsView_ || detailsView_->topLevelItemCount() == 0)
+        return;
+    detailsIconTimer_->start(0);
+}
+
+void MainWindow::loadNextDetailsIcon() {
+    if (!detailsMode_ || !detailsView_ || !detailsIconTimer_)
+        return;
+
+    const int count = detailsView_->topLevelItemCount();
+    int scannedRows = 0;
+    while (detailsIconIndex_ < count && scannedRows++ < 256) {
+        QTreeWidgetItem* row = detailsView_->topLevelItem(detailsIconIndex_++);
+        QTreeWidgetItem* source = detailsSourceItem(row);
+        if (!source || !source->data(0, TypeRole).isValid())
+            continue;
+
+        const QString resourceType = source->data(0, TypeRole).toString();
+        const QString resourceName = source->data(0, NameRole).toString();
+        if (resourceType.endsWith(QStringLiteral("_DIR"), Qt::CaseInsensitive) ||
+            !hasEmbeddedExecutableIcon(resourceName))
+            continue;
+
+        pearegui::Session* session = sessionOf(source);
+        const size_t folder = source->data(0, FolderIndexRole).toULongLong();
+        const size_t resource = source->data(0, ResourceIndexRole).toULongLong();
+        const QIcon embedded = settingsIcons_.iconForEmbeddedFile(resourceName, session, folder, resource);
+        if (!embedded.isNull()) {
+            source->setIcon(0, embedded);
+            row->setIcon(0, embedded);
+        }
+
+        // One embedded executable per event-loop turn.  Disc images can expose
+        // hundreds of EXEs in one directory; decoding them all synchronously made
+        // Details appear hung even though Tree navigation itself was fine.
+        break;
+    }
+
+    if (detailsIconIndex_ < count)
+        detailsIconTimer_->start(1);
+}
+
+void MainWindow::scheduleTreeIconLoading() {
+    if (!treeIconTimer_ || treeIconIndex_ >= pendingEmbeddedIconItems_.size())
+        return;
+    if (!treeIconTimer_->isActive())
+        treeIconTimer_->start(0);
+}
+
+void MainWindow::loadNextTreeIcon() {
+    if (!treeIconTimer_)
+        return;
+
+    if (treeIconIndex_ >= pendingEmbeddedIconItems_.size()) {
+        pendingEmbeddedIconItems_.clear();
+        treeIconIndex_ = 0;
+        return;
+    }
+
+    QTreeWidgetItem* source = pendingEmbeddedIconItems_[treeIconIndex_++];
+    if (source && source->data(0, TypeRole).isValid()) {
+        const QString resourceName = source->data(0, NameRole).toString();
+        if (hasEmbeddedExecutableIcon(resourceName)) {
+            pearegui::Session* session = sessionOf(source);
+            const size_t folder = source->data(0, FolderIndexRole).toULongLong();
+            const size_t resource = source->data(0, ResourceIndexRole).toULongLong();
+            const QIcon embedded = settingsIcons_.iconForEmbeddedFile(resourceName, session, folder, resource);
+            if (!embedded.isNull()) {
+                source->setIcon(0, embedded);
+                if (detailsView_) {
+                    for (int i = 0; i < detailsView_->topLevelItemCount(); ++i) {
+                        QTreeWidgetItem* row = detailsView_->topLevelItem(i);
+                        if (detailsSourceItem(row) == source) {
+                            row->setIcon(0, embedded);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (treeIconIndex_ < pendingEmbeddedIconItems_.size())
+        treeIconTimer_->start(1);
+    else {
+        pendingEmbeddedIconItems_.clear();
+        treeIconIndex_ = 0;
+    }
+}
+
+void MainWindow::navigateDetailsTo(QTreeWidgetItem* location, bool saveHistory) {
+    if (location && location->data(0, PendingRole).toBool())
+        expandContainerItem(location);
+
+    if (saveHistory && location != currentDetailsLocation_) {
+        previousLocations_.push_back(currentDetailsLocation_);
+        nextLocations_.clear();
+    }
+    currentDetailsLocation_ = location;
+    refreshDetailsView();
+    updateNavigationUi();
+}
+
+void MainWindow::navigateDetailsBack() {
+    if (previousLocations_.empty())
+        return;
+    nextLocations_.push_back(currentDetailsLocation_);
+    currentDetailsLocation_ = previousLocations_.back();
+    previousLocations_.pop_back();
+    refreshDetailsView();
+    updateNavigationUi();
+}
+
+void MainWindow::navigateDetailsForward() {
+    if (nextLocations_.empty())
+        return;
+    previousLocations_.push_back(currentDetailsLocation_);
+    currentDetailsLocation_ = nextLocations_.back();
+    nextLocations_.pop_back();
+    if (currentDetailsLocation_ && currentDetailsLocation_->data(0, PendingRole).toBool())
+        expandContainerItem(currentDetailsLocation_);
+    refreshDetailsView();
+    updateNavigationUi();
+}
+
+void MainWindow::navigateDetailsUp() {
+    if (!currentDetailsLocation_)
+        return;
+    navigateDetailsTo(currentDetailsLocation_->parent());
+}
+
+void MainWindow::navigateDetailsAddress() {
+    if (!addressEdit_)
+        return;
+    QString path = addressEdit_->text().trimmed();
+    path.replace(QLatin1Char('/'), QLatin1Char('\\'));
+    QString rootTest = path;
+    rootTest.remove(QLatin1Char('\\'));
+    if (rootTest.trimmed().isEmpty()) {
+        navigateDetailsTo(nullptr);
+        return;
+    }
+
+    QTreeWidgetItem* target = findDetailsPath(path);
+    if (!target || (!target->data(0, PendingRole).toBool() && target->childCount() == 0)) {
+        updateNavigationUi();
+        if (messageLabel_)
+            messageLabel_->setText(QStringLiteral("Address not found: %1").arg(path));
+        return;
+    }
+    navigateDetailsTo(target);
+}
+
+void MainWindow::updateNavigationUi() {
+    if (!addressEdit_)
+        return;
+    QSignalBlocker blocker(addressEdit_);
+    addressEdit_->setText(detailsPath(currentDetailsLocation_));
+    backButton_->setEnabled(detailsMode_ && !previousLocations_.empty());
+    forwardButton_->setEnabled(detailsMode_ && !nextLocations_.empty());
+    upButton_->setEnabled(detailsMode_ && currentDetailsLocation_ != nullptr);
+    addressEdit_->setEnabled(detailsMode_ && currentSession_.isOpen());
 }
 
 void MainWindow::clearContent() {
@@ -295,6 +783,14 @@ void MainWindow::showModuleSummary(const QString& filePath) {
     const QString sourceName = fi.fileName().isEmpty() ? filePath : fi.fileName();
     // Reset all previous state (tree + any nested child sessions) before the new
     // file is opened, so nothing from a prior document can survive.
+    currentDetailsLocation_ = nullptr;
+    previousLocations_.clear();
+    nextLocations_.clear();
+    if (detailsIconTimer_) detailsIconTimer_->stop();
+    if (treeIconTimer_) treeIconTimer_->stop();
+    pendingEmbeddedIconItems_.clear();
+    treeIconIndex_ = 0;
+    if (detailsView_) detailsView_->clear();
     treeView_->clear();
     childSessions_.clear();
     currentPreview_ = {};
@@ -324,12 +820,18 @@ void MainWindow::showModuleSummary(const QString& filePath) {
     // Leaf sections/resources keep their file/type icon.
     std::function<void(QTreeWidgetItem*)> normalizeExpandableIcons = [&](QTreeWidgetItem* item) {
         if (!item) return;
-        if (item->childCount() > 0) item->setIcon(0, settingsIcons_.folderCloseIcon());
+        if (item->childCount() > 0 && !itemHasFileExtension(item))
+            item->setIcon(0, settingsIcons_.folderCloseIcon());
         for (int i = 0; i < item->childCount(); ++i) normalizeExpandableIcons(item->child(i));
     };
     for (int i = 0; i < treeView_->topLevelItemCount(); ++i)
         normalizeExpandableIcons(treeView_->topLevelItem(i));
     treeView_->setUpdatesEnabled(true);
+    scheduleTreeIconLoading();
+    if (detailsMode_)
+        navigateDetailsTo(nullptr, false);
+    else
+        updateNavigationUi();
 
     const QString formatName = pearegui::containerName(format);
     const QString description = currentSession_.description();
@@ -453,7 +955,9 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
             if (!existing) {
                 existing = parent ? new QTreeWidgetItem(parent, QStringList(segment))
                                   : new QTreeWidgetItem(treeView_, QStringList(segment));
-                existing->setIcon(0, settingsIcons_.folderCloseIcon());
+                existing->setIcon(0, hasFileExtension(segment)
+                                         ? settingsIcons_.iconForFileName(segment)
+                                         : settingsIcons_.folderCloseIcon());
                 existing->setData(0, SessionRole, QVariant::fromValue<qulonglong>(sid));
                 hierarchyItems.insert(key, existing);
             }
@@ -543,10 +1047,20 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
                     child = parentBase ? new QTreeWidgetItem(parentBase, QStringList(label))
                                        : new QTreeWidgetItem(treeView_, QStringList(label));
             }
-            // Filesystem files get an icon by their real extension; the folder
-            // icon for directories is applied by the is-container branch below.
-            child->setIcon(0, filesystemEntry ? settingsIcons_.iconForFileName(context.identifier)
-                                              : settingsIcons_.resourceIcon(context.type));
+            // A visible extension always wins over folder/container styling.
+            // This keeps e.g. .dll/.zip/.iso/.exe visually identifiable even
+            // when Peare can navigate inside them. Folder icons are reserved for
+            // real/synthetic folders and extensionless containers.
+            const bool namedWithExtension = hasFileExtension(context.identifier);
+            const bool directoryLike = context.type.endsWith(QStringLiteral("_DIR"),
+                                                               Qt::CaseInsensitive);
+            if (namedWithExtension)
+                child->setIcon(0, settingsIcons_.iconForFileName(context.identifier));
+            else if (directoryLike || context.isContainer)
+                child->setIcon(0, settingsIcons_.folderCloseIcon());
+            else
+                child->setIcon(0, filesystemEntry ? settingsIcons_.iconForFileName(context.identifier)
+                                                  : settingsIcons_.resourceIcon(context.type));
             child->setData(0, TypeRole, context.type);
             child->setData(0, NameRole, context.identifier);
             child->setData(0, LanguageRole, context.language);
@@ -558,10 +1072,17 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
             child->setData(0, SessionRole, QVariant::fromValue<qulonglong>(sid));
             if (context.isContainer) {
                 // Nested container: mark expandable with a placeholder child that
-                // is replaced by real content the first time it is expanded.
+                // is replaced by real content the first time it is expanded. An
+                // extension-bearing container keeps its file-type icon.
                 child->setData(0, PendingRole, true);
-                child->setIcon(0, settingsIcons_.folderCloseIcon());
+                if (!namedWithExtension)
+                    child->setIcon(0, settingsIcons_.folderCloseIcon());
                 new QTreeWidgetItem(child, QStringList(QStringLiteral("...")));
+            }
+            if (hasEmbeddedExecutableIcon(context.identifier) &&
+                !child->data(0, EmbeddedIconQueuedRole).toBool()) {
+                child->setData(0, EmbeddedIconQueuedRole, true);
+                pendingEmbeddedIconItems_.push_back(child);
             }
         }
     }
@@ -593,21 +1114,32 @@ void MainWindow::expandContainerItem(QTreeWidgetItem* item) {
     // any node with children is a folder, e.g. the .rsrc / RT_* grouping nodes.
     std::function<void(QTreeWidgetItem*)> normalize = [&](QTreeWidgetItem* node) {
         if (!node) return;
-        if (node->childCount() > 0) node->setIcon(0, settingsIcons_.folderCloseIcon());
+        if (node->childCount() > 0 && !itemHasFileExtension(node))
+            node->setIcon(0, settingsIcons_.folderCloseIcon());
         for (int i = 0; i < node->childCount(); ++i) normalize(node->child(i));
     };
     for (int i = 0; i < item->childCount(); ++i) normalize(item->child(i));
-    item->setIcon(0, settingsIcons_.folderOpenIcon());
+    if (!itemHasFileExtension(item))
+        item->setIcon(0, settingsIcons_.folderOpenIcon());
     treeView_->setUpdatesEnabled(true);
+    scheduleTreeIconLoading();
 }
 
 void MainWindow::showSelectedResource() {
     const auto items = treeView_->selectedItems();
-    if (items.isEmpty()) return;
+    if (items.isEmpty()) {
+        exportOriginalAction_->setEnabled(false);
+        exportConvertedAction_->setEnabled(false);
+        return;
+    }
     QTreeWidgetItem* item = items.first();
     clearContent();
     messageLabel_->clear();
-    if (!item->data(0, TypeRole).isValid()) return;
+    if (!item->data(0, TypeRole).isValid()) {
+        exportOriginalAction_->setEnabled(false);
+        exportConvertedAction_->setEnabled(false);
+        return;
+    }
     const QString type = item->data(0, TypeRole).toString(),
                   name = item->data(0, NameRole).toString();
     const size_t folder = item->data(0, FolderIndexRole).toULongLong(),
@@ -622,12 +1154,20 @@ void MainWindow::showSelectedResource() {
                                           selectedContext.containerFormat != PEARE_CONTAINER_UNKNOWN
                                       ? pearegui::containerName(selectedContext.containerFormat)
                                       : type;
-    pearegui::Preview preview = pearegui::decode(resource, itemSession);
+    const bool navigationContainer =
+        valid && (selectedContext.isContainer || item->data(0, PendingRole).toBool());
+    // Do not materialise a whole lazy container merely because its navigation
+    // row became selected.  This is especially important for MDF_TRACK: in
+    // Details a double click selects the track before activation, and decoding it
+    // would otherwise read the complete optical image into RAM on the GUI thread.
+    pearegui::Preview preview = navigationContainer ? pearegui::Preview{}
+                                                    : pearegui::decode(resource, itemSession);
     quint64 fontFirst = 0;
     QString effectiveResourceType = type;
-    bool isFontResource = valid && pearegui::getUnsigned(resource, PEARE_INFO_FONT_FIRST_CHARACTER,
-                                                         &fontFirst, effectiveResourceType);
-    if (!isFontResource && valid && !effectiveResourceType.isEmpty()) {
+    bool isFontResource = valid && !navigationContainer &&
+                          pearegui::getUnsigned(resource, PEARE_INFO_FONT_FIRST_CHARACTER,
+                                                &fontFirst, effectiveResourceType);
+    if (!isFontResource && valid && !navigationContainer && !effectiveResourceType.isEmpty()) {
         // Retry without a declared type so get_info() can classify raw payloads.
         isFontResource =
             pearegui::getUnsigned(resource, PEARE_INFO_FONT_FIRST_CHARACTER, &fontFirst, {});
@@ -746,7 +1286,8 @@ void MainWindow::showSelectedResource() {
         contentArea_->setWidget(contentWidget_);
     }
     if (valid) {
-        const QString ext = pearegui::originalExtension(type, resource.payload());
+        const QString ext = pearegui::originalExtension(
+            type, navigationContainer ? QByteArray{} : resource.payload());
         exportOriginalAction_->setText(QStringLiteral("Export original (%1)").arg(ext));
         exportOriginalAction_->setEnabled(true);
     }
