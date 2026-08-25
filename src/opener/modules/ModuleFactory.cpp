@@ -22,6 +22,7 @@
 #include "FfuModule.h"
 #include "ZipModule.h"
 #include "TarModule.h"
+#include "AsarModule.h"
 #include "Ps3PupModule.h"
 #include "WadModule.h"
 #include "MtfModule.h"
@@ -158,6 +159,7 @@ ModulePtr ModuleFactory::open(const QString& filePath)
         return PlayReadyXapModule::open(filePath);
     if (isZipFamily(info.format)) return ZipModule::open(filePath);
     if (info.format == ModuleFormat::TAR) return TarModule::open(filePath);
+    if (info.format == ModuleFormat::ASAR) return AsarModule::open(filePath);
     if (info.format == ModuleFormat::PS3_PUP) return Ps3PupModule::open(filePath);
     if (info.format == ModuleFormat::WAD) return WadModule::open(filePath);
     if (info.format == ModuleFormat::MTF) return MtfModule::open(filePath);
@@ -225,6 +227,7 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
         !isZipFamily(detected.format) &&
         !isEncryptedAppFamily(detected.format) &&
         detected.format != ModuleFormat::TAR &&
+        detected.format != ModuleFormat::ASAR &&
         detected.format != ModuleFormat::WINCE_ROM &&
         detected.format != ModuleFormat::XUIZ &&
         detected.format != ModuleFormat::SIEMENS_IMG &&
@@ -250,6 +253,8 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
     if (isEncryptedAppFamily(detected.format)) return EAppxModule::open(physicalPath);
     if (isZipFamily(detected.format))
         return ZipModule::open(physicalPath, logicalName);
+    if (detected.format == ModuleFormat::ASAR)
+        return AsarModule::open(physicalPath, logicalName);
 
     const QByteArray data = file.readAll();
     if (detected.format == ModuleFormat::XUIZ)
@@ -368,6 +373,7 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
     if (detected.format == ModuleFormat::VMDK) return VmdkModule::open(disc, sourceName);
     if (isEncryptedAppFamily(detected.format)) return EAppxModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::TAR) return TarModule::open(disc, sourceName);
+    if (detected.format == ModuleFormat::ASAR) return AsarModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::PS3_PUP) return Ps3PupModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::WAD) return WadModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::MTF) return MtfModule::open(disc, sourceName);
@@ -457,6 +463,8 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
         return CabModule::open(data, logicalName);
     if (direct.format == ModuleFormat::TAR)
         return TarModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::ASAR)
+        return AsarModule::open(data, logicalName);
     if (direct.format == ModuleFormat::PS3_PUP)
         return Ps3PupModule::open(data, logicalName);
     if (direct.format == ModuleFormat::PS2_ROMDIR)
@@ -515,6 +523,8 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
         return ZipModule::open(data, logicalName);
     if (detected.format == ModuleFormat::TAR)
         return TarModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::ASAR)
+        return AsarModule::open(data, logicalName);
     if (detected.format == ModuleFormat::PS3_PUP)
         return Ps3PupModule::open(data, logicalName);
     if (detected.format == ModuleFormat::XUIZ)

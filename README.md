@@ -178,6 +178,7 @@ The Opener additionally has support for uncommon archives:
 | Microsoft Cabinet | CAB archive | uncompressed, MSZIP and LZX folders |
 | ZIP | Virtual filesystem archive | stored, Shrink, Deflate and ZIP64; decompression is lazy; encrypted entries not yet |
 | TAR | Virtual filesystem archive | regular files and directories; hard links when target appears first; symlinks skipped |
+| Electron ASAR | Virtual filesystem archive | native Chromium Pickle/JSON index; lazy packed members; adjacent `<archive>.asar.unpacked` payloads when present; archive remains browsable if sidecar payloads are unavailable; internal file links |
 | Microsoft FFU | Full Flash Update image | Windows Phone/W10M and desktop v1/v2 stores; sparse write descriptors, GPT partitions and multi-store images |
 | Microsoft SDI | System Deployment Image | exposes sections such as PART and WIM as nested payloads |
 | Xen XVA | Xen Virtual Appliance | TAR-based appliance; reconstructs VDI chunk disks and exposes partitions |

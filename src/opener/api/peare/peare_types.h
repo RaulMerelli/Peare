@@ -117,7 +117,8 @@ typedef enum peare_container_format {
     PEARE_CONTAINER_PARALLELS_HDD,
     PEARE_CONTAINER_PS2_ROMDIR,
     PEARE_CONTAINER_MSI,
-    PEARE_CONTAINER_MSG
+    PEARE_CONTAINER_MSG,
+    PEARE_CONTAINER_ASAR
 } peare_container_format;
 
 typedef enum peare_platform {

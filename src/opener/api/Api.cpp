@@ -83,6 +83,7 @@ peare_container_format toCFormat(peare::ModuleFormat f)
     case peare::ModuleFormat::RAW_DISK: return PEARE_CONTAINER_RAW_DISK;
     case peare::ModuleFormat::ZIP: return PEARE_CONTAINER_ZIP;
     case peare::ModuleFormat::TAR: return PEARE_CONTAINER_TAR;
+    case peare::ModuleFormat::ASAR: return PEARE_CONTAINER_ASAR;
     case peare::ModuleFormat::LINUX_RAID: return PEARE_CONTAINER_LINUX_RAID;
     case peare::ModuleFormat::DYNAMIC_DISK: return PEARE_CONTAINER_DYNAMIC_DISK;
     case peare::ModuleFormat::WINCE_ROM: return PEARE_CONTAINER_WINCE_ROM;

@@ -51,6 +51,7 @@ enum class ModuleFormat {
     RAW_DISK,
     ZIP,
     TAR,
+    ASAR,
     LINUX_RAID,
     DYNAMIC_DISK,
     WINCE_ROM,

@@ -55,6 +55,7 @@ ResourcePlatform platformFor(const ResourceEntry& entry)
     case ModuleFormat::CAB:
     case ModuleFormat::ZIP:
     case ModuleFormat::TAR:
+    case ModuleFormat::ASAR:
     case ModuleFormat::SIEMENS_IMG:
     case ModuleFormat::SIEMENS_FWF:
     case ModuleFormat::ISO9660:
@@ -443,6 +444,8 @@ void OpenerSession::rebuildFolders()
             entry.type == QStringLiteral("XAP_METADATA") ||
             entry.type == QStringLiteral("XAP_ENCRYPTED_ARCHIVE") ||
             entry.type == QStringLiteral("TAR_FILE") ||
+            entry.type == QStringLiteral("ASAR_FILE") ||
+            entry.type == QStringLiteral("ASAR_LINK") ||
             entry.type == QStringLiteral("PUP_SEGMENT") ||
             entry.type == QStringLiteral("WAD_LUMP") ||
             entry.type == QStringLiteral("MDF_TRACK") ||

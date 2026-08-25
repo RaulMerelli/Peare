@@ -111,6 +111,8 @@ class PeareLib:
         L.peare_opener_get_container_format.restype = C.c_int
         L.peare_opener_get_folder_count.argtypes = [_HANDLE, C.POINTER(C.c_size_t)]
         L.peare_opener_get_folder_count.restype = C.c_int
+        L.peare_opener_get_folder_type.argtypes = [_HANDLE, C.c_size_t, C.POINTER(_Blob)]
+        L.peare_opener_get_folder_type.restype = C.c_int
         L.peare_opener_get_resource_count.argtypes = [_HANDLE, C.c_size_t, C.POINTER(C.c_size_t)]
         L.peare_opener_get_resource_count.restype = C.c_int
         L.peare_opener_open_resource_at.argtypes = [_HANDLE, C.c_size_t, C.c_size_t, C.POINTER(_HANDLE)]
@@ -174,6 +176,15 @@ class Opener:
         n = C.c_size_t()
         self._L.peare_opener_get_folder_count(self._h, C.byref(n))
         return n.value
+
+    def folder_type(self, folder: int) -> str:
+        blob = _Blob()
+        if self._L.peare_opener_get_folder_type(self._h, folder, C.byref(blob)) != 0:
+            return ""
+        try:
+            return blob.to_bytes().decode("utf-8", "replace")
+        finally:
+            self._L.peare_blob_free(C.byref(blob))
 
     def resource_count(self, folder: int) -> int:
         n = C.c_size_t()

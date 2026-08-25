@@ -41,12 +41,6 @@ if not defined VS_PATH (
     goto :fail
 )
 
-if not exist "%VS_PATH%\VC\Auxiliary\Build\vcvars64.bat" (
-    echo ERROR: vcvars64.bat not found in:
-    echo %VS_PATH%
-    goto :fail
-)
-
 echo Inizializzazione compilatore MSVC x64...
 call "%VS_PATH%\VC\Auxiliary\Build\vcvars64.bat"
 if errorlevel 1 goto :fail

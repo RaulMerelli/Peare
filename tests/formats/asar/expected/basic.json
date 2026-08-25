@@ -1,0 +1,33 @@
+{
+  "container_format": "ASAR",
+  "tree": [
+    {
+      "path": "hello.txt",
+      "size": 5,
+      "is_container": false,
+      "format": "ASAR",
+      "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    },
+    {
+      "path": "linked.bin",
+      "size": 4,
+      "is_container": false,
+      "format": "ASAR",
+      "sha256": "054edec1d0211f624fed0cbca9d4f9400b0e491c43742af2c5b0abebf0c990d8"
+    },
+    {
+      "path": "nested.bin",
+      "size": 4,
+      "is_container": false,
+      "format": "ASAR",
+      "sha256": "054edec1d0211f624fed0cbca9d4f9400b0e491c43742af2c5b0abebf0c990d8"
+    },
+    {
+      "path": "unpacked.dat",
+      "size": 8,
+      "is_container": false,
+      "format": "ASAR",
+      "sha256": "35afba29cd5ffc3f31a35d0b0b78cdd12cb421f9372240c65c594af91e478b19"
+    }
+  ]
+}

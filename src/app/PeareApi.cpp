@@ -86,6 +86,7 @@ QString containerName(peare_container_format format)
     case PEARE_CONTAINER_RAW_DISK: return QStringLiteral("RAW");
     case PEARE_CONTAINER_ZIP: return QStringLiteral("ZIP");
     case PEARE_CONTAINER_TAR: return QStringLiteral("TAR");
+    case PEARE_CONTAINER_ASAR: return QStringLiteral("ASAR");
     case PEARE_CONTAINER_LINUX_RAID: return QStringLiteral("Linux RAID");
     case PEARE_CONTAINER_DYNAMIC_DISK: return QStringLiteral("Dynamic Disk");
     case PEARE_CONTAINER_WINCE_ROM: return QStringLiteral("Windows CE ROM / IMGFS");

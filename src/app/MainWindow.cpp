@@ -728,7 +728,7 @@ void MainWindow::openFile() {
         "*.acm *.spl *.sct *.wll *.xll *.fll *.pyd *.bpl *.ifs *.msstyles *.386 *.vxd *.fon *.le "
         "*.lx *.xbe *.xex *.xzp *.xuiz *.live *.pirs *.con *.bin *.nb0 *.nbf *.fim *.img *.ima "
         "*.vfd *.qcow *.qcow2 *.pup *.appx *.msix *.appxbundle *.xap *.eappx *.emsix *.eappxbundle "
-        "*.emsixbundle *.wad *.bkf *.mtf *.mdf *.mds *.rom *.msi *.msm *.msp *.mst *.msg);;"
+        "*.emsixbundle *.wad *.bkf *.mtf *.mdf *.mds *.asar *.rom *.msi *.msm *.msp *.mst *.msg);;"
         "DOS, Windows and OS/2 executables (*.exe *.dll *.sys *.ocx *.cpl *.scr *.drv *.ax *.efi "
         "*.mui *.tlb *.acm *.spl *.sct *.wll *.xll *.fll *.pyd *.bpl *.ifs *.msstyles *.386 *.vxd "
         "*.fon *.le *.lx);;"
@@ -745,6 +745,7 @@ void MainWindow::openFile() {
         "PlayStation 2 ROMDIR / IOPRP images (*.rom *.bin *.img);;"
         "Windows Installer databases (*.msi *.msm *.msp *.mst);;"
         "Microsoft Outlook messages (*.msg);;"
+        "Electron ASAR archives (*.asar);;"
         "Windows application packages (*.appx *.msix *.appxbundle *.xap *.eappx *.emsix "
         "*.eappxbundle *.emsixbundle *.wad *.bkf *.mtf *.mdf *.mds);;"
         "All files (*.*)");
@@ -1004,6 +1005,8 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
                                          context.type == QStringLiteral("XAP_METADATA") ||
                                          context.type == QStringLiteral("XAP_ENCRYPTED_ARCHIVE") ||
                                          context.type == QStringLiteral("TAR_FILE") ||
+                                         context.type == QStringLiteral("ASAR_FILE") ||
+                                         context.type == QStringLiteral("ASAR_LINK") ||
                                          context.type == QStringLiteral("PUP_SEGMENT") ||
                                          context.type == QStringLiteral("WAD_LUMP") ||
                                          context.type == QStringLiteral("MDF_TRACK") ||

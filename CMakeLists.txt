@@ -326,6 +326,8 @@ add_library(PeareOpener SHARED
     src/opener/modules/ZipModule.cpp
     src/opener/modules/TarModule.h
     src/opener/modules/TarModule.cpp
+    src/opener/modules/AsarModule.h
+    src/opener/modules/AsarModule.cpp
     src/opener/modules/Ps3PupModule.h
     src/opener/modules/Ps3PupModule.cpp
     src/opener/modules/WadModule.h
@@ -348,7 +350,7 @@ target_include_directories(PeareOpener
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/compression
 )
-target_link_libraries(PeareOpener PRIVATE ${PEARE_QT_CORE})
+target_link_libraries(PeareOpener PRIVATE ${PEARE_QT_CORE} ${PEARE_QT_CORE5COMPAT})
 set_target_properties(PeareOpener PROPERTIES
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES

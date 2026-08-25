@@ -128,6 +128,7 @@ QString extensionFor(const QByteArray& prefix)
     const ModuleFormatInfo nested = ModuleFormatDetector::detectNestedBuffer(prefix);
     switch (nested.format) {
     case ModuleFormat::TAR: return QStringLiteral(".tar");
+    case ModuleFormat::ASAR: return QStringLiteral(".asar");
     case ModuleFormat::ZIP: return QStringLiteral(".zip");
     case ModuleFormat::CAB: return QStringLiteral(".cab");
     case ModuleFormat::PS3_PUP: return QStringLiteral(".pup");

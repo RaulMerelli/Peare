@@ -9,6 +9,7 @@
 #include "Ps2RomdirParser.h"
 #include "MsiModule.h"
 #include "MsgModule.h"
+#include "AsarModule.h"
 
 #include <cstring>
 #include <limits>
@@ -655,6 +656,16 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         !matchingCueBesideBin(filePath).isEmpty())
         return {ModuleFormat::CUE_BIN, 0, QStringLiteral("CDRWIN BIN/CUE optical image"), {}};
 
+    // ASAR has strong Chromium Pickle framing. Recognise it before the
+    // broad firmware/optical probes below: a large JSON header may otherwise
+    // accidentally contain bytes that look like one of those embedded formats.
+    if (file.size() >= 17) {
+        const QByteArray asarHead = file.read(qMin<qint64>(file.size(), 512));
+        file.seek(0);
+        if (AsarModule::isHeader(asarHead))
+            return {ModuleFormat::ASAR, 0, QStringLiteral("Electron ASAR archive"), {}};
+    }
+
     const QString sourceSuffix = QFileInfo(filePath).suffix().toLower();
     if (sourceSuffix == QStringLiteral("mds")) {
         const QByteArray mdsHead = file.read(16); file.seek(0);
@@ -893,6 +904,10 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
 
     if (file.size() >= 4) {
         const QByteArray head = file.read(512);
+        if (AsarModule::isHeader(head)) {
+            file.seek(0);
+            return {ModuleFormat::ASAR, 0, QStringLiteral("Electron ASAR archive"), {}};
+        }
         if (isZipHeader(head)) {
             file.seek(0);
             const ModuleFormat named = zipPackageFormatForName(filePath);
@@ -1407,6 +1422,9 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
     if (data.startsWith("EXBH"))
         return {ModuleFormat::EAPPXBUNDLE, 0, QStringLiteral("Encrypted AppX/MSIX bundle"), {}};
 
+    if (AsarModule::isHeader(data))
+        return {ModuleFormat::ASAR, 0, QStringLiteral("Electron ASAR archive"), {}};
+
     if (data.size() >= 52 && data.startsWith("TAPE") && readLe64(data, 20) == 0)
         return {ModuleFormat::MTF, 0, QStringLiteral("Microsoft Tape Format / NTBackup BKF"), {}};
 
@@ -1662,6 +1680,9 @@ ModuleFormatInfo ModuleFormatDetector::detectNestedBuffer(const QByteArray& data
     if (data.startsWith("EXBH"))
         return {ModuleFormat::EAPPXBUNDLE, 0, QStringLiteral("Encrypted AppX/MSIX bundle"), {}};
 
+    if (AsarModule::isHeader(data))
+        return {ModuleFormat::ASAR, 0, QStringLiteral("Electron ASAR archive"), {}};
+
     if (hasPs3PupMagic(data))
         return {ModuleFormat::PS3_PUP, 0,
                 QStringLiteral("PlayStation 3 Update Package (PUP)"), {}};
@@ -1814,6 +1835,7 @@ QString ModuleFormatDetector::formatName(ModuleFormat format)
     case ModuleFormat::RAW_DISK: return QStringLiteral("RAW");
     case ModuleFormat::ZIP: return QStringLiteral("ZIP");
     case ModuleFormat::TAR: return QStringLiteral("TAR");
+    case ModuleFormat::ASAR: return QStringLiteral("ASAR");
     case ModuleFormat::LINUX_RAID: return QStringLiteral("Linux RAID");
     case ModuleFormat::DYNAMIC_DISK: return QStringLiteral("Dynamic Disk");
     case ModuleFormat::WINCE_ROM: return QStringLiteral("Windows CE ROM / IMGFS");
