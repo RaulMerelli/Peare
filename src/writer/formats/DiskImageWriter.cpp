@@ -1872,6 +1872,16 @@ public:
         CloseHandle(current);
         return matched;
 #else
+        if (expected.isEmpty()) {
+            struct stat info;
+            return valid_ && pathMatchesDescriptor() &&
+                ::fstat(descriptor_, &info) == 0 &&
+                info.st_dev == originalInfo_.st_dev &&
+                info.st_ino == originalInfo_.st_ino &&
+                info.st_size == originalInfo_.st_size &&
+                info.st_mtime == originalInfo_.st_mtime &&
+                info.st_ctime == originalInfo_.st_ctime;
+        }
         QCryptographicHash hash(QCryptographicHash::Sha256);
         std::vector<char> buffer(static_cast<size_t>(kCopyChunkSize));
         struct stat info;

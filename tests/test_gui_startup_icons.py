@@ -9,13 +9,11 @@ import pytest
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows resource icons only")
 def test_startup_icons_load_in_background(peare_gui_path, tmp_path):
-    icon_source = Path(__file__).parent / "formats" / "pe" / "fixtures" / \
-        "MerelliBattleShip.exe"
     settings_file = tmp_path / "startup-icons.ini"
     settings_file.write_text(
         "[RT_FOLDER_CLOSE]\n"
-        f"path={icon_source.as_posix()}\n"
-        "ordinal=#32512\n"
+        f"path={peare_gui_path.as_posix()}\n"
+        "ordinal=IDI_ICON1\n"
         "iconExt=folder_close\n",
         encoding="utf-8")
     plugin_name = "qoffscreen.dll"

@@ -52,6 +52,7 @@ jobs:
         env:
           PEARE_OPENER_LIB: dist/libPeareOpener.so
           LD_LIBRARY_PATH: ${{ env.QT_ROOT_DIR }}/lib
+          QT_QPA_PLATFORM_PLUGIN_PATH: ${{ env.QT_ROOT_DIR }}/plugins/platforms
 
       - uses: actions/upload-artifact@v4
         with:
