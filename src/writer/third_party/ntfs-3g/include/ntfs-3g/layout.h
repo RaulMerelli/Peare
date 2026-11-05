@@ -32,6 +32,12 @@
 #pragma pack(push, 1)
 #endif
 
+#if defined(__GNUC__) || defined(__clang__)
+#define NTFS_EMPTY_ARRAY 0
+#else
+#define NTFS_EMPTY_ARRAY
+#endif
+
 /* The NTFS oem_id */
 #define magicNTFS	const_cpu_to_le64(0x202020205346544e)	/* "NTFS    " */
 #define NTFS_SB_MAGIC	0x5346544e				/* 'NTFS' */
@@ -2009,7 +2015,7 @@ typedef struct {
  * NOTE: Present only in FILE_Volume.
  */
 typedef struct {
-	ntfschar name[];	/* The name of the volume in Unicode. */
+	ntfschar name[NTFS_EMPTY_ARRAY];	/* The name of the volume in Unicode. */
 } __attribute__((__packed__)) VOLUME_NAME;
 
 /**
@@ -2051,7 +2057,7 @@ typedef struct {
  * Data contents of a file (i.e. the unnamed stream) or of a named stream.
  */
 typedef struct {
-	u8 data[];		/* The file's data contents. */
+	u8 data[NTFS_EMPTY_ARRAY];		/* The file's data contents. */
 } __attribute__((__packed__)) DATA_ATTR;
 
 /**
@@ -2400,7 +2406,7 @@ typedef struct {
  * number of clusters in the index allocation attribute.
  */
 typedef struct {
-	u8 bitmap[];			/* Array of bits. */
+	u8 bitmap[NTFS_EMPTY_ARRAY];			/* Array of bits. */
 } __attribute__((__packed__)) BITMAP_ATTR;
 
 /**
@@ -2709,15 +2715,17 @@ typedef struct {
 		struct {
 			le64 major;		/* Major device number. */
 			le64 minor;		/* Minor device number. */
-			void *device_end[];	/* Marker for offsetof(). */
+			void *device_end[NTFS_EMPTY_ARRAY];	/* Marker for offsetof(). */
 		} __attribute__((__packed__));
 		/* For symbolic links. */
-		ntfschar target[];
+		ntfschar target[NTFS_EMPTY_ARRAY];
 	} __attribute__((__packed__));
 } __attribute__((__packed__)) INTX_FILE;
 
 #ifdef _MSC_VER
 #pragma pack(pop)
 #endif
+
+#undef NTFS_EMPTY_ARRAY
 
 #endif /* defined _NTFS_LAYOUT_H */

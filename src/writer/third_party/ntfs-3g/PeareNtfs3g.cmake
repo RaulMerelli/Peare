@@ -78,6 +78,7 @@ else()
     target_compile_options(PeareNtfs3g PRIVATE
         "-include${PEARE_NTFS_ROOT}/include/ntfs-3g/compat.h"
     )
+    target_compile_definitions(PeareNtfs3g PRIVATE __timespec_defined)
 endif()
 target_link_libraries(PeareWriter PRIVATE PeareNtfs3g)
 target_compile_definitions(PeareWriter PRIVATE PEARE_NTFS_WRITER)
