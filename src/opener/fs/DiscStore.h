@@ -1,25 +1,15 @@
 #pragma once
 
-// Read-only, positioned byte-store layer for the DiscUtils-compatible file
-// system stack. This is a faithful C++11 port of the READ side of DiscUtils'
-// stream/buffer model:
-//
-//   IByteStore   <-  DiscUtils.Streams.IBuffer   (positioned, no cursor)
-//   MemoryStore  <-  in-memory buffer
-//   SubStore     <-  DiscUtils.Streams.SubStream / SubBuffer   (a window)
-//   ConcatStore  <-  DiscUtils.Streams.ConcatStream            (concatenation)
-//   StripedStore <-  DiscUtils.Streams.StripedStream           (RAID/LDM stripes)
-//   ZeroStore    <-  DiscUtils.Streams.ZeroStream              (implicit zeros)
-//
-// Only the read path is ported (Peare opens images read-only). The types are
-// Qt-free so the parsers/codecs can use them directly, and they are the layers
-// that ISO9660, WIM (and later others) compose to expose file content lazily.
+// Read-only random-access byte stores for file-system and disk-image readers.
+// Memory, windows, concatenation, striping, and zero-fill layers share this API.
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <utility>
 #include <vector>
 
@@ -35,16 +25,30 @@ public:
     // Total number of readable bytes (== IBuffer.Capacity).
     virtual std::int64_t capacity() const = 0;
 
-    // Read up to count bytes starting at pos into dst. Returns the number of
-    // bytes actually copied (0 at or past EOF). Implementations clamp to the
-    // available range and never throw for an out-of-range request
-    // (== IBuffer.Read(pos, buffer, offset, count)).
+    // Read up to count bytes at pos. Clamp out-of-range reads and return zero at EOF.
     virtual int read(std::int64_t pos, std::uint8_t* dst, int count) const = 0;
 
     // True when positioned reads have roughly constant cost. Sequentially
     // compressed members override this: probing a trailer would otherwise
     // force decompression of the whole file merely while building the tree.
     virtual bool cheapRandomAccess() const { return true; }
+
+    virtual bool validate() const { return true; }
+
+    virtual bool copyTo(std::uint8_t* dst, std::size_t length) const {
+        const std::int64_t total = capacity();
+        if (total < 0 || static_cast<std::uint64_t>(total) != length ||
+            (length != 0 && !dst) || !validate()) return false;
+        std::size_t offset = 0;
+        while (offset < length) {
+            const int request = static_cast<int>(std::min<std::size_t>(
+                length - offset, 4 * 1024 * 1024));
+            const int count = read(static_cast<std::int64_t>(offset), dst + offset, request);
+            if (count <= 0 || count > request) return false;
+            offset += static_cast<std::size_t>(count);
+        }
+        return true;
+    }
 
     // Convenience helpers layered on read().
     void readExactly(std::int64_t pos, std::uint8_t* dst, int count) const {
@@ -74,6 +78,33 @@ public:
 
 typedef std::shared_ptr<IByteStore> ByteStorePtr;
 
+class ValidatedStore final : public IByteStore {
+public:
+    ValidatedStore(ByteStorePtr source, std::function<bool()> validator)
+        : source_(std::move(source)), validator_(std::move(validator)) {}
+
+    std::int64_t capacity() const override { return source_ ? source_->capacity() : 0; }
+    int read(std::int64_t pos, std::uint8_t* dst, int count) const override {
+        return source_ ? source_->read(pos, dst, count) : 0;
+    }
+    bool validate() const override {
+        std::call_once(validationOnce_, [this] {
+            try {
+                valid_ = source_ && validator_ && validator_();
+            } catch (...) {
+                valid_ = false;
+            }
+        });
+        return valid_;
+    }
+
+private:
+    ByteStorePtr source_;
+    std::function<bool()> validator_;
+    mutable std::once_flag validationOnce_;
+    mutable bool valid_ = false;
+};
+
 // Whole buffer held in memory (== an in-memory IBuffer).
 class MemoryStore : public IByteStore {
 public:
@@ -102,10 +133,8 @@ private:
     std::vector<std::uint8_t> data_;
 };
 
-// References externally-owned memory without copying it (e.g. a memory-mapped
-// file). `owner` (type-erased) is held so the backing stays alive for as long as
-// this store — or any window over it — exists. Reads are just pointer copies;
-// when the backing is an mmap, the OS pages data in lazily on access.
+// Reference external memory without copying it. Retain the owner until all
+// stores and windows that use the memory are released.
 class ExternalStore : public IByteStore {
 public:
     ExternalStore(const std::uint8_t* data, std::int64_t length, std::shared_ptr<void> owner)

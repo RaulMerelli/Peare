@@ -1,14 +1,7 @@
 #pragma once
 
-// NTFS read-only file system, ported from DiscUtils.Ntfs (BiosParameterBlock,
-// the MFT / FILE record model with update-sequence fixups, resident and
-// non-resident attributes, data-run runlists, and the $I30 directory index of
-// $INDEX_ROOT + $INDEX_ALLOCATION with $FILE_NAME keys).
-//
-// Scope: enumeration and extraction of uncompressed files (resident and
-// non-resident, incl. sparse runs). Compressed ($DATA with the compressed flag,
-// LZNT1) and $ATTRIBUTE_LIST-split attributes are not yet handled and are
-// reported per-file rather than mis-read.
+// Read NTFS resident, non-resident, sparse, and WOF streams.
+// Native LZNT1-compressed data streams are not decoded.
 
 #include <cstdint>
 #include <string>

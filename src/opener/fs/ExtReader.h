@@ -1,11 +1,7 @@
 #pragma once
 
-// ext2/ext3/ext4 read-only file system, ported from DiscUtils.Ext
-// (SuperBlock, BlockGroup, Inode, the ext4 extent tree and the ext2/3 direct /
-// indirect / double / triple block map, DirectoryRecord traversal).
-//
-// Content is exposed as a zero-copy view over the block runs (holes read as
-// zero), so a file inside an ext volume can be handed straight to another opener.
+// Read Ext2, Ext3, and Ext4 volumes and expose file data as lazy block views.
+// Holes and unwritten extents read as zero.
 
 #include <cstdint>
 #include <string>
@@ -30,6 +26,8 @@ private:
     struct Inode {
         bool valid = false;
         std::uint16_t mode = 0;
+        std::uint32_t inodeNumber = 0;
+        std::uint32_t flags = 0;
         std::uint64_t fileSize = 0;
         bool usesExtents = false;
         bool fastSymlink = false;            // target path stored inline in i_block
@@ -50,6 +48,11 @@ private:
     void resolveRun(const Inode& in, std::uint64_t logical, std::uint64_t totalBlocks,
                     std::uint64_t* physStart, std::uint64_t* runLen, bool* hole) const;
     ByteStorePtr buildContent(const Inode& in) const;
+    bool verifyVerity(const Inode& in) const;
+    bool readInodeBytes(const Inode& in, std::uint64_t offset,
+                        std::uint8_t* dst, std::size_t size) const;
+    bool lastExtentEnd(const std::vector<std::uint8_t>& node,
+                       std::uint64_t* logicalEnd, unsigned depth) const;
     std::vector<DirRec> readDirectory(const Inode& dir) const;
     bool resolvePath(const std::string& path, Inode* out) const;
 
@@ -57,7 +60,7 @@ private:
     // a node (root i_block or a loaded leaf). Returns false if not mapped.
     bool findExtent(const std::vector<std::uint8_t>& node, std::uint64_t logical,
                     std::uint64_t* firstLogical, std::uint64_t* physBlock,
-                    std::uint64_t* numBlocks) const;
+                    std::uint64_t* numBlocks, bool* unwritten) const;
     std::uint32_t indirectLookup(const Inode& in, std::uint64_t logical) const;
     std::uint32_t readU32(std::int64_t bytePos) const;
 

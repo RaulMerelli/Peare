@@ -4,10 +4,8 @@
 
 namespace peare {
 
-// CDRWIN BIN/CUE image opener. The CUE sheet is parsed in-process; referenced
-// BINARY files are mapped lazily and exposed both as source files and as
-// per-track views. Data tracks are normalised to 2048-byte logical sectors so
-// the existing ISO9660/UDF readers can open them recursively.
+// Parse CUE sheets and expose referenced BIN files and track views.
+// Normalize data tracks to 2048-byte sectors for ISO/UDF readers.
 class CueBinModule final : public IModule, public IResourceContainer {
 public:
     static ModulePtr open(const QString& filePath);

@@ -7,10 +7,8 @@
 
 namespace peare {
 
-// Windows CE ROM/filesystem opener. B000FF, raw NB0/XIP, NOSAJ,
-// ARNOLDBOOTBLOCK, iPAQ NBF, CE 1.x/2.x structural ROMs and IMGFS are
-// presented as a Windows directory containing the real embedded files.
-// Non-archive firmware wrappers are intentionally not claimed.
+// Open Windows CE ROM, IMGFS, and supported firmware wrappers as file trees.
+// Unknown firmware wrappers are not recognized.
 class WinceRomModule final : public IModule, public IResourceContainer {
 public:
     static ModulePtr open(const QString& filePath, const QString& subPath = QString());

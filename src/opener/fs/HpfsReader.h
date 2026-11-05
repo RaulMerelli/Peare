@@ -1,11 +1,7 @@
 #pragma once
 
-// IBM/Microsoft High Performance File System (HPFS) read-only reader.
-//
-// The reader follows the on-disk structures used by OS/2 HPFS: boot block,
-// super/spare blocks, directory dnode B-trees, fnodes/anodes and allocation
-// B+trees.  It is deliberately lazy and read-only; only actual directory
-// entries are exposed through IDiscFileSystem.
+// Read OS/2 HPFS boot, directory, fnode, and allocation structures.
+// Enumerate directory entries on demand.
 
 #include <cstdint>
 #include <map>

@@ -1,14 +1,7 @@
 #pragma once
 
-// OSTA Universal Disk Format (UDF) read-only file system, ported from
-// DiscUtils.Udf (UdfReader/UdfContext/UdfUtilities, the volume/partition
-// descriptors, the File/FileEntry/ExtendedFileEntry ICB model, FileContentBuffer
-// and the Directory/FileIdentifier tree).
-//
-// Scope: the common on-disc case — Type 1 (physical) partitions with short,
-// long or embedded allocation descriptors, FileEntry (261) and ExtendedFileEntry
-// (266) ICBs. Metadata/Sparable/Virtual partition maps are reported as an error
-// rather than silently mis-read.
+// Read UDF Type 1 physical partitions and supported file identifiers.
+// Reject metadata, sparable, and virtual partition maps.
 
 #include <cstdint>
 #include <string>

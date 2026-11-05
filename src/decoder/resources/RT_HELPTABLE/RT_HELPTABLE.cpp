@@ -27,10 +27,7 @@ QString RT_HELPTABLE::Get(const QByteArray& data)
         return text;
     }
 
-    // Iterate through the byte array, processing 8 bytes at a time for each help item.
-    // The loop condition 'i + 7 < data.size()' ensures that we only attempt to read
-    // a full 8-byte block, preventing an out-of-range access for incomplete items
-    // at the end of the data array.
+    // Process complete eight-byte help-table entries only.
     for (int i = 0; i + 7 < data.size(); i += 8) {
         const quint16 wnd = readU16(data, i);     // application window ID
         const quint16 sub = readU16(data, i + 2); // help subtable ID

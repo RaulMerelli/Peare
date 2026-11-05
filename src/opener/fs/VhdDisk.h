@@ -1,9 +1,7 @@
 #pragma once
 
-// Microsoft VHD reader, ported from DiscUtils.Vhd (Footer, DynamicHeader and
-// DynamicStream read path). It exposes a fixed or dynamic VHD as one positioned
-// byte store over the logical disk. Differencing parents are not resolved yet;
-// absent dynamic blocks read as zero, matching standalone dynamic disks.
+// Read fixed and dynamic VHD disks as logical byte stores.
+// Differencing parents are not supported; absent dynamic blocks read as zero.
 
 #include <cstdint>
 #include <string>

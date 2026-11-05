@@ -14,6 +14,15 @@
 #include "Os2PackModule.h"
 #include "Os2EaModule.h"
 #include "SzddModule.h"
+#include "GzipModule.h"
+#include "Bzip2Module.h"
+#include "ArModule.h"
+#include "CpioModule.h"
+#include "UnixCompressModule.h"
+#include "UuencodeModule.h"
+#include "LhaModule.h"
+#include "SevenZipModule.h"
+#include "Rar4Module.h"
 #include "ResxModule.h"
 #include "CueBinModule.h"
 #include "CabModule.h"
@@ -22,6 +31,7 @@
 #include "FfuModule.h"
 #include "ZipModule.h"
 #include "TarModule.h"
+#include "WpiModule.h"
 #include "AsarModule.h"
 #include "Ps3PupModule.h"
 #include "WadModule.h"
@@ -30,10 +40,12 @@
 #include "ParallelsModule.h"
 #include "Ps2RomdirModule.h"
 #include "MsiModule.h"
+#include "ResourceForkModule.h"
 #include "MsgModule.h"
 #include "PlayReadyXapModule.h"
 #include "EAppxModule.h"
 #include "SiemensImgModule.h"
+#include "SiemensAdonisModule.h"
 #include "SiemensFwfModule.h"
 #include "SiemensFsfModule.h"
 #include "wince/WinceRomModule.h"
@@ -68,6 +80,7 @@
 #include "../fs/LinuxRaid.h"
 #include "../fs/DynamicDisk.h"
 #include "../fs/FloppyImage.h"
+#include "../fs/QFileByteStore.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -117,6 +130,18 @@ bool isZipFamily(ModuleFormat format)
            format == ModuleFormat::XAP;
 }
 
+bool usesPositionedArchiveReader(ModuleFormat format)
+{
+    return format == ModuleFormat::AR || format == ModuleFormat::ASAR ||
+        format == ModuleFormat::CPIO || format == ModuleFormat::RAR4 ||
+        format == ModuleFormat::CAB || format == ModuleFormat::LHA ||
+        format == ModuleFormat::TAR ||
+        format == ModuleFormat::UNIX_COMPRESS ||
+        format == ModuleFormat::GZIP || format == ModuleFormat::BZIP2 ||
+        format == ModuleFormat::WAD || format == ModuleFormat::WPI ||
+        isZipFamily(format) || isEncryptedAppFamily(format);
+}
+
 bool isPlayReadyXapFile(const QString& path)
 {
     QFile file(path);
@@ -128,8 +153,21 @@ bool isPlayReadyXapFile(const QString& path)
 
 ModulePtr ModuleFactory::open(const QString& filePath)
 {
+    return openWithPassword(filePath, QString());
+}
+
+ModulePtr ModuleFactory::openWithPassword(const QString& filePath, const QString& password)
+{
     ModuleInfo info = detect(filePath);
     if (!info.isValid()) return peare::makeUnique<DetectedModule>(std::move(info));
+    if (usesPositionedArchiveReader(info.format)) {
+        auto source = std::make_shared<fs::QFileByteStore>(filePath);
+        if (!source->validate()) {
+            info.error = QStringLiteral("Could not open the archive as a positioned byte source");
+            return peare::makeUnique<DetectedModule>(std::move(info));
+        }
+        return open(source, filePath, QString(), password);
+    }
     if (info.format == ModuleFormat::PE) {
         auto fileModule = PeFileModule::open(filePath);
         if (fileModule->info().isValid()) return fileModule;
@@ -151,6 +189,15 @@ ModulePtr ModuleFactory::open(const QString& filePath)
     if (info.format == ModuleFormat::OS2_PACK) return Os2PackModule::open(filePath);
     if (info.format == ModuleFormat::OS2_EA) return Os2EaModule::open(filePath);
     if (info.format == ModuleFormat::SZDD) return SzddModule::open(filePath);
+    if (info.format == ModuleFormat::GZIP) return GzipModule::open(filePath);
+    if (info.format == ModuleFormat::BZIP2) return Bzip2Module::open(filePath);
+    if (info.format == ModuleFormat::AR) return ArModule::open(filePath);
+    if (info.format == ModuleFormat::CPIO) return CpioModule::open(filePath);
+    if (info.format == ModuleFormat::UNIX_COMPRESS) return UnixCompressModule::open(filePath);
+    if (info.format == ModuleFormat::UUE) return UuencodeModule::open(filePath);
+    if (info.format == ModuleFormat::LHA) return LhaModule::open(filePath);
+    if (info.format == ModuleFormat::SEVEN_ZIP) return SevenZipModule::open(filePath, password);
+    if (info.format == ModuleFormat::RAR4) return Rar4Module::open(filePath, password);
     if (info.format == ModuleFormat::RESX) return ResxModule::open(filePath);
     if (info.format == ModuleFormat::CUE_BIN) return CueBinModule::open(filePath);
     if (info.format == ModuleFormat::CAB) return CabModule::open(filePath);
@@ -159,6 +206,7 @@ ModulePtr ModuleFactory::open(const QString& filePath)
         return PlayReadyXapModule::open(filePath);
     if (isZipFamily(info.format)) return ZipModule::open(filePath);
     if (info.format == ModuleFormat::TAR) return TarModule::open(filePath);
+    if (info.format == ModuleFormat::WPI) return WpiModule::open(filePath);
     if (info.format == ModuleFormat::ASAR) return AsarModule::open(filePath);
     if (info.format == ModuleFormat::PS3_PUP) return Ps3PupModule::open(filePath);
     if (info.format == ModuleFormat::WAD) return WadModule::open(filePath);
@@ -168,11 +216,14 @@ ModulePtr ModuleFactory::open(const QString& filePath)
     if (info.format == ModuleFormat::PS2_ROMDIR) return Ps2RomdirModule::open(filePath);
     if (info.format == ModuleFormat::MSI) return MsiModule::open(filePath);
     if (info.format == ModuleFormat::MSG) return MsgModule::open(filePath);
+    if (info.format == ModuleFormat::MAC_RESOURCE_FORK)
+        return ResourceForkModule::open(filePath);
     if (info.format == ModuleFormat::WINCE_ROM) return WinceRomModule::open(filePath);
     if (info.format == ModuleFormat::FFU) return FfuModule::open(filePath);
     if (info.format == ModuleFormat::RAW_DISK) return RawDiskModule::open(filePath);
     if (info.format == ModuleFormat::FLOPPY_IMAGE) return FloppyImageModule::open(filePath);
     if (info.format == ModuleFormat::SIEMENS_IMG) return SiemensImgModule::open(filePath);
+    if (info.format == ModuleFormat::SIEMENS_ADONIS) return SiemensAdonisModule::open(filePath);
     if (info.format == ModuleFormat::SIEMENS_FWF) return SiemensFwfModule::open(filePath);
     if (info.format == ModuleFormat::SIEMENS_FSF) return SiemensFsfModule::open(filePath);
     if (info.format == ModuleFormat::ISO9660) return IsoModule::open(filePath);
@@ -209,7 +260,8 @@ ModulePtr ModuleFactory::open(const QString& filePath)
     return peare::makeUnique<DetectedModule>(std::move(info));
 }
 
-ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logicalName)
+ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logicalName,
+                              const QString& password)
 {
     const ModuleFormatInfo detected = ModuleFormatDetector::detectFile(physicalPath);
     if (FloppyImageModule::hasSupportedExtension(logicalName) &&
@@ -219,10 +271,20 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
 
     if (detected.format == ModuleFormat::PS3_PUP)
         return Ps3PupModule::open(physicalPath);
+    if (detected.format == ModuleFormat::RAR4)
+        return Rar4Module::open(physicalPath, password);
     if (detected.format == ModuleFormat::XAP && isPlayReadyXapFile(physicalPath))
         return PlayReadyXapModule::open(physicalPath);
 
     if (detected.format != ModuleFormat::SZDD &&
+        detected.format != ModuleFormat::GZIP &&
+        detected.format != ModuleFormat::BZIP2 &&
+        detected.format != ModuleFormat::AR &&
+        detected.format != ModuleFormat::CPIO &&
+        detected.format != ModuleFormat::UNIX_COMPRESS &&
+        detected.format != ModuleFormat::UUE &&
+        detected.format != ModuleFormat::LHA &&
+        detected.format != ModuleFormat::SEVEN_ZIP &&
         detected.format != ModuleFormat::CAB &&
         !isZipFamily(detected.format) &&
         !isEncryptedAppFamily(detected.format) &&
@@ -231,11 +293,12 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
         detected.format != ModuleFormat::WINCE_ROM &&
         detected.format != ModuleFormat::XUIZ &&
         detected.format != ModuleFormat::SIEMENS_IMG &&
+        detected.format != ModuleFormat::SIEMENS_ADONIS &&
         detected.format != ModuleFormat::SIEMENS_FWF &&
         detected.format != ModuleFormat::SIEMENS_FSF &&
         detected.format != ModuleFormat::OS2_EA &&
         detected.format != ModuleFormat::RESX)
-        return open(physicalPath);
+        return password.isNull() ? open(physicalPath) : openWithPassword(physicalPath, password);
 
     QFile file(physicalPath);
     if (!file.open(QIODevice::ReadOnly)) {
@@ -255,12 +318,25 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
         return ZipModule::open(physicalPath, logicalName);
     if (detected.format == ModuleFormat::ASAR)
         return AsarModule::open(physicalPath, logicalName);
+    if (detected.format == ModuleFormat::GZIP)
+        return GzipModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
+    if (detected.format == ModuleFormat::BZIP2)
+        return Bzip2Module::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
+    if (detected.format == ModuleFormat::LHA)
+        return LhaModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
+    if (detected.format == ModuleFormat::CAB)
+        return CabModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
+    if (detected.format == ModuleFormat::SEVEN_ZIP)
+        return SevenZipModule::open(std::make_shared<fs::QFileByteStore>(physicalPath),
+                                    logicalName, password);
 
     const QByteArray data = file.readAll();
     if (detected.format == ModuleFormat::XUIZ)
         return XuizModule::open(data, logicalName);
     if (detected.format == ModuleFormat::SIEMENS_IMG)
         return SiemensImgModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::SIEMENS_ADONIS)
+        return SiemensAdonisModule::open(data, logicalName);
     if (detected.format == ModuleFormat::SIEMENS_FWF)
         return SiemensFwfModule::open(data, logicalName);
     if (detected.format == ModuleFormat::SIEMENS_FSF)
@@ -269,6 +345,22 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
         return Os2EaModule::open(data, logicalName);
     if (detected.format == ModuleFormat::RESX)
         return ResxModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::GZIP)
+        return GzipModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::BZIP2)
+        return Bzip2Module::open(data, logicalName);
+    if (detected.format == ModuleFormat::AR)
+        return ArModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::CPIO)
+        return CpioModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::UNIX_COMPRESS)
+        return UnixCompressModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::UUE)
+        return UuencodeModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::LHA)
+        return LhaModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::SEVEN_ZIP)
+        return SevenZipModule::open(data, logicalName, password);
     if (detected.format == ModuleFormat::CAB)
         return CabModule::open(data, logicalName);
     if (detected.format == ModuleFormat::TAR)
@@ -285,7 +377,7 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
 }
 
 ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourceName,
-                              const QString& subPath)
+                              const QString& subPath, const QString& password)
 {
     if (!disc) {
         ModuleInfo info;
@@ -298,12 +390,19 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
     const std::vector<std::uint8_t> head = disc->readRange(0, 0x14000);
     const QByteArray header(reinterpret_cast<const char*>(head.data()),
                             static_cast<int>(head.size()));
-    const ModuleFormatInfo detected = ModuleFormatDetector::detectBuffer(header);
+    ModuleFormatInfo detected = ModuleFormatDetector::detectBuffer(header);
+    if (detected.format == ModuleFormat::Unknown && disc->cheapRandomAccess() &&
+        disc->capacity() > header.size()) {
+        const std::vector<std::uint8_t> sfxHead = disc->readRange(0, 1024 * 1024 + 7);
+        const QByteArray sfxHeader(reinterpret_cast<const char*>(sfxHead.data()),
+                                   static_cast<int>(sfxHead.size()));
+        const ModuleFormatInfo sfxDetected = ModuleFormatDetector::detectBuffer(sfxHeader);
+        if (sfxDetected.format == ModuleFormat::RAR4)
+            detected = sfxDetected;
+    }
 
-    // ProSave common-file IMG images often begin with B000FF. Inspect the
-    // constant-size footer before dispatching the payload signature, otherwise
-    // nested opening skips the Siemens wrapper and goes straight to WinCE.
-    // Avoid this tail probe on expensive sequential/compressed stores.
+    // Check IMG footers before payload signatures so ProSave wrappers remain visible.
+    // Skip the tail read for sequential or compressed stores.
     const bool imgCandidate = sourceName.endsWith(QStringLiteral(".img"),
                                                    Qt::CaseInsensitive) ||
                               detected.format == ModuleFormat::WINCE_ROM;
@@ -342,9 +441,32 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
     if (detected.format == ModuleFormat::XAP && PlayReadyXapModule::isHeader(header.left(0x20)))
         return PlayReadyXapModule::open(disc, sourceName);
     if (isZipFamily(detected.format))
-        return ZipModule::open(disc, sourceName);
+        return ZipModule::open(disc, sourceName, subPath);
+    if (detected.format == ModuleFormat::GZIP)
+        return GzipModule::open(disc, sourceName);
+    if (detected.format == ModuleFormat::BZIP2)
+        return Bzip2Module::open(disc, sourceName);
+    if (detected.format == ModuleFormat::LHA)
+        return LhaModule::open(disc, sourceName);
+    if (detected.format == ModuleFormat::CAB)
+        return CabModule::open(disc, sourceName);
+    if (detected.format == ModuleFormat::SEVEN_ZIP)
+        return SevenZipModule::open(disc, sourceName, password);
     if (detected.format == ModuleFormat::SIEMENS_FSF)
         return SiemensFsfModule::open(disc, sourceName);
+    if (detected.format == ModuleFormat::SIEMENS_ADONIS) {
+        if (disc->capacity() > std::numeric_limits<int>::max()) {
+            ModuleInfo info;
+            info.filePath = sourceName;
+            info.format = ModuleFormat::SIEMENS_ADONIS;
+            info.description = QStringLiteral("Siemens ADONIS / SMART_OS flat ARM image");
+            info.error = QStringLiteral("Embedded Siemens ADONIS image is too large to materialise");
+            return peare::makeUnique<DetectedModule>(std::move(info));
+        }
+        const std::vector<std::uint8_t> all = disc->readAll();
+        return SiemensAdonisModule::open(
+            QByteArray(reinterpret_cast<const char*>(all.data()), int(all.size())), sourceName);
+    }
     if (detected.format == ModuleFormat::SIEMENS_FWF) {
         if (disc->capacity() > std::numeric_limits<int>::max()) {
             ModuleInfo info;
@@ -366,13 +488,38 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
     if (fs::hasDynamicDiskMetadata(disc)) return DynamicDiskModule::open(disc, sourceName);
     if (fs::hasLinuxRaidSuperblock(disc)) return LinuxRaidModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::ISO9660) return IsoModule::open(disc, sourceName, subPath);
+    if (detected.format == ModuleFormat::RAR4)
+        return Rar4Module::open(disc, sourceName, password);
     if (detected.format == ModuleFormat::WIM) return WimModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::FAT) return FatModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::UDF) return UdfModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::EXFAT) return ExFatModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::VMDK) return VmdkModule::open(disc, sourceName);
     if (isEncryptedAppFamily(detected.format)) return EAppxModule::open(disc, sourceName);
-    if (detected.format == ModuleFormat::TAR) return TarModule::open(disc, sourceName);
+    if (detected.format == ModuleFormat::TAR)
+        return TarModule::open(disc, sourceName, subPath);
+    if (detected.format == ModuleFormat::CPIO)
+        return CpioModule::open(disc, sourceName, subPath);
+    if (detected.format == ModuleFormat::UNIX_COMPRESS)
+        return UnixCompressModule::open(disc, sourceName);
+    if (detected.format == ModuleFormat::UUE) {
+        if (disc->capacity() > std::numeric_limits<int>::max()) {
+            ModuleInfo info;
+            info.filePath = sourceName;
+            info.format = ModuleFormat::UUE;
+            info.description = QStringLiteral("UUencoded file");
+            info.error = QStringLiteral("UUencoded input is too large to materialise");
+            return peare::makeUnique<DetectedModule>(std::move(info));
+        }
+        const std::vector<std::uint8_t> all = disc->readAll();
+        return UuencodeModule::open(
+            QByteArray(reinterpret_cast<const char*>(all.data()), int(all.size())), sourceName);
+    }
+    if (detected.format == ModuleFormat::LHA) {
+        return LhaModule::open(disc, sourceName);
+    }
+    if (detected.format == ModuleFormat::WPI)
+        return WpiModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::ASAR) return AsarModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::PS3_PUP) return Ps3PupModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::WAD) return WadModule::open(disc, sourceName);
@@ -417,10 +564,11 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
     // Non-filesystem formats need the whole content: materialise once.
     const std::vector<std::uint8_t> all = disc->readAll();
     return open(QByteArray(reinterpret_cast<const char*>(all.data()),
-                           static_cast<int>(all.size())), sourceName);
+                           static_cast<int>(all.size())), sourceName, password);
 }
 
-ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName)
+ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName,
+                              const QString& password)
 {
     // A Siemens common-file IMG may start with B000FF; its footer is the outer
     // format discriminator and therefore takes precedence. QByteArray access is
@@ -444,12 +592,26 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
         }
     }
 
+    const QByteArray rarProbe = data.left(qMin<qsizetype>(data.size(), 1024 * 1024 + 7));
+    if (ModuleFormatDetector::detectNestedBuffer(rarProbe).format == ModuleFormat::RAR4) {
+        const fs::ByteStorePtr source = std::make_shared<fs::MemoryStore>(
+            reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size()));
+        return Rar4Module::open(source, logicalName, password);
+    }
+
     // Strong signatures can be dispatched directly from memory. This is the
     // common path for an archive stored in a PE resource and avoids a temporary
     // file plus a second complete read.
     const ModuleFormatInfo direct = ModuleFormatDetector::detectNestedBuffer(data.left(0x14000));
     if (direct.format == ModuleFormat::WINCE_ROM)
         return WinceRomModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::WPI)
+        return WpiModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::RAR4) {
+        const fs::ByteStorePtr source = std::make_shared<fs::MemoryStore>(
+            reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size()));
+        return Rar4Module::open(source, logicalName, password);
+    }
     if (direct.format == ModuleFormat::FFU)
         return FfuModule::open(std::make_shared<fs::MemoryStore>(
             reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size())),
@@ -463,6 +625,18 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
         return CabModule::open(data, logicalName);
     if (direct.format == ModuleFormat::TAR)
         return TarModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::CPIO)
+        return CpioModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::UNIX_COMPRESS)
+        return UnixCompressModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::UUE)
+        return UuencodeModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::LHA)
+        return LhaModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::SEVEN_ZIP)
+        return SevenZipModule::open(data, logicalName, password);
+    if (direct.format == ModuleFormat::Unknown && LhaModule::hasHeader(data))
+        return LhaModule::open(data, logicalName);
     if (direct.format == ModuleFormat::ASAR)
         return AsarModule::open(data, logicalName);
     if (direct.format == ModuleFormat::PS3_PUP)
@@ -471,6 +645,8 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
         return Ps2RomdirModule::open(data, logicalName);
     if (direct.format == ModuleFormat::MSG)
         return MsgModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::MAC_RESOURCE_FORK)
+        return ResourceForkModule::open(data, logicalName);
     if (direct.format == ModuleFormat::Unknown && MsiModule::hasCompoundMagic(data.left(8))) {
         const fs::ByteStorePtr compoundStore = std::make_shared<fs::MemoryStore>(
             reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size()));
@@ -487,6 +663,8 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
         return XuizModule::open(data, logicalName);
     if (direct.format == ModuleFormat::SIEMENS_FWF)
         return SiemensFwfModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::SIEMENS_ADONIS)
+        return SiemensAdonisModule::open(data, logicalName);
     if (direct.format == ModuleFormat::SIEMENS_FSF)
         return SiemensFsfModule::open(data, logicalName);
     if (direct.format == ModuleFormat::OS2_EA)
@@ -515,14 +693,28 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
             logicalName);
     if (detected.format == ModuleFormat::SZDD)
         return SzddModule::open(data, logicalName);
-    if (detected.format == ModuleFormat::CAB)
-        return CabModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::GZIP)
+        return GzipModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::BZIP2)
+        return Bzip2Module::open(data, logicalName);
+    if (detected.format == ModuleFormat::AR)
+        return ArModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::CPIO)
+        return CpioModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::UNIX_COMPRESS)
+        return UnixCompressModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::UUE)
+        return UuencodeModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::LHA)
+        return LhaModule::open(data, logicalName);
     if (detected.format == ModuleFormat::XAP && PlayReadyXapModule::isHeader(data.left(0x20)))
         return PlayReadyXapModule::open(data, logicalName);
     if (isZipFamily(detected.format))
         return ZipModule::open(data, logicalName);
     if (detected.format == ModuleFormat::TAR)
         return TarModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::WPI)
+        return WpiModule::open(data, logicalName);
     if (detected.format == ModuleFormat::ASAR)
         return AsarModule::open(data, logicalName);
     if (detected.format == ModuleFormat::PS3_PUP)
@@ -531,6 +723,8 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
         return XuizModule::open(data, logicalName);
     if (detected.format == ModuleFormat::SIEMENS_IMG)
         return SiemensImgModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::SIEMENS_ADONIS)
+        return SiemensAdonisModule::open(data, logicalName);
     if (detected.format == ModuleFormat::SIEMENS_FWF)
         return SiemensFwfModule::open(data, logicalName);
     if (detected.format == ModuleFormat::SIEMENS_FSF)
@@ -541,6 +735,8 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
         return ResxModule::open(data, logicalName);
     if (detected.format == ModuleFormat::MSG)
         return MsgModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::MAC_RESOURCE_FORK)
+        return ResourceForkModule::open(data, logicalName);
     return open(path);
 }
 

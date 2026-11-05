@@ -244,10 +244,7 @@ private:
         case 0x48:
         case 0xC8:
         {
-            // The documented layout contains a four-byte addend before
-            // the dispid. Real WMP resources also use a compact layout
-            // that starts directly with dispid + padding. Detect both
-            // from the position of the required zero padding word.
+            // Accept documented and compact layouts based on the zero padding word.
             qint32 addend = 0;
             quint16 propertyDispId = 0;
             const int valueStart = position;

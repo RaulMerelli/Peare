@@ -1,13 +1,7 @@
 #pragma once
 
-// Microsoft exFAT read-only file system, ported from DiscUtils.ExFat
-// (ExFatBootSector, ExFatPartition cluster/FAT handling, the File/Stream/FileName
-// directory entry set, DataDescriptor contiguous-vs-FAT-chain allocation).
-//
-// exFAT stores each file's allocation as a DataDescriptor: a first cluster plus a
-// NoFatChain flag. When NoFatChain is set the clusters are contiguous (no FAT walk
-// needed); otherwise they are followed through the 32-bit FAT. Content is exposed
-// as a zero-copy view over the cluster runs, like the FAT reader.
+// Read exFAT volumes and expose file data as lazy cluster-run views.
+// Support contiguous allocations and cluster chains.
 
 #include <cstdint>
 #include <string>

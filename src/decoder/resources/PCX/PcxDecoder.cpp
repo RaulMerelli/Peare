@@ -8,9 +8,7 @@ namespace peare {
 namespace resources {
 namespace {
 
-// Ported and hardened from Raul Merelli's Apache-2.0 C# PCX importer.
-// The original implementation supplied the decoding model for palettes,
-// planar pixels, scan-line padding and ZSoft RLE.
+// Ported and hardened from Peare's original C# PCX importer.
 
 constexpr int kHeaderSize = 128;
 constexpr quint64 kMaximumPixels = 64ULL * 1024ULL * 1024ULL;
@@ -294,11 +292,7 @@ bool PcxDecoder::TryDecode(const QByteArray& data, QImage& image,
                         else
                             color = qRgb(value, value, value);
                     } else if (header.bitsPerPixel == 1) {
-                        // Match the original C# importer exactly: its
-                        // generateBitmap() creates a Format1bppIndexed Bitmap
-                        // and copies the decoded PCX bits without assigning the
-                        // header palette. System.Drawing therefore uses the
-                        // bitmap's default black/white palette.
+                        // Use the default black-and-white palette for 1bpp output.
                         const int index = packedIndex(row, x, 1);
                         color = index == 0 ? qRgb(0, 0, 0)
                                            : qRgb(255, 255, 255);

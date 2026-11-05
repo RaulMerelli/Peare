@@ -1,5 +1,7 @@
 #include "NtfsReader.h"
 
+#include "BlockDecompressor.h"
+
 #include <algorithm>
 #include <climits>
 #include <cctype>
@@ -11,6 +13,9 @@
 namespace peare {
 namespace fs {
 namespace {
+
+// NTFS update-sequence entries use 512-byte strides, independent of the BPB.
+constexpr std::size_t kNtfsUpdateSequenceUnit = 512;
 
 std::uint16_t le16(const std::uint8_t* p) {
     return static_cast<std::uint16_t>(p[0] | (p[1] << 8));
@@ -74,6 +79,126 @@ const std::uint32_t kAttrData = 0x80;
 const std::uint32_t kAttrIndexRoot = 0x90;
 const std::uint32_t kAttrIndexAllocation = 0xA0;
 const std::uint32_t kAttrBitmap = 0xB0;
+const std::uint32_t kAttrReparsePoint = 0xC0;
+const std::uint32_t kWofReparseTag = 0x80000017u;
+const std::uint32_t kWofFileProvider = 2;
+
+class WofFileStore final : public IByteStore {
+public:
+    WofFileStore(ByteStorePtr compressed, std::uint64_t originalSize, std::uint32_t algorithm)
+        : compressed_(std::move(compressed)), originalSize_(static_cast<std::int64_t>(originalSize)) {
+        static const std::int64_t chunkSizes[] = {4096, 32768, 8192, 16384};
+        if (!compressed_ || originalSize == 0 || originalSize > INT64_MAX || algorithm >= 4)
+            return;
+        chunkSize_ = chunkSizes[algorithm];
+        chunkCount_ = 1 + (originalSize_ - 1) / chunkSize_;
+        entrySize_ = originalSize > UINT32_MAX ? 8 : 4;
+        if (chunkCount_ - 1 > UINT64_MAX / entrySize_) return;
+        tableSize_ = (chunkCount_ - 1) * entrySize_;
+        if (tableSize_ > static_cast<std::uint64_t>(compressed_->capacity())) return;
+        dataSize_ = static_cast<std::uint64_t>(compressed_->capacity()) - tableSize_;
+        if (algorithm == 1)
+            lzx_ = std::make_shared<LzxWimDecompressor>(static_cast<std::size_t>(chunkSize_));
+        else
+            xpress_ = std::make_shared<XpressHuffmanDecompressor>();
+        valid_ = validateChunkTable();
+    }
+
+    std::int64_t capacity() const override { return valid_ ? originalSize_ : 0; }
+
+    int read(std::int64_t pos, std::uint8_t* dst, int count) const override {
+        if (!valid_ || pos < 0 || count <= 0 || pos >= originalSize_) return 0;
+        int produced = 0;
+        const int want = static_cast<int>(std::min<std::int64_t>(count, originalSize_ - pos));
+        while (produced < want) {
+            const std::uint64_t current = static_cast<std::uint64_t>(pos + produced);
+            const std::uint64_t index = current / static_cast<std::uint64_t>(chunkSize_);
+            const int offset = static_cast<int>(current % static_cast<std::uint64_t>(chunkSize_));
+            if (!loadChunk(index)) break;
+            const int n = std::min(want - produced, static_cast<int>(cache_.size()) - offset);
+            if (n <= 0) break;
+            std::copy(cache_.begin() + offset, cache_.begin() + offset + n, dst + produced);
+            produced += n;
+        }
+        return produced;
+    }
+
+private:
+    bool readOffset(std::uint64_t index, std::uint64_t* value) const {
+        if (!value || index >= chunkCount_) return false;
+        if (index == 0) { *value = 0; return true; }
+        const std::uint64_t at = (index - 1) * entrySize_;
+        const std::vector<std::uint8_t> bytes = compressed_->readRange(
+            static_cast<std::int64_t>(at), static_cast<std::int64_t>(entrySize_));
+        if (bytes.size() != entrySize_) return false;
+        *value = entrySize_ == 4 ? le32(bytes.data()) : le64(bytes.data());
+        return true;
+    }
+
+    bool validateChunkTable() const {
+        const std::uint64_t entries = chunkCount_ - 1;
+        const std::uint64_t limit = dataSize_;
+        std::uint64_t previous = 0;
+        const std::uint64_t entriesPerBlock = 4096 / entrySize_;
+        for (std::uint64_t first = 0; first < entries; first += entriesPerBlock) {
+            const std::uint64_t count = std::min(entriesPerBlock, entries - first);
+            const std::uint64_t byteOffset = first * entrySize_;
+            const std::vector<std::uint8_t> block = compressed_->readRange(
+                static_cast<std::int64_t>(byteOffset), static_cast<std::int64_t>(count * entrySize_));
+            if (block.size() != count * entrySize_) return false;
+            for (std::uint64_t i = 0; i < count; ++i) {
+                const std::uint8_t* p = block.data() + i * entrySize_;
+                const std::uint64_t offset = entrySize_ == 4 ? le32(p) : le64(p);
+                if (offset <= previous || offset > limit) return false;
+                previous = offset;
+            }
+        }
+        return entries == 0 || previous < limit;
+    }
+
+    bool loadChunk(std::uint64_t index) const {
+        if (cachedChunk_ == index) return true;
+        if (index >= chunkCount_) return false;
+        std::uint64_t begin = 0;
+        std::uint64_t end = dataSize_;
+        if (!readOffset(index, &begin) ||
+            (index + 1 < chunkCount_ && !readOffset(index + 1, &end)) ||
+            end < begin || end > dataSize_) return false;
+        const std::uint64_t outOffset = index * static_cast<std::uint64_t>(chunkSize_);
+        const std::size_t outSize = static_cast<std::size_t>(
+            std::min<std::uint64_t>(chunkSize_, static_cast<std::uint64_t>(originalSize_) - outOffset));
+        const std::uint64_t storedSize = end - begin;
+        if (storedSize == 0 || storedSize > outSize || storedSize > SIZE_MAX) return false;
+        const std::vector<std::uint8_t> input = compressed_->readRange(
+            static_cast<std::int64_t>(tableSize_ + begin), static_cast<std::int64_t>(storedSize));
+        if (input.size() != storedSize) return false;
+        cache_.assign(outSize, 0);
+        if (storedSize == outSize) {
+            std::copy(input.begin(), input.end(), cache_.begin());
+        } else {
+            std::size_t decoded = 0;
+            const bool ok = lzx_
+                ? lzx_->tryDecompress(input.data(), input.size(), cache_.data(), outSize, decoded)
+                : xpress_->tryDecompress(input.data(), input.size(), cache_.data(), outSize, decoded);
+            if (!ok || decoded != outSize) { cache_.clear(); return false; }
+        }
+        cachedChunk_ = index;
+        return true;
+    }
+
+    ByteStorePtr compressed_;
+    std::int64_t originalSize_ = 0;
+    std::int64_t chunkSize_ = 0;
+    std::uint64_t chunkCount_ = 0;
+    std::uint64_t entrySize_ = 0;
+    std::uint64_t tableSize_ = 0;
+    std::uint64_t dataSize_ = 0;
+    bool valid_ = false;
+    BlockDecompressorPtr xpress_;
+    BlockDecompressorPtr lzx_;
+    mutable std::uint64_t cachedChunk_ = UINT64_MAX;
+    mutable std::vector<std::uint8_t> cache_;
+};
 
 }  // namespace
 
@@ -83,19 +208,19 @@ NtfsReader::NtfsReader(ByteStorePtr disc) : disc_(std::move(disc)) {
 }
 
 bool NtfsReader::applyFixup(std::vector<std::uint8_t>& buf) const {
-    if (buf.size() < 8 || bytesPerSector_ < 512 ||
-        (buf.size() % bytesPerSector_) != 0)
+    if (buf.size() < 8 || (buf.size() % kNtfsUpdateSequenceUnit) != 0)
         return false;
     const std::uint16_t usnOffset = le16(buf.data() + 0x04);
     const std::uint16_t usnCount = le16(buf.data() + 0x06);
-    const std::size_t expected = buf.size() / bytesPerSector_ + 1;
+    const std::size_t expected = buf.size() / kNtfsUpdateSequenceUnit + 1;
     if (usnCount != expected || usnCount < 2 ||
         static_cast<std::size_t>(usnOffset) + static_cast<std::size_t>(usnCount) * 2 >
             buf.size())
         return false;
     const std::uint16_t usn = le16(buf.data() + usnOffset);
     for (std::uint16_t i = 1; i < usnCount; ++i) {
-        const std::size_t tail = static_cast<std::size_t>(i) * bytesPerSector_ - 2;
+        const std::size_t tail =
+            static_cast<std::size_t>(i) * kNtfsUpdateSequenceUnit - 2;
         if (tail + 2 > buf.size() || le16(buf.data() + tail) != usn) return false;
         buf[tail] = buf[usnOffset + 2 * i];
         buf[tail + 1] = buf[usnOffset + 2 * i + 1];
@@ -485,6 +610,21 @@ ByteStorePtr NtfsReader::openFile(const std::string& path) const {
     if (!rec.valid || rec.isDirectory) return nullptr;
     const Attr* data = findAttr(rec, kAttrData, std::string());
     if (!data) return nullptr;
+    const Attr* reparse = findAttr(rec, kAttrReparsePoint, std::string());
+    if (reparse && reparse->residentData.size() >= 4 &&
+        le32(reparse->residentData.data()) == kWofReparseTag) {
+        if (reparse->residentData.size() < 24) return nullptr;
+        const std::uint8_t* info = reparse->residentData.data();
+        if (le16(info + 4) != 16 || le32(info + 8) != 1 ||
+            le32(info + 12) != kWofFileProvider || le32(info + 16) != 1)
+            return nullptr;
+        const Attr* compressed = findAttr(rec, kAttrData, "WofCompressedData");
+        if (!compressed || !compressed->nonResident) return nullptr;
+        ByteStorePtr stream = runsStore(compressed->runs, compressed->realSize);
+        ByteStorePtr wof = std::make_shared<WofFileStore>(
+            std::move(stream), data->realSize, le32(info + 20));
+        return wof->capacity() == static_cast<std::int64_t>(data->realSize) ? wof : nullptr;
+    }
     // Compressed data (LZNT1) is not decoded yet; expose nothing rather than junk.
     if (data->flags & 0x0001) return nullptr;
     if (!data->nonResident)

@@ -8,7 +8,8 @@ class TarModule final : public IModule, public IResourceContainer {
 public:
     static ModulePtr open(const QString& filePath);
     static ModulePtr open(const QByteArray& data, const QString& logicalName);
-    static ModulePtr open(const fs::ByteStorePtr& file, const QString& sourceName);
+    static ModulePtr open(const fs::ByteStorePtr& file, const QString& sourceName,
+                          const QString& subPath = QString());
 
     const ModuleInfo& info() const noexcept override { return info_; }
     const QVector<ResourceEntry>& resources() const noexcept override { return resources_; }

@@ -125,7 +125,8 @@ struct FwfBlob {
   std::size_t payload_size{};
   std::size_t aid{};             // OMS attribute id of the blob field
   std::string name;              // lookback name (nk.nb0.N / ImagePart.N / ...)
-  std::string class_name;        // enclosing object name (aid 233)
+  std::string class_name;        // OMS class of the blob's owning object
+  std::string object_path;       // named OMS scopes enclosing this blob
   FwfPayloadKind kind{FwfPayloadKind::Raw};
   std::vector<std::uint8_t> payload;
   std::vector<std::uint8_t> inflated;  // only for zlib
@@ -283,26 +284,59 @@ bool oms_record_boundary(const std::vector<std::uint8_t>& d, std::size_t pos) {
   return b == 0x03 || (b >= 0xA1 && b <= 0xA9) || (b >= 0xB0 && b <= 0xBF);
 }
 
-// Object-open header: A1 <rid/class bytes> 20 00, with no record tag in the
-// header body. Returns the header length, or nullopt if this is not one.
-prosave_optional<std::size_t> oms_object_header_len(
-    const std::vector<std::uint8_t>& d, std::size_t p) {
-  if (d[p] != 0xA1) {
-    return {};
+// Parse current numeric OMS object headers and retain the legacy marker form.
+bool oms_object_header(const std::vector<std::uint8_t>& d, std::size_t p,
+                       std::size_t& header_len, std::uint32_t& class_id) {
+  if (p >= d.size() || d[p] != 0xA1) return false;
+
+  // Current OMS headers store a big-endian RID followed by 7-bit integers.
+  // Keep the marker-framed form below for older streams.
+  if (d.size() - p >= 6) {
+    std::size_t q = p + 5;
+    std::uint64_t parsed_class_id = 0, flags = 0, attr_id = 0, attr_value = 0;
+    if (read_oms_uint(d, q, parsed_class_id, q) &&
+        read_oms_uint(d, q, flags, q) &&
+        read_oms_uint(d, q, attr_id, q) &&
+        (attr_id == 0 || read_oms_uint(d, q, attr_value, q)) &&
+        q < d.size() && parsed_class_id <= std::numeric_limits<std::uint32_t>::max()) {
+      header_len = q - p;
+      class_id = std::uint32_t(parsed_class_id);
+      return true;
+    }
   }
+
   const std::size_t lim = std::min(d.size() - 1, p + 26);
   for (std::size_t q = p + 2; q < lim; ++q) {
     if (d[q] == 0x20 && d[q + 1] == 0x00) {
       for (std::size_t k = p + 1; k < q; ++k) {
         const std::uint8_t b = d[k];
         if (b == 0xA1 || b == 0xA3 || b == 0xA4) {
-          return {};
+          return false;
         }
       }
-      return q + 2 - p;
+      header_len = q + 2 - p;
+      class_id = 0;
+      return true;
     }
   }
-  return {};
+  return false;
+}
+
+const char* fwf_class_name(std::uint32_t id) {
+  switch (id) {
+    case 18230: return "Firmware";
+    case 18308: return "UpdateContainer";
+    case 18311: return "PolymorphContainer";
+    case 18315: return "TransportMorph";
+    case 18316: return "PersistenceMorph";
+    case 18317: return "ExecutionMorph";
+    case 18321: return "ImagePart";
+    case 18327: return "InPlaceStore";
+    case 18328: return "LinearStore";
+    case 18616: return "InPlaceBlobStreamed";
+    case 18791: return "PersistentStream";
+    default: return "Object";
+  }
 }
 
 // Width of a fixed-size scalar value type (from get_value_from_blob_classic);
@@ -312,41 +346,77 @@ std::size_t oms_scalar_size(std::uint8_t t) {
     case 2: case 6: case 10: return 1;
     case 3: case 7: case 11: return 2;
     case 4: case 8: case 12: case 14: case 18: case 19: return 4;
-    case 5: case 9: case 13: case 15: case 16: case 17: return 8;
+    case 5: case 13: case 15: case 16: case 17: return 8;
     default: return 0;
   }
 }
 
-// Decode a blob value at `type_pos` (which points at the 0x14 type byte). The
-// three on-disk forms are: plain `14 <len> <data>`, empty `14 00`, and
-// streamed `14 00 <len> <data>` (the extra 0x00 flag of type 0x40000014).
+// Decode a blob value at `type_pos`; current OMS uses mode 0 for sized data
+// and mode 1 for a single streamed chunk, with legacy sized blobs retained.
 bool oms_blob_span(const std::vector<std::uint8_t>& d, std::size_t type_pos,
-                   std::size_t& data_off, std::uint64_t& len) {
+                   std::size_t& data_off, std::uint64_t& len,
+                   std::size_t& next_pos) {
   std::uint64_t l1 = 0;
   std::size_t nx = 0;
   if (!read_oms_uint(d, type_pos + 1, l1, nx)) {
     return false;
   }
-  if (l1 != 0) {
-    len = l1;
-    data_off = nx;  // plain blob
+  if (l1 == 1 && nx < d.size() && oms_record_boundary(d, nx + 1)) {
+    len = 1;
+    data_off = nx;
+    next_pos = nx + 1;
     return true;
   }
-  // first byte after 0x14 is 0x00: either empty or streamed.
+  if (l1 > 1) {
+    len = l1;
+    data_off = nx;  // plain blob
+    if (len > d.size() - data_off) return false;
+    next_pos = data_off + std::size_t(len);
+    return true;
+  }
+  if (l1 == 1) {
+    std::uint64_t chunk = 0, terminator = 0;
+    std::size_t doff = 0, after = 0;
+    if (!read_oms_uint(d, nx, chunk, doff) ||
+        chunk > d.size() - doff ||
+        !read_oms_uint(d, doff + std::size_t(chunk), terminator, after) ||
+        terminator != 0 || !oms_record_boundary(d, after))
+      return false;
+    len = chunk;
+    data_off = doff;
+    next_pos = after;
+    return true;
+  }
+  // Current OMS blob values start with mode 0 (sized) or 1 (chunked).
   std::uint64_t L = 0;
   std::size_t doff = 0;
   if (read_oms_uint(d, nx, L, doff)) {
     const std::uint64_t end = static_cast<std::uint64_t>(doff) + L;
-    if (L > 0 && end <= d.size() &&
-        oms_record_boundary(d, static_cast<std::size_t>(end))) {
+    if (end <= d.size() && (L == 0 || oms_record_boundary(d, std::size_t(end)))) {
       len = L;
       data_off = doff;  // streamed / sized blob
+      next_pos = std::size_t(end);
       return true;
     }
   }
-  len = 0;
-  data_off = nx;  // genuinely empty blob
-  return true;
+  if (l1 == 0) {
+    len = 0;
+    data_off = nx;  // genuinely empty blob
+    next_pos = nx;
+    return true;
+  }
+  return false;
+}
+
+bool skip_oms_long(const std::vector<std::uint8_t>& d, std::size_t off,
+                   std::size_t& next) {
+  for (std::size_t i = 0; i < 10 && off + i < d.size(); ++i) {
+    if ((d[off + i] & 0x80U) == 0) {
+      next = off + i + 1;
+      return true;
+    }
+  }
+  return false;
 }
 
 void classify_fwf_blob(FwfBlob& blob) {
@@ -382,15 +452,14 @@ void classify_fwf_blob(FwfBlob& blob) {
   blob.kind = FwfPayloadKind::Raw;
 }
 
-// Walk the OMS+ object stream, harvesting every blob value with its exact
-// stream-declared length. This handles every .fwf variant (streamed kernel
-// slices, FSF flash volumes, the V15 raw flash image, nested sub-streams)
-// because it is driven by the token grammar, not by class-name markers.
+// Read OMS+ blob values by their stream-declared lengths.
+// Token parsing handles streamed, nested, and raw flash payloads.
 FwfDecoded decode_fwf(const std::vector<std::uint8_t>& fwf) {
   FwfDecoded decoded;
   const std::size_t n = fwf.size();
   std::size_t p = 0;
   std::string ctx_name;
+  std::vector<std::pair<std::string, std::uint32_t> > scopes;
   if (p < n && fwf[p] == 0x03) {
     ++p;
   }
@@ -415,14 +484,16 @@ FwfDecoded decode_fwf(const std::vector<std::uint8_t>& fwf) {
                       static_cast<std::size_t>(ln));
         if (aid == 233) {
           ctx_name = s;
+          if (!scopes.empty()) scopes.back().first = s;
         }
         p = sr + static_cast<std::size_t>(ln);
         continue;
       }
       if (t == 0x14) {  // blob
         std::size_t doff = 0;
+        std::size_t after = 0;
         std::uint64_t ln = 0;
-        if (!oms_blob_span(fwf, q + 1, doff, ln) ||
+        if (!oms_blob_span(fwf, q + 1, doff, ln, after) ||
             static_cast<std::uint64_t>(doff) + ln > n) {
           ++p; ++decoded.unclassified_bytes; continue;
         }
@@ -432,20 +503,32 @@ FwfDecoded decode_fwf(const std::vector<std::uint8_t>& fwf) {
         blob.payload_offset = doff;
         blob.payload_size = static_cast<std::size_t>(ln);
         blob.aid = static_cast<std::size_t>(aid);
-        blob.class_name = ctx_name;
+        blob.class_name = scopes.empty() ? ctx_name : fwf_class_name(scopes.back().second);
         blob.name = fwf_lookback_name(fwf, p);
+        if (blob.name.empty()) blob.name = ctx_name;
+        for (const auto& scope : scopes) {
+          const std::string label = scope.first.empty()
+              ? fwf_class_name(scope.second) : scope.first;
+          if (!blob.object_path.empty()) blob.object_path += '/';
+          blob.object_path += label;
+        }
         blob.payload.assign(
             fwf.begin() + static_cast<std::ptrdiff_t>(doff),
             fwf.begin() + static_cast<std::ptrdiff_t>(doff + ln));
         classify_fwf_blob(blob);
         decoded.blobs.push_back(std::move(blob));
-        p = doff + static_cast<std::size_t>(ln);
+        p = after;
         continue;
       }
       if (t == 0x04) {  // uint varint
         std::uint64_t v = 0;
         std::size_t nx = 0;
         if (read_oms_uint(fwf, r, v, nx)) { p = nx; continue; }
+        ++p; ++decoded.unclassified_bytes; continue;
+      }
+      if (t == 0x09) {
+        std::size_t nx = 0;
+        if (skip_oms_long(fwf, r, nx)) { p = nx; continue; }
         ++p; ++decoded.unclassified_bytes; continue;
       }
       if (t == 0x01) { p = r + 1; continue; }  // bool
@@ -463,10 +546,23 @@ FwfDecoded decode_fwf(const std::vector<std::uint8_t>& fwf) {
       ++p; ++decoded.unclassified_bytes; continue;
     }
     if (b == 0xA1) {  // object open
-      if (const auto hl = oms_object_header_len(fwf, p)) { p += *hl; continue; }
+      std::size_t header_len = 0;
+      std::uint32_t class_id = 0;
+      if (oms_object_header(fwf, p, header_len, class_id)) {
+        scopes.push_back(std::make_pair(std::string(), class_id));
+        ctx_name.clear();
+        p += header_len;
+        continue;
+      }
       ++p; ++decoded.unclassified_bytes; continue;
     }
-    if (b == 0xA2 || b == 0xA5 || b == 0xA6 || b == 0xA7 || b == 0xA9 ||
+    if (b == 0xA2) {
+      if (!scopes.empty()) scopes.pop_back();
+      ctx_name = scopes.empty() ? std::string() : scopes.back().first;
+      ++p;
+      continue;
+    }
+    if (b == 0xA5 || b == 0xA6 || b == 0xA7 || b == 0xA9 ||
         (b >= 0xB0 && b <= 0xBF) || b == 0x20) {
       ++p; continue;  // container / level / structural tokens
     }

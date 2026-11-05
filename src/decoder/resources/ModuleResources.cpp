@@ -21,6 +21,8 @@
 #include "RT_DIALOG/RT_DIALOG.h"
 #include "XBE_LOGO_RLE/XBE_LOGO_RLE.h"
 #include "FMIM/FMIM.h"
+#include "SIEMENS_MWIMAGE/SiemensMwImage.h"
+#include "SIEMENS_ADONIS/SiemensAdonis.h"
 #include "RawDetect.h"
 #include "../DecoderRoute.h"
 
@@ -77,6 +79,10 @@ ResourcePreview ModuleResources::preview(const ResourceEntry& entry,
         declared = XBE_LOGO_RLE::preview(entry); break;
     case ResourceKind::Fmim:
         declared = FMIM::preview(entry); break;
+    case ResourceKind::SiemensMwImage:
+        declared = SiemensMwImage::preview(entry); break;
+    case ResourceKind::SiemensAdonis:
+        declared = SiemensAdonis::preview(entry); break;
     case ResourceKind::Unknown:
         attemptedDeclaredDecoder = false; break;
     }

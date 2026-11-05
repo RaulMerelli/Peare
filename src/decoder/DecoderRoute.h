@@ -28,7 +28,9 @@ enum class ResourceKind {
     Menu,
     Dialog,
     XbeLogoRle,
-    Fmim
+    Fmim,
+    SiemensMwImage,
+    SiemensAdonis
 };
 
 class DecoderRoute final {

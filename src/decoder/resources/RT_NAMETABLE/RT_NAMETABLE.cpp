@@ -32,10 +32,9 @@ quint16 readUInt16(const QByteArray& data, qsizetype offset)
     return quint16(bytes[0]) | (quint16(bytes[1]) << 8);
 }
 
-// Windows resource types
-// Based on Win1 and Win2 prgref and WINMOD.C for Win3 by Matt Pietrek, 1992
-// Win1: https://www.os2museum.com/files/docs/win10sdk/windows-1.03-sdk-prgref-1986.pdf
-// Win2: https://www.os2museum.com/files/docs/win20sdk/windows-2.0-sdk-prgref-1987.pdf
+// Windows 1.x and 2.x resource types follow the SDK references.
+// https://www.os2museum.com/files/docs/win10sdk/windows-1.03-sdk-prgref-1986.pdf
+// https://www.os2museum.com/files/docs/win20sdk/windows-2.0-sdk-prgref-1987.pdf
 const QHash<quint16, QString> WindowsNeResourceTypes = {
     {0x01, QStringLiteral("RT_CURSOR")},
     {0x02, QStringLiteral("RT_BITMAP")},

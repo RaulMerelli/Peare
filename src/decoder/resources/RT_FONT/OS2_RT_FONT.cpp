@@ -299,10 +299,8 @@ bool parse(const QByteArray& data, Metrics& m, QString& error) {
         return false;
     }
 
-    // Resource containers from a few early OS/2 producers prepend bookkeeping
-    // bytes before the normal 20-byte signature block. Locate the documented
-    // "OS/2 FONT" marker and derive FONTMETRICS from it, while retaining the
-    // canonical zero-based layout used by the C# decoder.
+    // Some early OS/2 containers prepend bytes before the signature block.
+    // Locate the "OS/2 FONT" marker before reading FONTMETRICS.
     const int marker = data.indexOf(QByteArrayLiteral("OS/2 FONT"));
     if (marker >= 8 && marker - 8 <= 16)
         m.metricsOffset = marker - 8 + SignatureSize;
@@ -471,10 +469,8 @@ void closeContour(QVector<Contour>& contours, QVector<QPointF>& current) {
 
 QVector<Contour> decodeOutlineGlyph(const QByteArray& data, int start, int length, double unitScale,
                                     int ascenderUnits, QString& error) {
-    // Decodes the FOCA outline command stream stored in OS/2 GPI font
-    // resources. The original conic curves are sampled into scalable contour
-    // points; RT_FONT later rasterizes those contours with an alternate
-    // (even/odd) fill rule.
+    // Decode FOCA outline commands into scalable contours.
+    // RT_FONT rasterizes the contours with the even-odd fill rule.
     QVector<Contour> contours;
     if (length <= 0 || start < 0 || start >= data.size() || qint64(start) + length > data.size())
         return contours;
@@ -736,11 +732,20 @@ PreviewFont decodeOutlineFont(const QByteArray& data, const Metrics& m, QString&
 } // namespace
 
 bool OS2_RT_FONT::LooksLike(const QByteArray& data) {
-    // The signature is nine characters. Depending on the producer it is
-    // followed by NUL, a space or additional header data. Requiring the
-    // tenth byte to be a space caused valid standalone OS/2 fonts to be
-    // missed by RawDetect.
+    // Accept the nine-character signature with NUL, space, or header data after it.
     return data.size() >= 17 && data.mid(8, 9) == QByteArrayLiteral("OS/2 FONT");
+}
+
+bool OS2_RT_FONT::GetCodepoints(const QByteArray& data, QVector<quint32>* codepoints) {
+    if (!codepoints) return false;
+    codepoints->clear();
+    Metrics metrics;
+    QString error;
+    if (!parse(data, metrics, error)) return false;
+    codepoints->reserve(metrics.characterCount);
+    for (int index = 0; index < metrics.characterCount; ++index)
+        codepoints->push_back(quint32(metrics.firstCharacter + index));
+    return !codepoints->isEmpty();
 }
 
 QSharedPointer<PreviewFont> cachedOs2Font(const QByteArray& data, QString& error) {

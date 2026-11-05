@@ -48,7 +48,7 @@ jobs:
       - name: Run Opener tests
         run: |
           python3 -m pip install --upgrade --quiet pytest
-          python3 -m pytest tests -q
+          python3 tests/run_tests.py -q
         env:
           PEARE_OPENER_LIB: dist/libPeareOpener.so
           LD_LIBRARY_PATH: ${{ env.QT_ROOT_DIR }}/lib
@@ -94,7 +94,7 @@ jobs:
         shell: cmd
         run: |
           python -m pip install --upgrade --quiet pytest
-          python -m pytest tests -q
+          python tests/run_tests.py -q
         env:
           PEARE_OPENER_LIB: dist\PeareOpener.dll
 

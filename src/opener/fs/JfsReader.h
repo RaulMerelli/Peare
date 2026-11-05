@@ -1,12 +1,7 @@
 #pragma once
 
-// IBM Journaled File System (JFS) read-only reader.
-//
-// The implementation follows the Linux JFS on-disk structures: the primary
-// superblock at 0x8000, the fixed aggregate inode table, the fileset inode-map
-// inode, IAG inode allocation pages, directory dtrees and file xtrees.  It is
-// intentionally read-only and exposes regular files and symlinks through the
-// lazy DiscFileSystem byte-store interface.
+// Read JFS volumes and expose files and symlinks through lazy byte stores.
+// The parser follows the Linux JFS on-disk structures.
 
 #include <cstdint>
 #include <set>

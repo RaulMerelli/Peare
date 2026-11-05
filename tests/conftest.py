@@ -20,6 +20,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 _NAMES = ["PeareOpener.dll", "libPeareOpener.so", "libPeareOpener.dylib"]
+_DECODER_NAMES = ["PeareDecoder.dll", "libPeareDecoder.so", "libPeareDecoder.dylib"]
+_GUI_NAMES = ["Peare.exe", "Peare"]
 _SEARCH_DIRS = [
     "build-windows/Release", "build-windows", "build-windows/lib/Release",
     "build/Release", "build", "build/lib",
@@ -52,3 +54,34 @@ def peare_lib():
         pytest.skip("PeareOpener library not found; build it or set PEARE_OPENER_LIB")
     import peare_opener
     return peare_opener.load_library(path)
+
+
+@pytest.fixture(scope="session")
+def peare_decoder_path() -> Path:
+    env = os.environ.get("PEARE_DECODER_LIB")
+    if env and Path(env).is_file():
+        return Path(env)
+    for directory in _SEARCH_DIRS:
+        for name in _DECODER_NAMES:
+            path = ROOT / directory / name
+            if path.is_file():
+                return path
+    for build in ROOT.glob("build*"):
+        for name in _DECODER_NAMES:
+            hits = list(build.rglob(name))
+            if hits:
+                return hits[0]
+    pytest.skip("PeareDecoder library not found; build it or set PEARE_DECODER_LIB")
+
+
+@pytest.fixture(scope="session")
+def peare_gui_path() -> Path:
+    env = os.environ.get("PEARE_GUI_EXE")
+    if env and Path(env).is_file():
+        return Path(env)
+    for directory in _SEARCH_DIRS:
+        for name in _GUI_NAMES:
+            path = ROOT / directory / name
+            if path.is_file():
+                return path
+    pytest.skip("Official Peare GUI executable not found; set PEARE_GUI_EXE")

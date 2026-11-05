@@ -116,6 +116,7 @@ ModulePtr SdiModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
 
         ResourceEntry entry;
         entry.type = QStringLiteral("SDI_%1").arg(cleanType(rawType));
+        entry.hierarchyPath.push_back(entry.type);
         entry.isEmbeddedFile = true;
         entry.name = rawType.isEmpty()
             ? QStringLiteral("Section %1").arg(index + 1)

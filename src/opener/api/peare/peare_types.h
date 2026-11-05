@@ -24,10 +24,8 @@ extern "C" {
 
 typedef struct peare_opener_handle_s *peare_opener_handle;
 typedef struct peare_resource_handle_s *peare_resource_handle;
-/* A byte source to be opened. Created from a file path or from a resource's
- * content; both feed the single peare_opener_open entry point. Opaque; the
- * caller cannot tell whether it is a file, an in-memory array, or a lazy
- * layer-backed store. */
+/* An opaque source created from a file path or resource content.
+ * Pass it to peare_opener_open. */
 typedef struct peare_source_handle_s *peare_source_handle;
 
 typedef enum peare_status {
@@ -43,7 +41,10 @@ typedef enum peare_status {
     PEARE_STATUS_NOT_APPLICABLE,
     PEARE_STATUS_DECODE_FAILED,
     PEARE_STATUS_VALUE_NOT_DETERMINABLE,
-    PEARE_STATUS_UNSUPPORTED_INFO
+    PEARE_STATUS_UNSUPPORTED_INFO,
+    PEARE_STATUS_INTEGRITY_FAILED,
+    PEARE_STATUS_PASSWORD_REQUIRED,
+    PEARE_STATUS_PASSWORD_INVALID
 } peare_status;
 
 typedef enum peare_container_format {
@@ -118,7 +119,43 @@ typedef enum peare_container_format {
     PEARE_CONTAINER_PS2_ROMDIR,
     PEARE_CONTAINER_MSI,
     PEARE_CONTAINER_MSG,
-    PEARE_CONTAINER_ASAR
+    PEARE_CONTAINER_ASAR,
+    PEARE_CONTAINER_SIEMENS_ADONIS,
+    PEARE_CONTAINER_GZIP,
+    /* Reserved ABI IDs; the Opener no longer reports standalone font formats. */
+    PEARE_CONTAINER_BDF,
+    PEARE_CONTAINER_PSF,
+    PEARE_CONTAINER_TTF,
+    PEARE_CONTAINER_OTF,
+    PEARE_CONTAINER_WOFF,
+    PEARE_CONTAINER_PCF,
+    PEARE_CONTAINER_FZX,
+    PEARE_CONTAINER_PK,
+    PEARE_CONTAINER_AFM,
+    PEARE_CONTAINER_SVG_FONT,
+    PEARE_CONTAINER_SFN,
+    PEARE_CONTAINER_SHP,
+    PEARE_CONTAINER_DFONT,
+    PEARE_CONTAINER_EOT,
+    PEARE_CONTAINER_AMIGA_FONT,
+    PEARE_CONTAINER_BMF,
+    PEARE_CONTAINER_SNF,
+    PEARE_CONTAINER_TYPE1,
+    PEARE_CONTAINER_VFONT,
+    PEARE_CONTAINER_WOFF2,
+    PEARE_CONTAINER_TYPE3,
+    PEARE_CONTAINER_AMIGA_ANIM_FONT,
+    PEARE_CONTAINER_WINDOWS_FNT,
+    PEARE_CONTAINER_RESOURCE_FORK,
+    PEARE_CONTAINER_WPI,
+    PEARE_CONTAINER_BZIP2,
+    PEARE_CONTAINER_AR,
+    PEARE_CONTAINER_CPIO,
+    PEARE_CONTAINER_UNIX_COMPRESS,
+    PEARE_CONTAINER_UUE,
+    PEARE_CONTAINER_LHA,
+    PEARE_CONTAINER_SEVEN_ZIP,
+    PEARE_CONTAINER_RAR4
 } peare_container_format;
 
 typedef enum peare_platform {
@@ -139,68 +176,6 @@ typedef struct peare_blob_array {
 } peare_blob_array;
 
 PEARE_COMMON_API void peare_blob_free(peare_blob *blob);
-
-
-typedef enum peare_info_id {
-    PEARE_INFO_NONE = 0,
-    PEARE_INFO_FONT_FACE_NAME,
-    PEARE_INFO_FONT_DEVICE_NAME,
-    PEARE_INFO_FONT_COPYRIGHT,
-    PEARE_INFO_FONT_CODEPAGE,
-    PEARE_INFO_FONT_FIRST_CHARACTER,
-    PEARE_INFO_FONT_LAST_CHARACTER,
-    PEARE_INFO_FONT_DEFAULT_CHARACTER,
-    PEARE_INFO_FONT_BREAK_CHARACTER,
-    PEARE_INFO_FONT_FIXED_WIDTH,
-    PEARE_INFO_FONT_POINT_SIZE,
-    PEARE_INFO_FONT_PIXEL_HEIGHT,
-    PEARE_INFO_FONT_ASCENT,
-    PEARE_INFO_FONT_DESCENT,
-    PEARE_INFO_FONT_AVERAGE_WIDTH,
-    PEARE_INFO_FONT_MAXIMUM_WIDTH,
-    PEARE_INFO_FONT_GLYPH_COUNT,
-    PEARE_INFO_POINTER_HOTSPOT_X,
-    PEARE_INFO_POINTER_HOTSPOT_Y,
-    PEARE_INFO_BITMAP_WIDTH,
-    PEARE_INFO_BITMAP_HEIGHT,
-    PEARE_INFO_BITMAP_BPP,
-    PEARE_INFO_BITMAP_COMPRESSION,
-    PEARE_INFO_TEXT_CODEPAGE,
-    PEARE_INFO_RESOURCE_PLATFORM,
-    PEARE_INFO_RESOURCE_CONTAINER_FORMAT,
-    PEARE_INFO_RESOURCE_TYPE,
-    PEARE_INFO_RESOURCE_LANGUAGE
-} peare_info_id;
-
-typedef enum peare_value_type {
-    PEARE_VALUE_NONE = 0,
-    PEARE_VALUE_BOOL,
-    PEARE_VALUE_INT64,
-    PEARE_VALUE_UINT64,
-    PEARE_VALUE_UTF8,
-    PEARE_VALUE_BYTES
-} peare_value_type;
-
-typedef struct peare_value {
-    peare_value_type type;
-    union {
-        int boolean_value;
-        int64_t signed_value;
-        uint64_t unsigned_value;
-        struct {
-            const uint8_t *data;
-            size_t length;
-        } buffer;
-    } value;
-} peare_value;
-
-/* Colors use 0xRRGGBBAA byte order. */
-typedef struct peare_font_render_options {
-    uint32_t scale;
-    uint32_t padding;
-    uint32_t foreground_rgba;
-    uint32_t background_rgba;
-} peare_font_render_options;
 
 typedef struct peare_resource_context {
     peare_container_format container_format;

@@ -64,7 +64,7 @@ done
 
 for command_name in apt-get curl dpkg-deb file make perl pkg-config sha256sum tar; do
     command -v "$command_name" >/dev/null 2>&1 || {
-        echo "Tool mancante: $command_name. Esegui ./setup_linux_host.sh" >&2
+        echo "Tool mancante: $command_name. Esegui ./tools/build/setup_linux_host.sh" >&2
         exit 1
     }
 done
@@ -289,7 +289,7 @@ build_arm64() {
     local build_dir="$QT_CACHE_BASE/build-arm64"
 
     command -v aarch64-linux-gnu-g++ >/dev/null 2>&1 || {
-        echo "Cross-compiler ARM64 mancante. Esegui ./setup_linux_host.sh" >&2
+        echo "Cross-compiler ARM64 mancante. Esegui ./tools/build/setup_linux_host.sh" >&2
         exit 1
     }
 

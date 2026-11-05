@@ -4,6 +4,8 @@
 
 #include "../fs/DiscStore.h"
 
+#include <cstdint>
+
 namespace peare {
 
 class VhdxModule final : public IModule, public IResourceContainer {
@@ -16,7 +18,7 @@ public:
 
 private:
     static ModulePtr buildFromDisk(const fs::ByteStorePtr& disk, const QString& sourceName,
-                                   const QString& error);
+                                   const QString& error, std::uint32_t logicalSectorSize);
 
     ModuleInfo info_;
     QVector<ResourceEntry> resources_;

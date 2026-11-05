@@ -6,10 +6,7 @@
 
 namespace peare {
 
-// Opener module for WIM (Windows Imaging) images. Thin bridge over the
-// DiscUtils-compatible fs stack (fs::WimReader): files are exposed as
-// ResourceEntry nodes whose content is a lazy chunked (LZX/XPRESS) resource,
-// served through the common opener ABI like any other format.
+// Expose files from WIM images through lazy LZX/XPRESS resources.
 class WimModule final : public IModule, public IResourceContainer {
 public:
     static ModulePtr open(const QString& filePath);

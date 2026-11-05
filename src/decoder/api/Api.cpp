@@ -2,11 +2,26 @@
 #include "decoder/ResourceDecoder.h"
 #include "decoder/DecoderRoute.h"
 #include "decoder/resources/RT_FONT/RT_FONT.h"
+#include "decoder/resources/RT_FONT/OS2_RT_FONT.h"
+#include "decoder/resources/WAD/WadImageDecoder.h"
+#include "font/BitmapFont.h"
+#include "font/SfntFont.h"
+#include "font/AfmFont.h"
+#include "font/PfmFont.h"
+#include "font/MacFondFont.h"
+#include "font/SnfFont.h"
+#include "font/SvgFont.h"
+#include "font/SfnFont.h"
+#include "font/ShpFont.h"
+#include "font/Type1Font.h"
+#include "font/Type3Font.h"
 #include <QByteArray>
 #include <QBuffer>
 #include <QImage>
+#include <QSet>
 #include <QString>
 #include <QTextCodec>
+#include <algorithm>
 #include <climits>
 #include <cstdlib>
 #include <cstring>
@@ -96,6 +111,8 @@ peare_container_format toCFormat(peare::ModuleFormat f) {
         return PEARE_CONTAINER_SZDD;
     case peare::ModuleFormat::SIEMENS_IMG:
         return PEARE_CONTAINER_SIEMENS_IMG;
+    case peare::ModuleFormat::SIEMENS_ADONIS:
+        return PEARE_CONTAINER_SIEMENS_ADONIS;
     case peare::ModuleFormat::SIEMENS_FWF:
         return PEARE_CONTAINER_SIEMENS_FWF;
     case peare::ModuleFormat::SIEMENS_FSF:
@@ -311,6 +328,306 @@ peare_status getOs2FontInfo(const QByteArray& data, peare_info_id infoId, peare_
 
 peare_status getFontInfo(const peare::OpenedResource& resource, peare_info_id infoId,
                          peare_value* out) {
+    peare::font::Type1Font type1Font;
+    if (peare::font::parseType3Font(resource.payload, &type1Font, nullptr) ||
+        peare::font::parseType1Font(resource.payload, &type1Font, nullptr)) {
+        double widthTotal = 0;
+        double maximumWidth = 0;
+        for (const peare::font::Type1Glyph& glyph : type1Font.glyphs) {
+            widthTotal += glyph.advance;
+            maximumWidth = qMax(maximumWidth, glyph.advance);
+        }
+        switch (infoId) {
+        case PEARE_INFO_FONT_FACE_NAME:
+            return type1Font.name.isEmpty() ? PEARE_STATUS_VALUE_NOT_DETERMINABLE
+                                            : setUtf8Value(type1Font.name, out);
+        case PEARE_INFO_FONT_GLYPH_COUNT:
+            return setUnsignedValue(quint64(type1Font.glyphs.size()), out);
+        case PEARE_INFO_FONT_PIXEL_HEIGHT:
+            return setUnsignedValue(quint64(qMax(1.0, type1Font.ascent - type1Font.descent)), out);
+        case PEARE_INFO_FONT_ASCENT:
+            return setUnsignedValue(quint64(qMax(0.0, type1Font.ascent)), out);
+        case PEARE_INFO_FONT_DESCENT:
+            return setUnsignedValue(quint64(qMax(0.0, -type1Font.descent)), out);
+        case PEARE_INFO_FONT_AVERAGE_WIDTH:
+            return setUnsignedValue(type1Font.glyphs.isEmpty() ? 0
+                : quint64(widthTotal / type1Font.glyphs.size() * 16 / type1Font.unitsPerEm), out);
+        case PEARE_INFO_FONT_MAXIMUM_WIDTH:
+            return setUnsignedValue(quint64(maximumWidth * 16 / type1Font.unitsPerEm), out);
+        case PEARE_INFO_FONT_FIXED_WIDTH:
+            return setBooleanValue(type1Font.glyphs.isEmpty() ||
+                std::all_of(type1Font.glyphs.cbegin(), type1Font.glyphs.cend(),
+                    [&type1Font](const peare::font::Type1Glyph& glyph) {
+                        return glyph.advance == type1Font.glyphs.first().advance;
+                    }), out);
+        default:
+            return PEARE_STATUS_VALUE_NOT_DETERMINABLE;
+        }
+    }
+    peare::font::SnfFont snfFont;
+    if (peare::font::parseSnf(resource.payload, &snfFont, nullptr)) {
+        switch (infoId) {
+        case PEARE_INFO_FONT_FACE_NAME:
+            return snfFont.name.isEmpty() ? PEARE_STATUS_VALUE_NOT_DETERMINABLE
+                                          : setUtf8Value(snfFont.name, out);
+        case PEARE_INFO_FONT_FIRST_CHARACTER:
+            return setUnsignedValue(snfFont.firstCode, out);
+        case PEARE_INFO_FONT_LAST_CHARACTER:
+            return setUnsignedValue(snfFont.lastCode, out);
+        default:
+            return PEARE_STATUS_VALUE_NOT_DETERMINABLE;
+        }
+    }
+    peare::font::ShpFont shpFont;
+    if (peare::font::parseShpFont(resource.payload, &shpFont, nullptr)) {
+        quint32 first = 0xffffffffu;
+        quint32 last = 0;
+        for (const peare::font::ShpGlyph& glyph : shpFont.glyphs) {
+            first = qMin(first, quint32(glyph.code));
+            last = qMax(last, quint32(glyph.code));
+        }
+        switch (infoId) {
+        case PEARE_INFO_FONT_FACE_NAME:
+            return setUtf8Value(shpFont.name, out);
+        case PEARE_INFO_FONT_GLYPH_COUNT:
+            return setUnsignedValue(quint64(shpFont.glyphs.size()), out);
+        case PEARE_INFO_FONT_FIRST_CHARACTER:
+            return setUnsignedValue(first, out);
+        case PEARE_INFO_FONT_LAST_CHARACTER:
+            return setUnsignedValue(last, out);
+        case PEARE_INFO_FONT_PIXEL_HEIGHT:
+            return setUnsignedValue(quint64(shpFont.above) + shpFont.below, out);
+        case PEARE_INFO_FONT_ASCENT:
+            return setUnsignedValue(shpFont.above, out);
+        case PEARE_INFO_FONT_DESCENT:
+            return setUnsignedValue(shpFont.below, out);
+        default:
+            return PEARE_STATUS_VALUE_NOT_DETERMINABLE;
+        }
+    }
+    peare::font::SfnFont sfnFont;
+    if (peare::font::parseSfnFont(resource.payload, &sfnFont, nullptr)) {
+        quint32 first = 0xffffffffu;
+        quint32 last = 0;
+        quint64 widthTotal = 0;
+        quint32 maximumWidth = 0;
+        bool fixedWidth = !sfnFont.glyphs.isEmpty();
+        for (int i = 0; i < sfnFont.glyphs.size(); ++i) {
+            const peare::font::SfnGlyph& glyph = sfnFont.glyphs.at(i);
+            first = qMin(first, glyph.codepoint);
+            last = qMax(last, glyph.codepoint);
+            widthTotal += glyph.advanceX;
+            maximumWidth = qMax(maximumWidth, quint32(glyph.advanceX));
+            if (i && glyph.advanceX != sfnFont.glyphs.first().advanceX) fixedWidth = false;
+        }
+        switch (infoId) {
+        case PEARE_INFO_FONT_FACE_NAME:
+            return setUtf8Value(sfnFont.familyName, out);
+        case PEARE_INFO_FONT_GLYPH_COUNT:
+            return setUnsignedValue(quint64(sfnFont.glyphs.size()), out);
+        case PEARE_INFO_FONT_FIRST_CHARACTER:
+            return setUnsignedValue(first, out);
+        case PEARE_INFO_FONT_LAST_CHARACTER:
+            return setUnsignedValue(last, out);
+        case PEARE_INFO_FONT_FIXED_WIDTH:
+            return setBooleanValue(fixedWidth, out);
+        case PEARE_INFO_FONT_PIXEL_HEIGHT:
+            return setUnsignedValue(sfnFont.height, out);
+        case PEARE_INFO_FONT_ASCENT:
+            return setUnsignedValue(sfnFont.baseline, out);
+        case PEARE_INFO_FONT_DESCENT:
+            return setUnsignedValue(sfnFont.height - sfnFont.baseline, out);
+        case PEARE_INFO_FONT_AVERAGE_WIDTH:
+            return setUnsignedValue(sfnFont.glyphs.isEmpty() ? 0
+                : widthTotal / quint64(sfnFont.glyphs.size()), out);
+        case PEARE_INFO_FONT_MAXIMUM_WIDTH:
+            return setUnsignedValue(maximumWidth, out);
+        default:
+            return PEARE_STATUS_VALUE_NOT_DETERMINABLE;
+        }
+    }
+    peare::font::SvgFont svgFont;
+    if (peare::font::parseSvgFont(resource.payload, &svgFont, nullptr)) {
+        double widthTotal = 0;
+        double maximumWidth = 0;
+        bool fixedWidth = true;
+        for (int i = 0; i < svgFont.glyphs.size(); ++i) {
+            const double width = svgFont.glyphs.at(i).advance;
+            widthTotal += width;
+            maximumWidth = qMax(maximumWidth, width);
+            if (i && width != svgFont.glyphs.first().advance) fixedWidth = false;
+        }
+        switch (infoId) {
+        case PEARE_INFO_FONT_FACE_NAME:
+            return setUtf8Value(svgFont.familyName, out);
+        case PEARE_INFO_FONT_GLYPH_COUNT:
+            return setUnsignedValue(quint64(svgFont.glyphs.size()), out);
+        case PEARE_INFO_FONT_PIXEL_HEIGHT:
+            return setUnsignedValue(quint64(qMax(1, qRound(svgFont.ascent - svgFont.descent))), out);
+        case PEARE_INFO_FONT_ASCENT:
+            return setUnsignedValue(quint64(qMax(0, qRound(svgFont.ascent))), out);
+        case PEARE_INFO_FONT_DESCENT:
+            return setUnsignedValue(quint64(qMax(0, qRound(-svgFont.descent))), out);
+        case PEARE_INFO_FONT_AVERAGE_WIDTH:
+            return setUnsignedValue(svgFont.glyphs.isEmpty() ? 0
+                : quint64(qRound(widthTotal / svgFont.glyphs.size())), out);
+        case PEARE_INFO_FONT_MAXIMUM_WIDTH:
+            return setUnsignedValue(quint64(qRound(maximumWidth)), out);
+        case PEARE_INFO_FONT_FIXED_WIDTH:
+            return setBooleanValue(fixedWidth, out);
+        default:
+            return PEARE_STATUS_VALUE_NOT_DETERMINABLE;
+        }
+    }
+    peare::font::AfmFont afmFont;
+    if (peare::font::parseAfm(resource.payload, &afmFont, nullptr) ||
+        peare::font::parsePfm(resource.payload, &afmFont, nullptr)) {
+        int first = -1;
+        int last = -1;
+        double widthTotal = 0;
+        double maximumWidth = 0;
+        bool fixedWidth = true;
+        for (int i = 0; i < afmFont.glyphs.size(); ++i) {
+            const peare::font::AfmGlyph& glyph = afmFont.glyphs.at(i);
+            if (glyph.code >= 0) {
+                first = first < 0 ? glyph.code : qMin(first, glyph.code);
+                last = qMax(last, glyph.code);
+            }
+            widthTotal += glyph.advance;
+            maximumWidth = qMax(maximumWidth, glyph.advance);
+            if (i && glyph.advance != afmFont.glyphs.first().advance) fixedWidth = false;
+        }
+        switch (infoId) {
+        case PEARE_INFO_FONT_FACE_NAME:
+            return setUtf8Value(afmFont.familyName, out);
+        case PEARE_INFO_FONT_GLYPH_COUNT:
+            return setUnsignedValue(quint64(afmFont.glyphs.size()), out);
+        case PEARE_INFO_FONT_FIRST_CHARACTER:
+            return first < 0 ? PEARE_STATUS_VALUE_NOT_DETERMINABLE
+                             : setUnsignedValue(quint64(first), out);
+        case PEARE_INFO_FONT_LAST_CHARACTER:
+            return last < 0 ? PEARE_STATUS_VALUE_NOT_DETERMINABLE
+                            : setUnsignedValue(quint64(last), out);
+        case PEARE_INFO_FONT_FIXED_WIDTH:
+            return setBooleanValue(fixedWidth, out);
+        case PEARE_INFO_FONT_PIXEL_HEIGHT:
+            return setUnsignedValue(quint64(qMax(0, qRound(afmFont.ascender - afmFont.descender))), out);
+        case PEARE_INFO_FONT_ASCENT:
+            return setUnsignedValue(quint64(qMax(0, qRound(afmFont.ascender))), out);
+        case PEARE_INFO_FONT_DESCENT:
+            return setUnsignedValue(quint64(qMax(0, qRound(-afmFont.descender))), out);
+        case PEARE_INFO_FONT_AVERAGE_WIDTH:
+            return setUnsignedValue(afmFont.glyphs.isEmpty() ? 0
+                : quint64(qMax(0, qRound(widthTotal / afmFont.glyphs.size()))), out);
+        case PEARE_INFO_FONT_MAXIMUM_WIDTH:
+            return setUnsignedValue(quint64(qMax(0, qRound(maximumWidth))), out);
+        case PEARE_INFO_FONT_DEVICE_NAME:
+        case PEARE_INFO_FONT_COPYRIGHT:
+        case PEARE_INFO_FONT_CODEPAGE:
+        case PEARE_INFO_FONT_DEFAULT_CHARACTER:
+        case PEARE_INFO_FONT_BREAK_CHARACTER:
+        case PEARE_INFO_FONT_POINT_SIZE:
+            return PEARE_STATUS_VALUE_NOT_DETERMINABLE;
+        default:
+            return PEARE_STATUS_NOT_APPLICABLE;
+        }
+    }
+    peare::font::BitmapFont bitmapFont;
+    if (peare::font::parse(resource.payload, &bitmapFont, nullptr)) {
+        quint32 first = 0xffffffffu;
+        quint32 last = 0;
+        quint64 widthTotal = 0;
+        quint32 maximumWidth = 0;
+        for (const peare::font::Glyph& glyph : bitmapFont.glyphs) {
+            if (glyph.codepoint != 0xffffffffu) {
+                first = qMin(first, glyph.codepoint);
+                last = qMax(last, glyph.codepoint);
+            }
+            widthTotal += quint64(glyph.advance);
+            maximumWidth = qMax(maximumWidth, quint32(glyph.advance));
+        }
+        switch (infoId) {
+        case PEARE_INFO_FONT_FACE_NAME:
+            return setUtf8Value(bitmapFont.name, out);
+        case PEARE_INFO_FONT_DEVICE_NAME:
+        case PEARE_INFO_FONT_COPYRIGHT:
+        case PEARE_INFO_FONT_CODEPAGE:
+        case PEARE_INFO_FONT_DEFAULT_CHARACTER:
+        case PEARE_INFO_FONT_BREAK_CHARACTER:
+        case PEARE_INFO_FONT_POINT_SIZE:
+            return PEARE_STATUS_VALUE_NOT_DETERMINABLE;
+        case PEARE_INFO_FONT_FIRST_CHARACTER:
+            return first == 0xffffffffu ? PEARE_STATUS_VALUE_NOT_DETERMINABLE
+                                        : setUnsignedValue(first, out);
+        case PEARE_INFO_FONT_LAST_CHARACTER:
+            return first == 0xffffffffu ? PEARE_STATUS_VALUE_NOT_DETERMINABLE
+                                        : setUnsignedValue(last, out);
+        case PEARE_INFO_FONT_FIXED_WIDTH:
+            return setBooleanValue(bitmapFont.fixedWidth, out);
+        case PEARE_INFO_FONT_PIXEL_HEIGHT:
+            return setUnsignedValue(quint64(bitmapFont.height), out);
+        case PEARE_INFO_FONT_ASCENT:
+            return setUnsignedValue(quint64(bitmapFont.ascent), out);
+        case PEARE_INFO_FONT_DESCENT:
+            return setUnsignedValue(quint64(bitmapFont.descent), out);
+        case PEARE_INFO_FONT_AVERAGE_WIDTH:
+            return setUnsignedValue(bitmapFont.glyphs.isEmpty() ? 0
+                : widthTotal / quint64(bitmapFont.glyphs.size()), out);
+        case PEARE_INFO_FONT_MAXIMUM_WIDTH:
+            return setUnsignedValue(maximumWidth, out);
+        case PEARE_INFO_FONT_GLYPH_COUNT:
+            return setUnsignedValue(quint64(bitmapFont.glyphs.size()), out);
+        default:
+            return PEARE_STATUS_NOT_APPLICABLE;
+        }
+    }
+    peare::font::MacFondFont fondFont;
+    if (peare::font::parseMacFond(resource.payload, &fondFont, nullptr)) {
+        switch (infoId) {
+        case PEARE_INFO_FONT_FACE_NAME:
+            return PEARE_STATUS_VALUE_NOT_DETERMINABLE;
+        case PEARE_INFO_FONT_FIRST_CHARACTER:
+            return setUnsignedValue(fondFont.firstCharacter, out);
+        case PEARE_INFO_FONT_LAST_CHARACTER:
+            return setUnsignedValue(fondFont.lastCharacter, out);
+        default:
+            return PEARE_STATUS_VALUE_NOT_DETERMINABLE;
+        }
+    }
+    peare::font::SfntFont outlineFont;
+    if (peare::font::parseSfnt(resource.payload, &outlineFont, nullptr)) {
+        switch (infoId) {
+        case PEARE_INFO_FONT_FACE_NAME:
+            return setUtf8Value(outlineFont.familyName, out);
+        case PEARE_INFO_FONT_FIXED_WIDTH:
+            return setBooleanValue(outlineFont.fixedWidth, out);
+        case PEARE_INFO_FONT_PIXEL_HEIGHT:
+            return setUnsignedValue(quint64(qMax(1, int(outlineFont.ascent) + int(outlineFont.descent))), out);
+        case PEARE_INFO_FONT_ASCENT:
+            return outlineFont.ascent > 0 ? setUnsignedValue(quint64(outlineFont.ascent), out)
+                                          : PEARE_STATUS_VALUE_NOT_DETERMINABLE;
+        case PEARE_INFO_FONT_DESCENT:
+            return outlineFont.descent > 0 ? setUnsignedValue(quint64(outlineFont.descent), out)
+                                           : PEARE_STATUS_VALUE_NOT_DETERMINABLE;
+        case PEARE_INFO_FONT_AVERAGE_WIDTH:
+            return setUnsignedValue(quint64(outlineFont.averageAdvance) * 16 / outlineFont.unitsPerEm, out);
+        case PEARE_INFO_FONT_MAXIMUM_WIDTH:
+            return setUnsignedValue(quint64(outlineFont.maximumAdvance) * 16 / outlineFont.unitsPerEm, out);
+        case PEARE_INFO_FONT_GLYPH_COUNT:
+            return setUnsignedValue(outlineFont.glyphCount, out);
+        case PEARE_INFO_FONT_DEVICE_NAME:
+        case PEARE_INFO_FONT_COPYRIGHT:
+        case PEARE_INFO_FONT_CODEPAGE:
+        case PEARE_INFO_FONT_FIRST_CHARACTER:
+        case PEARE_INFO_FONT_LAST_CHARACTER:
+        case PEARE_INFO_FONT_DEFAULT_CHARACTER:
+        case PEARE_INFO_FONT_BREAK_CHARACTER:
+        case PEARE_INFO_FONT_POINT_SIZE:
+            return PEARE_STATUS_VALUE_NOT_DETERMINABLE;
+        default:
+            return PEARE_STATUS_NOT_APPLICABLE;
+        }
+    }
     if (resource.context.platform == peare::ResourcePlatform::Os2)
         return getOs2FontInfo(resource.payload, infoId, out);
     return getWindowsFontInfo(resource.payload, infoId, out);
@@ -363,6 +680,15 @@ peare_status allocateBlobArray(size_t count, peare_blob_array* out) {
 
 bool prepareFontResource(peare::OpenedResource* resource) {
     if (!resource) return false;
+    QVector<peare::font::SfntFont> sfntFaces;
+    if (peare::font::parseTtcCollection(resource->payload, &sfntFaces, nullptr) &&
+        !sfntFaces.isEmpty())
+        resource->payload = sfntFaces.first().sfntBytes;
+    QVector<QByteArray> sfnFaces;
+    if (peare::font::parseSfnCollection(resource->payload, &sfnFaces, nullptr) &&
+        !sfnFaces.isEmpty())
+        resource->payload = sfnFaces.first();
+
     const QString type = resource->context.type.trimmed().toUpper();
     if (type == QStringLiteral("RT_FONT") || type == QStringLiteral("FONT")) return true;
     if (type == QStringLiteral("RT_FONTDIR") || type == QStringLiteral("FONTDIR")) return false;
@@ -376,6 +702,21 @@ bool prepareFontResource(peare::OpenedResource* resource) {
         resource->context.type = QStringLiteral("RT_FONT");
         if (resource->context.platform == peare::ResourcePlatform::Unknown)
             resource->context.platform = peare::ResourcePlatform::Windows;
+        return true;
+    }
+    if (peare::resources::RT_FONT::LooksLikeFont(resource->payload)) {
+        resource->context.type = QStringLiteral("RT_FONT");
+        return true;
+    }
+    peare::font::MacFondFont fond;
+    if (peare::font::parseMacFond(resource->payload, &fond, nullptr)) {
+        resource->context.type = QStringLiteral("RT_FONT");
+        return true;
+    }
+    peare::font::BitmapFont bitmap;
+    if (peare::font::parse(resource->payload, &bitmap, nullptr) &&
+        bitmap.format == peare::font::Format::MacNfnt) {
+        resource->context.type = QStringLiteral("RT_FONT");
         return true;
     }
     return false;
@@ -402,10 +743,11 @@ peare_status peare_decode_images(const uint8_t* payload, size_t payload_length,
     if (load_status != PEARE_STATUS_OK) return load_status;
 
     try {
+        if (isFontResource(opened)) return PEARE_STATUS_NOT_APPLICABLE;
         const peare::ResourcePreview preview = peare::ResourceDecoder::preview(opened);
         if (!preview.error.isEmpty()) return PEARE_STATUS_DECODE_FAILED;
         // Fonts are rendered only through peare_font_render(); preview images are a GUI concern.
-        if (isFontResource(opened) || preview.images.isEmpty()) return PEARE_STATUS_NOT_APPLICABLE;
+        if (preview.images.isEmpty()) return PEARE_STATUS_NOT_APPLICABLE;
 
         peare_status status =
             allocateBlobArray(static_cast<size_t>(preview.images.size()), out_pngs);
@@ -419,6 +761,61 @@ peare_status peare_decode_images(const uint8_t* payload, size_t payload_length,
                 return PEARE_STATUS_DECODE_FAILED;
             }
             status = copyByteArray(png, &out_pngs->items[static_cast<size_t>(i)]);
+            if (status != PEARE_STATUS_OK) {
+                peare_blob_array_free(out_pngs);
+                return status;
+            }
+        }
+        return PEARE_STATUS_OK;
+    } catch (const std::bad_alloc&) {
+        peare_blob_array_free(out_pngs);
+        return PEARE_STATUS_ALLOCATION_FAILED;
+    } catch (...) {
+        peare_blob_array_free(out_pngs);
+        return PEARE_STATUS_DECODE_FAILED;
+    }
+}
+
+peare_status peare_decode_images_with_resolver(const uint8_t* payload, size_t payload_length,
+                                               const char* platform_utf8,
+                                               const char* resource_type_utf8,
+                                               peare_resource_resolver_fn resolver,
+                                               void* resolver_user_data,
+                                               peare_blob_array* out_pngs) {
+    if (!out_pngs || !resolver || (!payload && payload_length) || payload_length > size_t(INT_MAX))
+        return PEARE_STATUS_INVALID_ARGUMENT;
+    clearBlobArray(out_pngs);
+    const QString type = normalizedContextText(resource_type_utf8);
+    if (type != QLatin1String("WAD_DOOM_PATCH") && type != QLatin1String("WAD_DOOM_SPRITE") &&
+        type != QLatin1String("WAD_TEXTUREX"))
+        return peare_decode_images(payload, payload_length, platform_utf8, resource_type_utf8, out_pngs);
+    const QByteArray data(reinterpret_cast<const char*>(payload), int(payload_length));
+    const peare::resources::WadLumpResolver findLump = [resolver, resolver_user_data](
+        const QString& type, const QString& name) {
+        const QByteArray typeUtf8 = type.toUtf8();
+        const QByteArray nameUtf8 = name.toUtf8();
+        const uint8_t* bytes = nullptr;
+        size_t length = 0;
+        if (resolver(resolver_user_data, typeUtf8.constData(), size_t(typeUtf8.size()),
+                     nameUtf8.constData(), size_t(nameUtf8.size()), &bytes, &length) != PEARE_STATUS_OK ||
+            (!bytes && length) || length > size_t(INT_MAX))
+            return QByteArray();
+        return QByteArray(reinterpret_cast<const char*>(bytes), int(length));
+    };
+    try {
+        QString error;
+        const QVector<QImage> images = peare::resources::WadImageDecoder::decode(data, type, findLump, &error);
+        if (images.isEmpty()) return error.isEmpty() ? PEARE_STATUS_NOT_APPLICABLE : PEARE_STATUS_DECODE_FAILED;
+        peare_status status = allocateBlobArray(size_t(images.size()), out_pngs);
+        if (status != PEARE_STATUS_OK) return status;
+        for (int i = 0; i < images.size(); ++i) {
+            QByteArray png;
+            QBuffer buffer(&png);
+            if (!buffer.open(QIODevice::WriteOnly) || !images[i].save(&buffer, "PNG")) {
+                peare_blob_array_free(out_pngs);
+                return PEARE_STATUS_DECODE_FAILED;
+            }
+            status = copyByteArray(png, &out_pngs->items[size_t(i)]);
             if (status != PEARE_STATUS_OK) {
                 peare_blob_array_free(out_pngs);
                 return status;
@@ -463,10 +860,10 @@ peare_status peare_decode_texts(const uint8_t* payload, size_t payload_length,
     }
 }
 
-peare_status peare_font_render(const uint8_t* payload, size_t payload_length,
+peare_status peare_font_render_with_codepage(const uint8_t* payload, size_t payload_length,
                                const char* platform_utf8, const char* resource_type_utf8,
-                               const char* text_utf8, const peare_font_render_options* options,
-                               peare_blob* out_png) {
+                               uint32_t code_page, const char* text_utf8,
+                               const peare_font_render_options* options, peare_blob* out_png) {
     if (!out_png) return PEARE_STATUS_INVALID_ARGUMENT;
     out_png->bytes = nullptr;
     out_png->length = 0;
@@ -474,6 +871,7 @@ peare_status peare_font_render(const uint8_t* payload, size_t payload_length,
     peare_status load_status =
         loadResource(payload, payload_length, platform_utf8, resource_type_utf8, &opened);
     if (load_status != PEARE_STATUS_OK) return load_status;
+    if (code_page) opened.context.codePage = code_page;
     if (!text_utf8) return PEARE_STATUS_INVALID_ARGUMENT;
     if (!prepareFontResource(&opened)) return PEARE_STATUS_NOT_APPLICABLE;
 
@@ -508,6 +906,63 @@ peare_status peare_font_render(const uint8_t* payload, size_t payload_length,
         return PEARE_STATUS_ALLOCATION_FAILED;
     } catch (...) {
         freeLocalBlob(out_png);
+        return PEARE_STATUS_DECODE_FAILED;
+    }
+}
+
+peare_status peare_font_supports_text_with_codepage(
+    const uint8_t* payload, size_t payload_length, const char* platform_utf8,
+    const char* resource_type_utf8, uint32_t code_page, const char* text_utf8,
+    int* out_supported) {
+    if (!out_supported || !text_utf8) return PEARE_STATUS_INVALID_ARGUMENT;
+    *out_supported = 0;
+    peare::OpenedResource opened;
+    const peare_status status = loadResource(payload, payload_length, platform_utf8,
+                                             resource_type_utf8, &opened);
+    if (status != PEARE_STATUS_OK) return status;
+    if (code_page) opened.context.codePage = code_page;
+    if (!prepareFontResource(&opened)) return PEARE_STATUS_NOT_APPLICABLE;
+
+    try {
+        const QString text = QString::fromUtf8(text_utf8);
+        peare::font::SfntFont sfnt;
+        if (peare::font::parseSfnt(opened.payload, &sfnt, nullptr)) {
+            QSet<quint32> mappedCodepoints;
+            for (quint32 codepoint : sfnt.characterMap)
+                mappedCodepoints.insert(codepoint);
+            *out_supported = 1;
+            for (quint32 codepoint : text.toUcs4()) {
+                if (!QChar::isSpace(codepoint) && !mappedCodepoints.contains(codepoint)) {
+                    *out_supported = 0;
+                    break;
+                }
+            }
+            return PEARE_STATUS_OK;
+        }
+
+        for (uint codepoint : text.toUcs4()) {
+            if (QChar::isSpace(codepoint)) continue;
+            QString error;
+            const QImage image = peare::ResourceDecoder::renderFont(
+                opened, QString::fromUcs4(&codepoint, 1), 1, 4, qRgba(0, 0, 0, 255),
+                qRgba(255, 255, 255, 255), &error);
+            if (image.isNull()) return PEARE_STATUS_DECODE_FAILED;
+            bool hasInk = false;
+            for (int y = 0; !hasInk && y < image.height(); ++y) {
+                for (int x = 0; x < image.width(); ++x) {
+                    if (image.pixelColor(x, y) != QColor(Qt::white)) {
+                        hasInk = true;
+                        break;
+                    }
+                }
+            }
+            if (!hasInk) return PEARE_STATUS_OK;
+        }
+        *out_supported = 1;
+        return PEARE_STATUS_OK;
+    } catch (const std::bad_alloc&) {
+        return PEARE_STATUS_ALLOCATION_FAILED;
+    } catch (...) {
         return PEARE_STATUS_DECODE_FAILED;
     }
 }
@@ -624,11 +1079,309 @@ void peare_blob_free(peare_blob* blob) {
     freeLocalBlob(blob);
 }
 
+peare_status peare_font_get_codepoints_with_codepage(const uint8_t* payload, size_t payload_length,
+                                       const char* platform_utf8, const char* resource_type_utf8,
+                                       uint32_t code_page,
+                                       peare_font_codepoint_array* out_codepoints) {
+    if (!out_codepoints) return PEARE_STATUS_INVALID_ARGUMENT;
+    out_codepoints->items = nullptr;
+    out_codepoints->count = 0;
+    out_codepoints->glyph_index_mode = 0;
+    try {
+        peare::OpenedResource opened;
+        const peare_status status = loadResource(payload, payload_length, platform_utf8,
+                                                 resource_type_utf8, &opened);
+        if (status != PEARE_STATUS_OK) return status;
+        if (code_page) opened.context.codePage = code_page;
+        if (!prepareFontResource(&opened)) return PEARE_STATUS_NOT_APPLICABLE;
+        QVector<quint32> characters;
+        int glyphIndexMode = 0;
+        peare::font::Type1Font type1Font;
+        peare::font::SfntFont font;
+        if (peare::resources::RT_FONT::LooksLikeOs2Fnt(opened.payload)) {
+            if (!peare::resources::OS2_RT_FONT::GetCodepoints(opened.payload, &characters))
+                return PEARE_STATUS_DECODE_FAILED;
+        } else if (peare::resources::RT_FONT::LooksLikeMetricsFont(opened.payload)) {
+            return PEARE_STATUS_NOT_APPLICABLE;
+        } else if (peare::resources::RT_FONT::LooksLikeWindowsFnt(opened.payload)) {
+            peare_value first = {};
+            peare_value last = {};
+            if (getFontInfo(opened, PEARE_INFO_FONT_FIRST_CHARACTER, &first) != PEARE_STATUS_OK ||
+                getFontInfo(opened, PEARE_INFO_FONT_LAST_CHARACTER, &last) != PEARE_STATUS_OK ||
+                first.value.unsigned_value > last.value.unsigned_value ||
+                last.value.unsigned_value - first.value.unsigned_value >= 65536)
+                return PEARE_STATUS_DECODE_FAILED;
+            characters.reserve(int(last.value.unsigned_value - first.value.unsigned_value + 1));
+            for (quint64 code = first.value.unsigned_value;
+                 code <= last.value.unsigned_value; ++code)
+                characters.push_back(quint32(code));
+        } else if (peare::font::parseType3Font(opened.payload, &type1Font, nullptr) ||
+            peare::font::parseType1Font(opened.payload, &type1Font, nullptr)) {
+            glyphIndexMode = 1;
+            for (int i = 0; i < type1Font.glyphs.size(); ++i)
+                characters.push_back(quint32(i));
+        } else if (peare::font::parseSfnt(opened.payload, &font, nullptr)) {
+            glyphIndexMode = 1;
+            for (quint32 i = 0; i < font.glyphCount; ++i)
+                characters.push_back(i);
+        } else {
+            peare::font::BitmapFont bitmapFont;
+            if (peare::font::parse(opened.payload, &bitmapFont, nullptr)) {
+                if (bitmapFont.format == peare::font::Format::Bmf ||
+                    bitmapFont.format == peare::font::Format::Psf1 ||
+                    bitmapFont.format == peare::font::Format::Psf2) {
+                    for (const peare::font::Glyph& glyph : bitmapFont.glyphs)
+                        if (glyph.codepoint != 0xffffffffu)
+                            characters.push_back(glyph.codepoint);
+                    if (characters.isEmpty() && !bitmapFont.glyphs.isEmpty()) {
+                        glyphIndexMode = 1;
+                        for (int i = 0; i < bitmapFont.glyphs.size(); ++i)
+                            characters.push_back(quint32(i));
+                    }
+                } else {
+                    glyphIndexMode = 1;
+                    for (int i = 0; i < bitmapFont.glyphs.size(); ++i)
+                        characters.push_back(quint32(i));
+                }
+            } else {
+                peare::font::SfnFont sfnFont;
+                if (peare::font::parseSfnFont(opened.payload, &sfnFont, nullptr)) {
+                    glyphIndexMode = 1;
+                    for (int i = 0; i < sfnFont.glyphs.size(); ++i)
+                        characters.push_back(quint32(i));
+                } else {
+                    peare::font::SvgFont svgFont;
+                    if (peare::font::parseSvgFont(opened.payload, &svgFont, nullptr)) {
+                        for (const peare::font::SvgGlyph& glyph : svgFont.glyphs) {
+                            const QVector<uint> unicode = glyph.unicode.toUcs4();
+                            if (unicode.size() == 1) characters.push_back(unicode.first());
+                        }
+                        if (characters.isEmpty()) {
+                            glyphIndexMode = 1;
+                            for (int i = 0; i < svgFont.glyphs.size(); ++i)
+                                characters.push_back(quint32(i));
+                        }
+                    } else {
+                        peare::font::ShpFont shpFont;
+                        if (!peare::font::parseShpFont(opened.payload, &shpFont, nullptr))
+                            return PEARE_STATUS_NOT_APPLICABLE;
+                        if (opened.context.codePage && shpFont.unicode &&
+                            shpFont.encoding == 1 &&
+                            peare::font::mapPackedShpUnicode(&shpFont,
+                                opened.context.codePage, nullptr)) {
+                            for (auto it = shpFont.glyphByUnicode.cbegin();
+                                 it != shpFont.glyphByUnicode.cend(); ++it)
+                                characters.push_back(it.key());
+                        } else {
+                            glyphIndexMode = 1;
+                            for (int i = 0; i < shpFont.glyphs.size(); ++i)
+                                characters.push_back(quint32(i));
+                        }
+                    }
+                }
+            }
+        }
+        std::sort(characters.begin(), characters.end());
+        characters.erase(std::unique(characters.begin(), characters.end()), characters.end());
+        if (size_t(characters.size()) > SIZE_MAX / sizeof(uint32_t))
+            return PEARE_STATUS_ALLOCATION_FAILED;
+        auto* items = characters.isEmpty() ? nullptr : static_cast<uint32_t*>(
+            std::malloc(size_t(characters.size()) * sizeof(uint32_t)));
+        if (!items && !characters.isEmpty()) return PEARE_STATUS_ALLOCATION_FAILED;
+        for (int i = 0; i < characters.size(); ++i) items[i] = characters.at(i);
+        out_codepoints->items = items;
+        out_codepoints->count = size_t(characters.size());
+        out_codepoints->glyph_index_mode = glyphIndexMode;
+        return PEARE_STATUS_OK;
+    } catch (const std::bad_alloc&) {
+        return PEARE_STATUS_ALLOCATION_FAILED;
+    } catch (...) {
+        return PEARE_STATUS_DECODE_FAILED;
+    }
+}
+
+peare_status peare_font_render_glyph_index_with_codepage(const uint8_t* payload,
+                                           size_t payload_length,
+                                           const char* platform_utf8,
+                                           const char* resource_type_utf8,
+                                           uint32_t code_page,
+                                           uint32_t glyph_index,
+                                           const peare_font_render_options* options,
+                                           peare_blob* out_png) {
+    if (!out_png) return PEARE_STATUS_INVALID_ARGUMENT;
+    out_png->bytes = nullptr;
+    out_png->length = 0;
+    peare::OpenedResource opened;
+    const peare_status status = loadResource(payload, payload_length, platform_utf8,
+                                             resource_type_utf8, &opened);
+    if (status != PEARE_STATUS_OK) return status;
+    if (code_page) opened.context.codePage = code_page;
+    if (!prepareFontResource(&opened)) return PEARE_STATUS_NOT_APPLICABLE;
+    uint32_t scale = 1;
+    uint32_t padding = 0;
+    uint32_t foreground = 0x000000FFu;
+    uint32_t background = 0xFFFFFFFFu;
+    if (options) {
+        scale = options->scale;
+        padding = options->padding;
+        foreground = options->foreground_rgba;
+        background = options->background_rgba;
+    }
+    if (!scale || scale > uint32_t(INT_MAX) || padding > uint32_t(INT_MAX))
+        return PEARE_STATUS_INVALID_ARGUMENT;
+    try {
+        QString error;
+        const QImage image = peare::ResourceDecoder::renderFontGlyph(
+            opened, glyph_index, int(scale), int(padding), fromRgba32(foreground),
+            fromRgba32(background), &error);
+        if (image.isNull()) return PEARE_STATUS_DECODE_FAILED;
+        QByteArray png;
+        QBuffer buffer(&png);
+        if (!buffer.open(QIODevice::WriteOnly) || !image.save(&buffer, "PNG"))
+            return PEARE_STATUS_DECODE_FAILED;
+        return copyByteArray(png, out_png);
+    } catch (const std::bad_alloc&) {
+        freeLocalBlob(out_png);
+        return PEARE_STATUS_ALLOCATION_FAILED;
+    } catch (...) {
+        freeLocalBlob(out_png);
+        return PEARE_STATUS_DECODE_FAILED;
+    }
+}
+
+peare_status peare_font_render(const uint8_t* payload, size_t payload_length,
+                               const char* platform_utf8, const char* resource_type_utf8,
+                               const char* text_utf8, const peare_font_render_options* options,
+                               peare_blob* out_png) {
+    return peare_font_render_with_codepage(payload, payload_length, platform_utf8,
+        resource_type_utf8, 0, text_utf8, options, out_png);
+}
+
+peare_status peare_font_get_codepoints(const uint8_t* payload, size_t payload_length,
+                                       const char* platform_utf8, const char* resource_type_utf8,
+                                       peare_font_codepoint_array* out_codepoints) {
+    return peare_font_get_codepoints_with_codepage(payload, payload_length, platform_utf8,
+        resource_type_utf8, 0, out_codepoints);
+}
+
+peare_status peare_font_get_collection_faces(const uint8_t* payload, size_t payload_length,
+                                             peare_blob_array* out_faces) {
+    if (!out_faces || (!payload && payload_length) ||
+        payload_length > static_cast<size_t>(INT_MAX))
+        return PEARE_STATUS_INVALID_ARGUMENT;
+    clearBlobArray(out_faces);
+    try {
+        const QByteArray bytes(reinterpret_cast<const char*>(payload), int(payload_length));
+        QVector<QByteArray> faces;
+        QVector<peare::font::SfntFont> sfntFaces;
+        if (peare::font::parseTtcCollection(bytes, &sfntFaces, nullptr)) {
+            faces.reserve(sfntFaces.size());
+            for (const auto& face : sfntFaces) faces.push_back(face.sfntBytes);
+        } else if (!peare::font::parseSfnCollection(bytes, &faces, nullptr)) {
+            return PEARE_STATUS_NOT_APPLICABLE;
+        }
+        peare_status status = allocateBlobArray(static_cast<size_t>(faces.size()), out_faces);
+        if (status != PEARE_STATUS_OK) return status;
+        for (int i = 0; i < faces.size(); ++i) {
+            status = copyByteArray(faces.at(i), &out_faces->items[size_t(i)]);
+            if (status != PEARE_STATUS_OK) {
+                peare_blob_array_free(out_faces);
+                return status;
+            }
+        }
+        return PEARE_STATUS_OK;
+    } catch (const std::bad_alloc&) {
+        peare_blob_array_free(out_faces);
+        return PEARE_STATUS_ALLOCATION_FAILED;
+    } catch (...) {
+        peare_blob_array_free(out_faces);
+        return PEARE_STATUS_DECODE_FAILED;
+    }
+}
+
+peare_status peare_font_render_glyph_index(const uint8_t* payload, size_t payload_length,
+                                           const char* platform_utf8,
+                                           const char* resource_type_utf8,
+                                           uint32_t glyph_index,
+                                           const peare_font_render_options* options,
+                                           peare_blob* out_png) {
+    return peare_font_render_glyph_index_with_codepage(payload, payload_length, platform_utf8,
+        resource_type_utf8, 0, glyph_index, options, out_png);
+}
+
+peare_status peare_font_render_glyph_indexes_with_codepage(
+    const uint8_t* payload, size_t payload_length, const char* platform_utf8,
+    const char* resource_type_utf8, uint32_t code_page, const uint32_t* glyph_indexes,
+    size_t glyph_count, const peare_font_render_options* options, peare_blob_array* out_pngs) {
+    if (!out_pngs) return PEARE_STATUS_INVALID_ARGUMENT;
+    clearBlobArray(out_pngs);
+    if ((!glyph_indexes && glyph_count) || glyph_count > 8192)
+        return PEARE_STATUS_INVALID_ARGUMENT;
+    peare::OpenedResource opened;
+    const peare_status status = loadResource(payload, payload_length, platform_utf8,
+                                             resource_type_utf8, &opened);
+    if (status != PEARE_STATUS_OK) return status;
+    if (code_page) opened.context.codePage = code_page;
+    if (!prepareFontResource(&opened)) return PEARE_STATUS_NOT_APPLICABLE;
+    uint32_t scale = 1;
+    uint32_t padding = 0;
+    uint32_t foreground = 0x000000FFu;
+    uint32_t background = 0xFFFFFFFFu;
+    if (options) {
+        scale = options->scale;
+        padding = options->padding;
+        foreground = options->foreground_rgba;
+        background = options->background_rgba;
+    }
+    if (!scale || scale > uint32_t(INT_MAX) || padding > uint32_t(INT_MAX))
+        return PEARE_STATUS_INVALID_ARGUMENT;
+    try {
+        QVector<quint32> indexes;
+        indexes.reserve(int(glyph_count));
+        for (size_t i = 0; i < glyph_count; ++i) indexes.push_back(glyph_indexes[i]);
+        QString error;
+        const QVector<QImage> images = peare::ResourceDecoder::renderFontGlyphs(
+            opened, indexes, int(scale), int(padding), fromRgba32(foreground),
+            fromRgba32(background), &error);
+        if (images.size() != int(glyph_count)) return PEARE_STATUS_DECODE_FAILED;
+        peare_status result = allocateBlobArray(glyph_count, out_pngs);
+        if (result != PEARE_STATUS_OK) return result;
+        for (int i = 0; i < images.size(); ++i) {
+            QByteArray png;
+            QBuffer buffer(&png);
+            if (!buffer.open(QIODevice::WriteOnly) || !images.at(i).save(&buffer, "PNG")) {
+                peare_blob_array_free(out_pngs);
+                return PEARE_STATUS_DECODE_FAILED;
+            }
+            result = copyByteArray(png, &out_pngs->items[size_t(i)]);
+            if (result != PEARE_STATUS_OK) {
+                peare_blob_array_free(out_pngs);
+                return result;
+            }
+        }
+        return PEARE_STATUS_OK;
+    } catch (const std::bad_alloc&) {
+        peare_blob_array_free(out_pngs);
+        return PEARE_STATUS_ALLOCATION_FAILED;
+    } catch (...) {
+        peare_blob_array_free(out_pngs);
+        return PEARE_STATUS_DECODE_FAILED;
+    }
+}
+
 void peare_blob_array_free(peare_blob_array* array) {
     if (!array) return;
     for (size_t i = 0; i < array->count; ++i) freeLocalBlob(&array->items[i]);
     std::free(array->items);
     clearBlobArray(array);
+}
+
+void peare_font_codepoint_array_free(peare_font_codepoint_array* array) {
+    if (!array) return;
+    std::free(array->items);
+    array->items = nullptr;
+    array->count = 0;
+    array->glyph_index_mode = 0;
 }
 
 void peare_value_free(peare_value* value) {

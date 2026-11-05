@@ -1,9 +1,7 @@
 #pragma once
 
-// Master Boot Record (MBR) and GUID Partition Table (GPT) parsing over a disk
-// byte store. Given the raw disk exposed by a virtual-disk container (VMDK, and
-// later VHD/raw), it enumerates the partitions as byte ranges so each can be
-// handed to the file-system openers as a nested container.
+// Parse MBR and GPT tables over a disk byte store.
+// Expose partitions as byte ranges for nested file-system openers.
 
 #include <cstdint>
 #include <string>
@@ -24,7 +22,8 @@ struct PartitionInfo {
 
 // Reads the partition table (GPT preferred, else MBR incl. extended chain).
 // Returns an empty list when no valid table is present.
-std::vector<PartitionInfo> readPartitionTable(const ByteStorePtr& disk);
+std::vector<PartitionInfo> readPartitionTable(const ByteStorePtr& disk,
+                                              std::int64_t logicalSectorSize = 512);
 bool hasApplePartitionMap(const ByteStorePtr& disk);
 bool hasMbrOrGptPartitionTable(const ByteStorePtr& disk);
 

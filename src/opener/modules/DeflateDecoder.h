@@ -16,6 +16,9 @@ public:
     virtual ~InflateInput() {}
     virtual bool readByte(std::uint8_t* value) = 0;
     virtual std::size_t consumed() const = 0;
+    virtual bool memoryView(const std::uint8_t**, std::size_t*, std::size_t**) {
+        return false;
+    }
 };
 
 class MemoryInflateInput final : public InflateInput {
@@ -24,6 +27,8 @@ public:
 
     bool readByte(std::uint8_t* value) override;
     std::size_t consumed() const override;
+    bool memoryView(const std::uint8_t** data, std::size_t* size,
+                    std::size_t** position) override;
 
 private:
     const std::uint8_t* data_;
@@ -49,11 +54,38 @@ bool inflateRawExact(InflateInput& input, std::size_t expected,
                      std::vector<std::uint8_t>* output,
                      std::string* error = nullptr);
 
+bool inflateRawExactToBuffer(const std::uint8_t* data, std::size_t size,
+                             std::size_t expected, std::uint8_t* output,
+                             std::string* error = nullptr);
+
+bool inflateRawExactToBuffer(const std::uint8_t* data, std::size_t size,
+                             std::size_t expected,
+                             const std::vector<std::uint8_t>* dictionary,
+                             std::uint8_t* output,
+                             std::string* error = nullptr);
+
+bool inflateRawExactToBuffer(const std::uint8_t* data, std::size_t size,
+                             std::size_t expected,
+                             const std::uint8_t* dictionary,
+                             std::size_t dictionarySize,
+                             std::uint8_t* output,
+                             std::string* error = nullptr);
+
 bool inflateRawExact(const std::uint8_t* data, std::size_t size,
                      std::size_t expected,
                      const std::vector<std::uint8_t>* dictionary,
                      std::vector<std::uint8_t>* output,
                      std::string* error = nullptr);
+
+bool inflateRawDeflate64Exact(const std::uint8_t* data, std::size_t size,
+                              std::size_t expected,
+                              std::vector<std::uint8_t>* output,
+                              std::string* error = nullptr);
+
+// Decode one complete raw Deflate stream and report its compressed byte count.
+bool inflateRawStream(InflateInput& input, std::size_t maximum,
+                      std::vector<std::uint8_t>* output,
+                      std::string* error = nullptr);
 
 // Decode a complete zlib stream, verify its header and Adler-32 trailer, and
 // reject output larger than `maximum`.

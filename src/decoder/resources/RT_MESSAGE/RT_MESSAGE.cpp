@@ -9,10 +9,7 @@
 namespace peare {
 namespace resources {
 
-// --- Structures for Windows Message Table ---
-// These are essential and MUST accurately reflect the WinAPI definitions.
-// In Qt we read the fields explicitly in little-endian order instead of relying on
-// LayoutKind.Sequential and Marshal.PtrToStructure.
+// Read Windows message-table fields explicitly in little-endian order.
 
 // MESSAGE_RESOURCE_HEADER is part of MESSAGE_RESOURCE_DATA.
 // It contains NumberOfBlocks and is followed by MESSAGE_RESOURCE_BLOCKs.
@@ -20,10 +17,8 @@ namespace resources {
 // MESSAGE_RESOURCE_BLOCK defines a range of message IDs and their offset:
 // LowId, HighId and OffsetToEntries.
 
-// MESSAGE_RESOURCE_ENTRY is not explicitly a separate struct in the file,
-// but its components are always a short Length, short Flags, and then the text.
-// The Length field includes the 4-byte header (Length + Flags), the string content
-// and its null terminator.
+// Each message entry has 16-bit length and flags fields followed by text.
+// Length includes the header, text, and null terminator.
 namespace {
 
 quint16 readLe16(const QByteArray& data, qsizetype offset)

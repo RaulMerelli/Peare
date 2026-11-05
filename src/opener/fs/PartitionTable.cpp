@@ -54,8 +54,9 @@ bool isPowerOfTwo(std::uint32_t value) {
     return value != 0 && (value & (value - 1)) == 0;
 }
 
-bool looksLikeFatBoot(const std::vector<std::uint8_t>& sec, std::int64_t volumeBytes) {
-    if (sec.size() < 512 || sec[510] != 0x55 || sec[511] != 0xAA) return false;
+std::string fatBootTypeName(const std::vector<std::uint8_t>& sec,
+                            std::int64_t volumeBytes) {
+    if (sec.size() < 512 || sec[510] != 0x55 || sec[511] != 0xAA) return {};
     const std::uint32_t bytesPerSector = std::uint32_t(sec[11]) |
         (std::uint32_t(sec[12]) << 8);
     const std::uint32_t sectorsPerCluster = sec[13];
@@ -76,13 +77,20 @@ bool looksLikeFatBoot(const std::vector<std::uint8_t>& sec, std::int64_t volumeB
          bytesPerSector != 2048 && bytesPerSector != 4096) ||
         !isPowerOfTwo(sectorsPerCluster) || sectorsPerCluster > 128 ||
         reserved == 0 || (fats != 1 && fats != 2) || total == 0 || fatSectors == 0)
-        return false;
+        return {};
     if (volumeBytes > 0 && total > static_cast<std::uint64_t>(volumeBytes) / bytesPerSector)
-        return false;
+        return {};
     const std::uint64_t rootSectors =
         (static_cast<std::uint64_t>(rootEntries) * 32 + bytesPerSector - 1) / bytesPerSector;
     const std::uint64_t overhead = reserved + static_cast<std::uint64_t>(fats) * fatSectors + rootSectors;
-    return overhead < total;
+    if (overhead >= total) return {};
+    const std::uint64_t clusters = (total - overhead) / sectorsPerCluster;
+    if (clusters == 0) return {};
+    return clusters < 4085 ? "FAT12" : clusters < 65525 ? "FAT16" : "FAT32";
+}
+
+bool looksLikeFatBoot(const std::vector<std::uint8_t>& sec, std::int64_t volumeBytes) {
+    return !fatBootTypeName(sec, volumeBytes).empty();
 }
 
 bool looksLikeNtfsBoot(const std::vector<std::uint8_t>& sec, std::int64_t volumeBytes) {
@@ -275,12 +283,8 @@ bool partitionPayloadPlausible(const ByteStorePtr& disk, std::uint8_t type,
         return looksLikeNtfsBoot(boot, byteLength) || looksLikeExfatBoot(boot, byteLength) ||
                hasHpfsSuper(disk, byteStart, byteLength);
     }
-    // OS/2 LVM assigns type 0x35 to every physical segment belonging to a
-    // JFS-capable logical volume.  A segment is not necessarily a standalone
-    // JFS image and therefore need not contain an aggregate superblock at
-    // 0x8000/0xF000.  The partition type itself is authoritative here; the
-    // JFS/LVM opener decides later whether this is a compatibility volume or
-    // one component of a linked volume.
+    // OS/2 LVM type 0x35 marks physical segments that may lack a local JFS superblock.
+    // Let the JFS/LVM opener identify standalone and linked volumes.
     if (type == 0x35) return true;
     // Keep common non-filesystem/system partitions whose contents do not have
     // a cheap boot-sector signature. Unknown type bytes in firmware headers are
@@ -339,12 +343,13 @@ std::string gptTypeName(const std::uint8_t* guid) {
 
 void readMbr(const ByteStorePtr& disk, std::int64_t baseSector,
              std::int64_t ebrBaseSector, std::vector<PartitionInfo>* out,
-             std::set<std::int64_t>* visitedEbr, int depth) {
+             std::set<std::int64_t>* visitedEbr, int depth,
+             std::int64_t logicalSectorSize) {
     if (!disk || !out || !visitedEbr || depth > 64 || baseSector < 0) return;
-    const std::int64_t diskSectors = disk->capacity() / kSector;
+    const std::int64_t diskSectors = disk->capacity() / logicalSectorSize;
     if (baseSector >= diskSectors || !visitedEbr->insert(baseSector).second) return;
 
-    std::vector<std::uint8_t> sec = disk->readRange(baseSector * kSector, 512);
+    std::vector<std::uint8_t> sec = disk->readRange(baseSector * logicalSectorSize, 512);
     if (sec.size() < 512 || sec[510] != 0x55 || sec[511] != 0xAA) return;
 
     for (int i = 0; i < 4; ++i) {
@@ -369,7 +374,8 @@ void readMbr(const ByteStorePtr& disk, std::int64_t baseSector,
                 : ebrBaseSector + static_cast<std::int64_t>(startLba);
             if (next > 0 && next < diskSectors) {
                 const std::int64_t chainBase = ebrBaseSector == 0 ? next : ebrBaseSector;
-                readMbr(disk, next, chainBase, out, visitedEbr, depth + 1);
+                readMbr(disk, next, chainBase, out, visitedEbr, depth + 1,
+                        logicalSectorSize);
             }
             continue;
         }
@@ -387,12 +393,18 @@ void readMbr(const ByteStorePtr& disk, std::int64_t baseSector,
             count = available;
         }
 
-        const std::int64_t byteStart = absoluteStart * kSector;
-        const std::int64_t byteLength = count * kSector;
+        const std::int64_t byteStart = absoluteStart * logicalSectorSize;
+        const std::int64_t byteLength = count * logicalSectorSize;
         if (!partitionPayloadPlausible(disk, type, byteStart, byteLength)) continue;
 
         PartitionInfo p;
         p.typeName = mbrTypeName(type);
+        if (type == 0x01 || type == 0x04 || type == 0x06 ||
+            type == 0x0B || type == 0x0C) {
+            const std::string detected = fatBootTypeName(
+                disk->readRange(byteStart, 512), byteLength);
+            if (!detected.empty()) p.typeName = detected;
+        }
         p.offset = byteStart;
         p.length = byteLength;
         p.mbrType = type;
@@ -400,9 +412,10 @@ void readMbr(const ByteStorePtr& disk, std::int64_t baseSector,
     }
 }
 
-std::vector<PartitionInfo> readGpt(const ByteStorePtr& disk) {
+std::vector<PartitionInfo> readGpt(const ByteStorePtr& disk,
+                                   std::int64_t logicalSectorSize) {
     std::vector<PartitionInfo> out;
-    std::vector<std::uint8_t> hdr = disk->readRange(1 * kSector, 512);
+    std::vector<std::uint8_t> hdr = disk->readRange(logicalSectorSize, logicalSectorSize);
     if (hdr.size() < 92 || std::memcmp(hdr.data(), "EFI PART", 8) != 0) return out;
 
     const std::uint32_t headerSize = le32(hdr.data() + 12);
@@ -412,19 +425,19 @@ std::vector<PartitionInfo> readGpt(const ByteStorePtr& disk) {
     const std::uint64_t entryLba = le64(hdr.data() + 72);
     const std::uint32_t numEntries = le32(hdr.data() + 80);
     const std::uint32_t entrySize = le32(hdr.data() + 84);
-    const std::uint64_t diskSectors = static_cast<std::uint64_t>(disk->capacity() / kSector);
-    if (headerSize < 92 || headerSize > 512 || currentLba != 1 ||
+    const std::uint64_t diskSectors = static_cast<std::uint64_t>(disk->capacity() / logicalSectorSize);
+    if (headerSize < 92 || headerSize > static_cast<std::uint64_t>(logicalSectorSize) || currentLba != 1 ||
         firstUsable > lastUsable || lastUsable >= diskSectors ||
         entrySize < 128 || entrySize > 4096 || numEntries == 0 || numEntries > 4096)
         return out;
 
     const std::uint64_t tableBytes64 = static_cast<std::uint64_t>(numEntries) * entrySize;
     if (entryLba >= diskSectors || tableBytes64 > static_cast<std::uint64_t>(INT64_MAX) ||
-        tableBytes64 > (diskSectors - entryLba) * kSector)
+        tableBytes64 > (diskSectors - entryLba) * static_cast<std::uint64_t>(logicalSectorSize))
         return out;
     const std::int64_t tableBytes = static_cast<std::int64_t>(tableBytes64);
     std::vector<std::uint8_t> table = disk->readRange(
-        static_cast<std::int64_t>(entryLba * kSector), tableBytes);
+        static_cast<std::int64_t>(entryLba * logicalSectorSize), tableBytes);
     for (std::uint32_t i = 0; i < numEntries; ++i) {
         const std::size_t off = static_cast<std::size_t>(i) * entrySize;
         if (off + 128 > table.size()) break;
@@ -436,12 +449,12 @@ std::vector<PartitionInfo> readGpt(const ByteStorePtr& disk) {
         if (lastLba < firstLba || firstLba < firstUsable ||
             lastLba > lastUsable || lastLba >= diskSectors) continue;
         const std::uint64_t sectors = lastLba - firstLba + 1;
-        if (firstLba > static_cast<std::uint64_t>(INT64_MAX / kSector) ||
-            sectors > static_cast<std::uint64_t>(INT64_MAX / kSector)) continue;
+        if (firstLba > static_cast<std::uint64_t>(INT64_MAX / logicalSectorSize) ||
+            sectors > static_cast<std::uint64_t>(INT64_MAX / logicalSectorSize)) continue;
         PartitionInfo p;
         p.typeName = name;
-        p.offset = static_cast<std::int64_t>(firstLba) * kSector;
-        p.length = static_cast<std::int64_t>(sectors) * kSector;
+        p.offset = static_cast<std::int64_t>(firstLba) * logicalSectorSize;
+        p.length = static_cast<std::int64_t>(sectors) * logicalSectorSize;
         out.push_back(p);
     }
     return out;
@@ -702,21 +715,20 @@ bool hasMbrOrGptPartitionTable(const ByteStorePtr& disk) {
     return disk && !readPartitionTable(disk).empty();
 }
 
-std::vector<PartitionInfo> readPartitionTable(const ByteStorePtr& disk) {
+std::vector<PartitionInfo> readPartitionTable(const ByteStorePtr& disk,
+                                              std::int64_t logicalSectorSize) {
     if (!disk) return {};
+    if (logicalSectorSize != 512 && logicalSectorSize != 4096) return {};
     std::vector<PartitionInfo> apm = readApm(disk);
     if (!apm.empty()) return apm;
 
     std::vector<std::uint8_t> mbr = disk->readRange(0, 512);
     if (mbr.size() < 512 || mbr[510] != 0x55 || mbr[511] != 0xAA)
         return recoverJfsPartitions(disk);
-    // FAT/NTFS/exFAT/HPFS/JFS boot sectors also end in 55AA. Prefer a
-    // directly mounted filesystem over random BPB bytes, except when the MBR
-    // explicitly describes an OS/2 LVM/JFS partition or an extended chain.
-    // Type 0x35 is authoritative even when the physical segment has no local
-    // JFS superblock.
+    // Prefer detected file systems over random BPB bytes, except for explicit
+    // OS/2 LVM/JFS partitions and extended partition chains.
     const bool authoritativeOs2Layout =
-        hasAuthoritativeOs2LvmEntry(mbr, disk->capacity() / kSector);
+        hasAuthoritativeOs2LvmEntry(mbr, disk->capacity() / logicalSectorSize);
     if (!authoritativeOs2Layout && looksLikeStandaloneFileSystem(disk)) {
         const std::vector<PartitionInfo> recovered = recoverJfsPartitions(disk);
         if (!recovered.empty()) return recovered;
@@ -728,13 +740,13 @@ std::vector<PartitionInfo> readPartitionTable(const ByteStorePtr& disk) {
     for (int i = 0; i < 4; ++i)
         if (mbr[0x1BE + i * 16 + 4] == 0xEE) gpt = true;
     if (gpt) {
-        std::vector<PartitionInfo> g = readGpt(disk);
+        std::vector<PartitionInfo> g = readGpt(disk, logicalSectorSize);
         if (!g.empty()) return g;
     }
 
     std::vector<PartitionInfo> out;
     std::set<std::int64_t> visitedEbr;
-    readMbr(disk, 0, 0, &out, &visitedEbr, 0);
+    readMbr(disk, 0, 0, &out, &visitedEbr, 0, logicalSectorSize);
     if (out.empty()) return recoverJfsPartitions(disk);
     bool hasJfs = false;
     for (std::size_t i = 0; i < out.size(); ++i)

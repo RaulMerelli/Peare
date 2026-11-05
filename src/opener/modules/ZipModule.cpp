@@ -1,6 +1,7 @@
 #include "ZipModule.h"
 #include "Compat.h"
 #include "DeflateDecoder.h"
+#include "../fs/QFileByteStore.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -21,7 +22,6 @@ namespace {
 const quint32 kZipLocalHeader = 0x04034b50u;
 const quint32 kZipCentralHeader = 0x02014b50u;
 const quint32 kZipEndCentralDirectory = 0x06054b50u;
-const std::int64_t kMaxZipUncompressed = std::int64_t(512) * 1024 * 1024;
 const std::int64_t kMaxZipVariableField = std::int64_t(16) * 1024 * 1024;
 
 quint16 le16(const std::uint8_t* p) {
@@ -35,6 +35,41 @@ quint32 le32(const std::uint8_t* p) {
 
 quint64 le64(const std::uint8_t* p) {
     return quint64(le32(p)) | (quint64(le32(p + 4)) << 32);
+}
+
+bool resolveZip64Extra(const QByteArray& extra, bool needUncompressed,
+                       bool needCompressed, bool needOffset, bool needDisk,
+                       quint64* uncompressed, quint64* compressed,
+                       quint64* offset, quint32* disk) {
+    int pos = 0;
+    while (pos + 4 <= extra.size()) {
+        const auto* header = reinterpret_cast<const std::uint8_t*>(extra.constData() + pos);
+        const quint16 id = le16(header);
+        const quint16 size = le16(header + 2);
+        pos += 4;
+        if (size > extra.size() - pos) return false;
+        if (id == 0x0001) {
+            const auto* values = reinterpret_cast<const std::uint8_t*>(extra.constData() + pos);
+            int cursor = 0;
+            auto take64 = [&](quint64* value) {
+                if (cursor > size - 8) return false;
+                *value = le64(values + cursor);
+                cursor += 8;
+                return true;
+            };
+            if ((needUncompressed && !take64(uncompressed)) ||
+                (needCompressed && !take64(compressed)) ||
+                (needOffset && !take64(offset)))
+                return false;
+            if (needDisk) {
+                if (cursor > size - 4) return false;
+                *disk = le32(values + cursor);
+            }
+            return true;
+        }
+        pos += size;
+    }
+    return !needUncompressed && !needCompressed && !needOffset && !needDisk;
 }
 
 bool readExact(const fs::IByteStore& store, std::int64_t offset,
@@ -101,15 +136,12 @@ fs::ByteStorePtr storeForFile(const QString& path) {
         return std::make_shared<fs::ExternalStore>(
             reinterpret_cast<const std::uint8_t*>(mapped), std::int64_t(size),
             std::static_pointer_cast<void>(holder));
-    const QByteArray bytes = holder->readAll();
-    return std::make_shared<fs::MemoryStore>(
-        reinterpret_cast<const std::uint8_t*>(bytes.constData()), std::size_t(bytes.size()));
+    auto source = std::make_shared<fs::QFileByteStore>(path);
+    return source->validate() ? source : fs::ByteStorePtr();
 }
 
-// Deflated members stay compressed while the ZIP is listed. Header probing
-// inflates only the requested prefix; selecting/exporting the member inflates
-// the complete payload. This avoids the old O(total uncompressed size) archive
-// open cost and keeps nested-container detection cheap.
+// Keep Deflate members compressed during listing and inflate only requested data.
+// Header probes read a prefix; extraction reads the full member.
 
 // ZIP method 1 ("Shrink") is decoded only when the member is actually read.
 // Ordinary stored/deflated members keep their existing zero-copy/prefix paths.
@@ -136,11 +168,11 @@ public:
 private:
     class BitReader {
     public:
-        explicit BitReader(const QByteArray& data) : data_(data) {}
+        explicit BitReader(const std::vector<std::uint8_t>& data) : data_(data) {}
         bool read(int bits, quint16* value) {
             while (available_ < bits) {
                 if (position_ >= data_.size()) return false;
-                buffer_ |= quint64(uchar(data_.at(position_++))) << available_;
+                buffer_ |= quint64(data_[position_++]) << available_;
                 available_ += 8;
             }
             *value = quint16(buffer_ & ((quint64(1) << bits) - 1));
@@ -149,22 +181,24 @@ private:
             return true;
         }
     private:
-        const QByteArray& data_;
-        qsizetype position_ = 0;
+        const std::vector<std::uint8_t>& data_;
+        std::size_t position_ = 0;
         quint64 buffer_ = 0;
         int available_ = 0;
     };
 
     bool ensureDecoded() const {
         if (decodedReady_) return true;
-        if (failed_ || compressed_ < 0 || uncompressed_ < 0 ||
-            compressed_ > std::numeric_limits<int>::max() ||
-            uncompressed_ > std::numeric_limits<int>::max()) {
+        if (failed_ || compressed_ < 0 || uncompressed_ < 0 || offset_ < 0 ||
+            std::uint64_t(compressed_) > std::numeric_limits<std::size_t>::max() ||
+            std::uint64_t(uncompressed_) > std::numeric_limits<std::size_t>::max() ||
+            offset_ > source_->capacity() - compressed_) {
             failed_ = true;
             return false;
         }
-        const QByteArray input = readArray(*source_, offset_, compressed_);
-        if (input.size() != compressed_) { failed_ = true; return false; }
+        const std::vector<std::uint8_t> input = source_->readRange(
+            offset_, std::size_t(compressed_));
+        if (input.size() != std::size_t(compressed_)) { failed_ = true; return false; }
 
         const int kTableSize = 8192;
         const quint16 kBogusCode = 256;
@@ -321,8 +355,8 @@ public:
 
     int read(std::int64_t pos, std::uint8_t* dst, int count) const override {
         if (!source_ || pos < 0 || count <= 0 || pos >= uncompressed_) return 0;
-        const std::int64_t end = std::min<std::int64_t>(uncompressed_, pos + count);
-        if (end > std::numeric_limits<int>::max()) return 0;
+        const std::int64_t end = pos + std::min<std::int64_t>(count, uncompressed_ - pos);
+        if (std::uint64_t(end) > std::numeric_limits<std::size_t>::max()) return 0;
         std::lock_guard<std::mutex> lock(mutex_);
         if (!ensurePrefix(std::size_t(end))) return 0;
         const int n = int(end - pos);
@@ -335,6 +369,11 @@ private:
     bool ensurePrefix(std::size_t wanted) const {
         if (failed_) return false;
         if (prefix_.size() >= wanted) return true;
+        if (uncompressed_ < 0 || std::uint64_t(uncompressed_) >
+                std::numeric_limits<std::size_t>::max()) {
+            failed_ = true;
+            return false;
+        }
         if (wanted > std::size_t(uncompressed_)) wanted = std::size_t(uncompressed_);
         if (compressed_ < 0 || offset_ < 0 ||
             offset_ > source_->capacity() - compressed_) {
@@ -363,6 +402,198 @@ private:
     std::int64_t uncompressed_;
     mutable std::mutex mutex_;
     mutable std::vector<std::uint8_t> prefix_;
+    mutable bool failed_ = false;
+};
+
+class ZipExplodeStore final : public fs::IByteStore {
+public:
+    ZipExplodeStore(fs::ByteStorePtr source, std::int64_t offset,
+                    std::int64_t compressed, std::int64_t uncompressed,
+                    quint16 flags)
+        : source_(std::move(source)), offset_(offset), compressed_(compressed),
+          uncompressed_(uncompressed), flags_(flags) {}
+
+    std::int64_t capacity() const override { return uncompressed_; }
+    bool cheapRandomAccess() const override { return false; }
+
+    int read(std::int64_t pos, std::uint8_t* dst, int count) const override {
+        if (!source_ || pos < 0 || count <= 0 || pos >= uncompressed_) return 0;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!ensureDecoded()) return 0;
+        const int n = int(std::min<std::int64_t>(count, uncompressed_ - pos));
+        std::copy(decoded_.begin() + std::ptrdiff_t(pos),
+                  decoded_.begin() + std::ptrdiff_t(pos + n), dst);
+        return n;
+    }
+
+private:
+    class BitReader {
+    public:
+        explicit BitReader(const std::vector<std::uint8_t>& input) : input_(input) {}
+        bool read(int count, unsigned* value) {
+            while (available_ < count) {
+                if (position_ >= input_.size()) return false;
+                bits_ |= quint64(input_[position_++]) << available_;
+                available_ += 8;
+            }
+            *value = unsigned(bits_ & ((quint64(1) << count) - 1));
+            bits_ >>= count;
+            available_ -= count;
+            return true;
+        }
+    private:
+        const std::vector<std::uint8_t>& input_;
+        std::size_t position_ = 0;
+        quint64 bits_ = 0;
+        int available_ = 0;
+    };
+
+    struct Huffman {
+        int counts[17] = {};
+        std::vector<int> symbols;
+    };
+
+    static bool readTree(BitReader* bits, int symbolCount, Huffman* tree) {
+        unsigned packedCount = 0;
+        if (!bits->read(8, &packedCount)) return false;
+        const int repetitions = int(packedCount) + 1;
+        std::vector<int> lengths;
+        lengths.reserve(symbolCount);
+        for (int i = 0; i < repetitions; ++i) {
+            unsigned packed = 0;
+            if (!bits->read(8, &packed)) return false;
+            const int run = int(packed >> 4) + 1;
+            const int length = int(packed & 15) + 1;
+            if (run > symbolCount - int(lengths.size())) return false;
+            lengths.insert(lengths.end(), std::size_t(run), length);
+        }
+        if (int(lengths.size()) != symbolCount) return false;
+        int left = 1;
+        for (int length : lengths) ++tree->counts[length];
+        if (tree->counts[0] == symbolCount) return false;
+        for (int length = 1; length <= 16; ++length) {
+            left = (left << 1) - tree->counts[length];
+            if (left < 0) return false;
+        }
+        tree->symbols.resize(std::size_t(symbolCount - tree->counts[0]));
+        int offsets[17] = {};
+        for (int length = 1; length < 16; ++length)
+            offsets[length + 1] = offsets[length] + tree->counts[length];
+        for (int symbol = 0; symbol < symbolCount; ++symbol) {
+            const int length = lengths[std::size_t(symbol)];
+            if (length) tree->symbols[std::size_t(offsets[length]++)] = symbol;
+        }
+        return true;
+    }
+
+    static bool decode(BitReader* bits, const Huffman& tree, int* symbol) {
+        unsigned code = 0;
+        unsigned first = 0;
+        int index = 0;
+        for (int length = 1; length <= 16; ++length) {
+            unsigned bit = 0;
+            if (!bits->read(1, &bit)) return false;
+            code |= bit ^ 1u;
+            const unsigned count = unsigned(tree.counts[length]);
+            if (code >= first && code - first < count) {
+                const std::size_t slot = std::size_t(index) + code - first;
+                if (slot >= tree.symbols.size()) return false;
+                *symbol = tree.symbols[slot];
+                return true;
+            }
+            index += int(count);
+            first = (first + count) << 1;
+            code <<= 1;
+        }
+        return false;
+    }
+
+    bool ensureDecoded() const {
+        if (decodedReady_) return true;
+        if (failed_ || !source_ || compressed_ < 0 || uncompressed_ < 0 || offset_ < 0 ||
+            std::uint64_t(compressed_) > std::numeric_limits<std::size_t>::max() ||
+            std::uint64_t(uncompressed_) > std::numeric_limits<std::size_t>::max() ||
+            offset_ > source_->capacity() - compressed_) {
+            failed_ = true;
+            return false;
+        }
+        const std::vector<std::uint8_t> input = source_->readRange(
+            offset_, std::size_t(compressed_));
+        if (input.size() != std::size_t(compressed_)) { failed_ = true; return false; }
+
+        BitReader bits(input);
+        Huffman literalTree;
+        Huffman lengthTree;
+        Huffman distanceTree;
+        const bool codedLiterals = flags_ & 0x0004;
+        const int distanceBits = (flags_ & 0x0002) ? 7 : 6;
+        if ((codedLiterals && !readTree(&bits, 256, &literalTree)) ||
+            !readTree(&bits, 64, &lengthTree) ||
+            !readTree(&bits, 64, &distanceTree)) {
+            failed_ = true;
+            return false;
+        }
+
+        const int minimumLength = codedLiterals ? 3 : 2;
+        decoded_.clear();
+        decoded_.reserve(std::size_t(uncompressed_));
+        while (decoded_.size() < std::size_t(uncompressed_)) {
+            unsigned isLiteral = 0;
+            if (!bits.read(1, &isLiteral)) { failed_ = true; decoded_.clear(); return false; }
+            if (isLiteral) {
+                unsigned literal = 0;
+                if (codedLiterals) {
+                    int value = 0;
+                    if (!decode(&bits, literalTree, &value)) {
+                        failed_ = true; decoded_.clear(); return false;
+                    }
+                    literal = unsigned(value);
+                } else if (!bits.read(8, &literal)) {
+                    failed_ = true; decoded_.clear(); return false;
+                }
+                decoded_.push_back(std::uint8_t(literal));
+                continue;
+            }
+
+            unsigned lowDistance = 0;
+            if (!bits.read(distanceBits, &lowDistance)) {
+                failed_ = true; decoded_.clear(); return false;
+            }
+            int distanceCode = 0;
+            int lengthCode = 0;
+            unsigned extraLength = 0;
+            if (!decode(&bits, distanceTree, &distanceCode) ||
+                !decode(&bits, lengthTree, &lengthCode) ||
+                (lengthCode == 63 && !bits.read(8, &extraLength))) {
+                failed_ = true; decoded_.clear(); return false;
+            }
+            const std::size_t distance =
+                ((std::size_t(distanceCode) << distanceBits) | lowDistance) + 1;
+            const int length = lengthCode + int(extraLength) + minimumLength;
+            if (std::size_t(length) > std::size_t(uncompressed_) - decoded_.size()) {
+                failed_ = true; decoded_.clear(); return false;
+            }
+            for (int i = 0; i < length; ++i)
+                decoded_.push_back(distance > decoded_.size()
+                    ? 0 : decoded_[decoded_.size() - distance]);
+        }
+        if (decoded_.size() != std::size_t(uncompressed_)) {
+            failed_ = true;
+            decoded_.clear();
+            return false;
+        }
+        decodedReady_ = true;
+        return true;
+    }
+
+    fs::ByteStorePtr source_;
+    std::int64_t offset_;
+    std::int64_t compressed_;
+    std::int64_t uncompressed_;
+    quint16 flags_;
+    mutable std::mutex mutex_;
+    mutable std::vector<std::uint8_t> decoded_;
+    mutable bool decodedReady_ = false;
     mutable bool failed_ = false;
 };
 
@@ -587,7 +818,8 @@ std::unique_ptr<ZipModule> ZipModule::open(const QByteArray& data, const QString
     return std::unique_ptr<ZipModule>(static_cast<ZipModule*>(base.release()));
 }
 
-ModulePtr ZipModule::open(const fs::ByteStorePtr& file, const QString& sourceName) {
+ModulePtr ZipModule::open(const fs::ByteStorePtr& file, const QString& sourceName,
+                          const QString& subPath) {
     auto module = peare::makeUnique<ZipModule>();
     module->info_.filePath = sourceName;
     module->info_.format = ModuleFormat::ZIP;
@@ -645,6 +877,7 @@ ModulePtr ZipModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
         return ModulePtr(std::move(module));
     }
 
+    QStringList explicitDirectories;
     std::int64_t pos = std::int64_t(cdOffset);
     for (quint64 i = 0; i < entries; ++i) {
         std::uint8_t central[46];
@@ -655,41 +888,74 @@ ModulePtr ZipModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
         }
         const quint16 flags = le16(central + 8);
         const quint16 method = le16(central + 10);
-        const quint32 compressedSize = le32(central + 20);
-        const quint32 uncompressedSize = le32(central + 24);
+        quint64 compressedSize = le32(central + 20);
+        quint64 uncompressedSize = le32(central + 24);
         const quint16 nameLen = le16(central + 28);
         const quint16 extraLen = le16(central + 30);
         const quint16 commentLen = le16(central + 32);
-        const quint32 localOffset = le32(central + 42);
+        quint64 localOffset = le32(central + 42);
+        quint32 diskStart = le16(central + 34);
         const std::int64_t variable = std::int64_t(nameLen) + extraLen + commentLen;
         if (variable > kMaxZipVariableField || pos > file->capacity() - 46 - variable) {
             module->info_.error = QStringLiteral("Truncated ZIP central directory");
             return ModulePtr(std::move(module));
         }
         const QByteArray rawName = readArray(*file, pos + 46, nameLen);
-        const QString fullName = normalizeName(decodeZipName(rawName, flags));
+        const QByteArray extra = readArray(*file, pos + 46 + nameLen, extraLen);
+        if (rawName.size() != nameLen || extra.size() != extraLen) {
+            module->info_.error = QStringLiteral("Truncated ZIP entry metadata");
+            return ModulePtr(std::move(module));
+        }
+        const bool needUncompressed = uncompressedSize == 0xffffffffu;
+        const bool needCompressed = compressedSize == 0xffffffffu;
+        const bool needOffset = localOffset == 0xffffffffu;
+        const bool needDisk = diskStart == 0xffffu;
+        if ((needUncompressed || needCompressed || needOffset || needDisk) &&
+            !resolveZip64Extra(extra, needUncompressed, needCompressed, needOffset,
+                               needDisk, &uncompressedSize, &compressedSize,
+                               &localOffset, &diskStart)) {
+            module->info_.error = QStringLiteral("Invalid ZIP64 entry extra field");
+            return ModulePtr(std::move(module));
+        }
+        QString fullName = normalizeName(decodeZipName(rawName, flags));
         pos += 46 + variable;
-        if (fullName.isEmpty() || fullName.endsWith(QLatin1Char('/'))) continue;
+        const bool directory = fullName.endsWith(QLatin1Char('/'));
+        while (fullName.endsWith(QLatin1Char('/'))) fullName.chop(1);
+        if (fullName.isEmpty()) continue;
+        if (directory) {
+            QStringList hierarchy;
+            QString leaf;
+            if (splitSafeName(fullName, &hierarchy, &leaf))
+                explicitDirectories.push_back((hierarchy + QStringList{leaf}).join(QLatin1Char('/')));
+            continue;
+        }
         if (flags & 0x0001) {
             module->info_.error = QStringLiteral("Encrypted ZIP entries are not supported");
             return ModulePtr(std::move(module));
         }
-        if (localOffset == 0xffffffffu || compressedSize == 0xffffffffu ||
-            uncompressedSize == 0xffffffffu || uncompressedSize > kMaxZipUncompressed) {
-            module->info_.error = QStringLiteral("ZIP64 or oversized entries are not supported yet");
+        if (diskStart || localOffset > quint64(std::numeric_limits<std::int64_t>::max()) ||
+            compressedSize > quint64(std::numeric_limits<std::int64_t>::max()) ||
+            uncompressedSize > quint64(std::numeric_limits<std::int64_t>::max())) {
+            module->info_.error = QStringLiteral("ZIP entry exceeds supported size or disk limits");
             return ModulePtr(std::move(module));
         }
 
         std::uint8_t local[30];
-        if (!readExact(*file, localOffset, local, sizeof(local)) || le32(local) != kZipLocalHeader) {
+        if (localOffset > quint64(file->capacity()) ||
+            !readExact(*file, std::int64_t(localOffset), local, sizeof(local)) ||
+            le32(local) != kZipLocalHeader) {
             module->info_.error = QStringLiteral("Invalid ZIP local header");
             return ModulePtr(std::move(module));
         }
         const quint16 localNameLen = le16(local + 26);
         const quint16 localExtraLen = le16(local + 28);
-        const std::int64_t dataOffset = std::int64_t(localOffset) + 30 +
-                                        localNameLen + localExtraLen;
-        if (dataOffset < 0 || dataOffset > file->capacity() - std::int64_t(compressedSize)) {
+        const std::int64_t localHeaderOffset = std::int64_t(localOffset);
+        if (localHeaderOffset > file->capacity() - 30 - localNameLen - localExtraLen) {
+            module->info_.error = QStringLiteral("Truncated ZIP local header");
+            return ModulePtr(std::move(module));
+        }
+        const std::int64_t dataOffset = localHeaderOffset + 30 + localNameLen + localExtraLen;
+        if (dataOffset > file->capacity() - std::int64_t(compressedSize)) {
             module->info_.error = QStringLiteral("Truncated ZIP file data");
             return ModulePtr(std::move(module));
         }
@@ -707,6 +973,9 @@ ModulePtr ZipModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
         } else if (method == 8) {
             content = std::make_shared<ZipDeflateStore>(file, dataOffset,
                                                         compressedSize, uncompressedSize);
+        } else if (method == 6) {
+            content = std::make_shared<ZipExplodeStore>(file, dataOffset,
+                compressedSize, uncompressedSize, flags);
         } else {
             module->info_.error = QStringLiteral("Unsupported ZIP compression method %1").arg(method);
             return ModulePtr(std::move(module));
@@ -725,6 +994,49 @@ ModulePtr ZipModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
         entry.format = ModuleFormat::ZIP;
         entry.hierarchyPath = hierarchy;
         entry.content = content;
+        module->resources_.push_back(std::move(entry));
+    }
+
+    const QString requestedDirectory = normalizeName(subPath);
+    if (!requestedDirectory.isEmpty() && explicitDirectories.contains(requestedDirectory)) {
+        bool hasDescendant = false;
+        const QString prefix = requestedDirectory + QLatin1Char('/');
+        for (const ResourceEntry& entry : module->resources_) {
+            const QString path = resourcePath(entry);
+            if (path == requestedDirectory || path.startsWith(prefix)) {
+                hasDescendant = true;
+                break;
+            }
+        }
+        if (!hasDescendant) {
+            module->resources_.clear();
+            return ModulePtr(std::move(module));
+        }
+    }
+
+    for (const QString& path : explicitDirectories) {
+        const QString prefix = path + QLatin1Char('/');
+        bool hasDescendant = false;
+        for (const ResourceEntry& entry : module->resources_) {
+            const QString entryPath = resourcePath(entry);
+            if (entryPath == path || entryPath.startsWith(prefix)) {
+                hasDescendant = true;
+                break;
+            }
+        }
+        if (hasDescendant) continue;
+        const QStringList parts = path.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+        if (parts.isEmpty()) continue;
+        ResourceEntry entry;
+        entry.type = QStringLiteral("ZIP_DIR");
+        entry.name = parts.last();
+        entry.language = QStringLiteral("neutral");
+        entry.format = ModuleFormat::ZIP;
+        entry.hierarchyPath = parts;
+        entry.hierarchyPath.removeLast();
+        entry.content = file;
+        entry.isDirectory = true;
+        entry.containerSubPath = path;
         module->resources_.push_back(std::move(entry));
     }
 

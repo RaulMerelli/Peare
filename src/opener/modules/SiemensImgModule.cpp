@@ -41,10 +41,8 @@ void addResource(QVector<ResourceEntry>& resources, const QString& type,
     entry.name = name;
     entry.dataOffset = offset;
     entry.dataSize = quint64(data.size());
-    // For container-file types the tree uses the last hierarchyPath segment as
-    // the resource leaf, so each resource needs a unique full path ending in its
-    // own name (otherwise multiple resources sharing a folder collapse into one
-    // node). Mirrors the OS2_PACK_FILE / SZDD_FILE convention.
+    // Give each container file a unique path ending in its own name.
+    // This keeps resources in the same folder as separate tree entries.
     entry.hierarchyPath = path;
     entry.hierarchyPath << name;
     entry.data = data;
@@ -166,6 +164,41 @@ ModulePtr SiemensImgModule::open(const QByteArray& bytes, const QString& logical
         context.verify_crc = true;
 
         if (sections.empty()) {
+            const auto smartRecords = parse_smart_common_records(image, footer);
+            if (!smartRecords.empty()) {
+                for (std::size_t i = 0; i < smartRecords.size(); ++i) {
+                    const auto& record = smartRecords[i];
+                    const std::vector<std::uint8_t> payload(
+                        image.begin() + record.data_offset,
+                        image.begin() + record.data_offset + record.data_size);
+
+                    if (is_ce00_record(image, record)) {
+                        // Preserve the original CE00 container and expose the actual
+                        // load image obtained by expanding its 0x8000-byte LZSS pages.
+                        addBytes(module->resources_, QStringLiteral("SIEMENS_IMG_FILE"),
+                                 {QStringLiteral("M@RT"), QStringLiteral("@RT_")},
+                                 QStringLiteral("firmware_CE00.bin"), payload,
+                                 quint64(record.data_offset));
+                        const auto ce00 = decompress_ce00(payload.data(), payload.size());
+                        if (ce00.load_address != record.load_address)
+                            throw Error("CE00 and M@RT load addresses disagree");
+                        addBytes(module->resources_, QStringLiteral("SIEMENS_IMG_FILE"),
+                                 {QStringLiteral("M@RT"), QStringLiteral("@RT_")},
+                                 QStringLiteral("firmware.bin"), ce00.data,
+                                 quint64(record.data_offset));
+                        continue;
+                    }
+
+                    addBytes(module->resources_, QStringLiteral("SIEMENS_IMG_FILE"),
+                             {QStringLiteral("M@RT")},
+                             QString::fromStdString(smart_common_record_filename(image, record, i)),
+                             payload, quint64(record.data_offset));
+                }
+                return module;
+            }
+
+            // Treat zero-section ProSave images as CommonFiles only when the
+            // SM@R/M@RT directory is absent; ADONIS images also use zero sections.
             const std::size_t end = common_file_payload_end(image, footer);
             const std::vector<std::uint8_t> payload(image.begin(), image.begin() + end);
             addBytes(module->resources_, QStringLiteral("SIEMENS_IMG_FILE"),

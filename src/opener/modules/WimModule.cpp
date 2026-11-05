@@ -3,6 +3,7 @@
 #include "FsLevel.h"
 
 #include "../fs/WimReader.h"
+#include "../fs/QFileByteStore.h"
 
 #include <QFile>
 
@@ -46,9 +47,15 @@ ModulePtr WimModule::open(const QString& filePath) {
             reinterpret_cast<const std::uint8_t*>(mapped), std::int64_t(size),
             std::static_pointer_cast<void>(holder));
     } else {
-        const QByteArray bytes = holder->readAll();
-        disc = std::make_shared<fs::MemoryStore>(
-            reinterpret_cast<const std::uint8_t*>(bytes.constData()), std::size_t(bytes.size()));
+        auto source = std::make_shared<fs::QFileByteStore>(filePath);
+        if (!source->validate()) {
+            auto module = peare::makeUnique<WimModule>();
+            module->info_.filePath = filePath;
+            module->info_.format = ModuleFormat::WIM;
+            module->info_.error = QStringLiteral("Could not read WIM byte source");
+            return ModulePtr(std::move(module));
+        }
+        disc = std::move(source);
     }
     return open(disc, filePath);
 }

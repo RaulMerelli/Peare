@@ -1,16 +1,7 @@
 #pragma once
 
-// ISO 9660 (+ Joliet) read-only reader, ported from DiscUtils.Iso9660
-// (VfsCDReader / CommonVolumeDescriptor / DirectoryRecord / ExtentStream).
-//
-// Faithful to the DiscUtils read path:
-//   * volume descriptors are scanned from sector 16 until the set terminator;
-//   * a Joliet supplementary descriptor (UTF-16BE names) is preferred when
-//     present, otherwise the primary descriptor is used;
-//   * the directory tree (metadata only) is walked up front — it is tiny — while
-//     file CONTENT stays lazy: openFile returns a SubStore window over the disc
-//     that reads on demand (the ExtentStream role, which for a contiguous file
-//     is exactly a window).
+// Read ISO 9660 volumes with Joliet names and multi-extent files.
+// Enumerate directory metadata up front and read file content on demand.
 
 #include <cstdint>
 #include <string>

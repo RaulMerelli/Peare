@@ -3,6 +3,7 @@
 // this directory for the full licence and copyright notice.
 #include "WinceRomModule.h"
 #include "WinceCompression.h"
+#include "../DeflateDecoder.h"
 #include "../Compat.h"
 
 #include <QFile>
@@ -219,10 +220,8 @@ bool parseB000ffRecords(const fs::ByteStorePtr& source,
     return true;
 }
 
-// Sparse logical view of a B000FF stream. A read touches only records that
-// overlap the requested range; holes are returned as zero and later records
-// override earlier records, matching the flashing semantics and the old
-// materialising parser.
+// Read only B000FF records that overlap the requested range.
+// Holes return zero, and later records override earlier records.
 class B000ffStore final : public fs::IByteStore {
 public:
     B000ffStore(fs::ByteStorePtr source, std::vector<BinRecord> records,
@@ -1038,6 +1037,94 @@ bool unwrapIpaqNbf(const std::vector<std::uint8_t>& input,
     return true;
 }
 
+bool unwrapWmstore(const std::vector<std::uint8_t>& input,
+                   std::vector<std::uint8_t>* flat, std::uint32_t* base,
+                   QString* description)
+{
+    if (!flat || !base) return false;
+    std::uint64_t payload = 0;
+    std::uint64_t payloadEnd = input.size();
+    if (input.size() >= 30 && bytesEqual(input, 0, "PK\003\004", 4)) {
+        const std::uint16_t flags = u16(input, 6);
+        const std::uint16_t method = u16(input, 8);
+        const std::uint32_t packed = u32(input, 18);
+        const std::uint32_t unpacked = u32(input, 22);
+        const std::uint64_t dataOff = 30ULL + u16(input, 26) + u16(input, 28);
+        if (method != 0 || (flags & 8U) || packed != unpacked ||
+            dataOff > input.size() || packed > input.size() - dataOff)
+            return false;
+        payload = dataOff;
+        payloadEnd = dataOff + packed;
+    }
+    if (payload + 0x208 > payloadEnd ||
+        !bytesEqual(input, payload + 0x200, "_wmstore", 8)) return false;
+
+    for (std::uint64_t entry = payload + 0x400;
+         entry + 0x200 <= payloadEnd; entry += 0x200) {
+        if (!bytesEqual(input, entry, "_wmpart_", 8)) break;
+        QString name;
+        for (std::uint64_t i = 0; i < 32; ++i) {
+            const std::uint16_t ch = u16(input, entry + 8 + i * 2);
+            if (!ch) break;
+            if (ch > 0x7f) { name.clear(); break; }
+            name.append(QChar(ushort(ch)));
+        }
+        if (name.compare(QStringLiteral("NK"), Qt::CaseInsensitive) != 0) continue;
+
+        const std::uint64_t start = payload + std::uint64_t(u32(input, entry + 0x4c)) * 512ULL;
+        const std::uint64_t size = std::uint64_t(u32(input, entry + 0x54)) * 512ULL;
+        if (!size || start > payloadEnd || size > payloadEnd - start ||
+            size > kMaxMaterialisedImage) return false;
+        flat->assign(input.begin() + std::ptrdiff_t(start),
+                     input.begin() + std::ptrdiff_t(start + size));
+        std::uint64_t ecec = 0;
+        if (!findXipEcec(*flat, 0, &ecec)) { flat->clear(); return false; }
+        *base = 0;
+        if (description) *description = QStringLiteral("Windows CE _wmstore firmware");
+        return true;
+    }
+    return false;
+}
+
+bool unwrapSymbolFlash(const std::vector<std::uint8_t>& input,
+                       std::vector<std::uint8_t>* flat, std::uint32_t* base,
+                       QString* description)
+{
+    const std::uint64_t table = 0x80000ULL + 0x40ULL;
+    const std::uint64_t slotSize = 0x40;
+    const std::uint64_t blockSize = 0x40000;
+    if (!flat || !base || table + slotSize * 32 > input.size()) return false;
+    unsigned named = 0;
+    std::uint64_t osStart = 0, osSize = 0;
+    for (std::uint64_t i = 0; i < 32; ++i) {
+        const std::uint64_t entry = table + i * slotSize;
+        std::string name;
+        for (std::uint64_t j = 0; j < 0x20; ++j) {
+            const std::uint8_t ch = input[std::size_t(entry + j)];
+            if (!ch) break;
+            if (ch < 0x20 || ch > 0x7e) { name.clear(); break; }
+            name.push_back(char(ch));
+        }
+        if (name.empty()) continue;
+        const std::uint32_t startWord = u32(input, entry + 0x20);
+        const std::uint32_t blocks = u32(input, entry + 0x24);
+        if (!(startWord & 0x8000U) || (startWord >> 16) != 0 || !blocks) continue;
+        const std::uint64_t start = std::uint64_t(startWord & 0x7fffU) * blockSize;
+        const std::uint64_t size = std::uint64_t(blocks) * blockSize;
+        if (start > input.size() || size > input.size() - start) continue;
+        ++named;
+        if (name.compare("Windows CE") == 0) { osStart = start; osSize = size; }
+    }
+    if (named < 3 || !osSize || osSize > kMaxMaterialisedImage) return false;
+    flat->assign(input.begin() + std::ptrdiff_t(osStart),
+                 input.begin() + std::ptrdiff_t(osStart + osSize));
+    std::uint64_t ecec = 0;
+    if (!findXipEcec(*flat, 0, &ecec)) { flat->clear(); return false; }
+    *base = 0;
+    if (description) *description = QStringLiteral("Windows CE Symbol whole-flash image");
+    return true;
+}
+
 bool validTocNames(const std::vector<std::uint8_t>& data, std::uint64_t romHdrOff,
                    std::uint32_t loadOffset, const RomHdr& hdr, bool requireNk)
 {
@@ -1700,7 +1787,8 @@ struct ParsedArchive {
     bool imgfsFtl = false;
 };
 
-bool parseArchive(const std::vector<std::uint8_t>& input, ParsedArchive* parsed)
+bool parseArchive(const std::vector<std::uint8_t>& input, ParsedArchive* parsed,
+                  bool allowEmbeddedZlib = true)
 {
     if (!parsed) return false;
     const bool b000ff = (input.size() >= 8 && std::memcmp(input.data(), "B000FF\r\n", 8) == 0) ||
@@ -1712,7 +1800,9 @@ bool parseArchive(const std::vector<std::uint8_t>& input, ParsedArchive* parsed)
         parsed->description = QStringLiteral("Windows CE B000FF ROM");
     } else if (unwrapNosaj(input, &parsed->flat, &parsed->base, &parsed->description) ||
                unwrapArnold(input, &parsed->flat, &parsed->base, &parsed->description) ||
-               unwrapIpaqNbf(input, &parsed->flat, &parsed->base, &parsed->description)) {
+               unwrapIpaqNbf(input, &parsed->flat, &parsed->base, &parsed->description) ||
+               unwrapWmstore(input, &parsed->flat, &parsed->base, &parsed->description) ||
+               unwrapSymbolFlash(input, &parsed->flat, &parsed->base, &parsed->description)) {
     } else {
         parsed->flat = input;
         parsed->description = QStringLiteral("Windows CE ROM / IMGFS");
@@ -1737,6 +1827,65 @@ bool parseArchive(const std::vector<std::uint8_t>& input, ParsedArchive* parsed)
     if (!parsed->classic.empty()) cpu = parsed->classic.front().header.cpuType;
     else if (!parsed->ce1.empty()) cpu = parsed->ce1.front().header.cpuType;
     parsed->imgfs = extractImgfs(input, cpu, &parsed->entries, &parsed->imgfsFtl);
+
+    // Some Siemens images contain a small boot XIP followed by a second ROM.
+    // Detect the second ROM by its structure and validate the decoded image.
+    if (allowEmbeddedZlib && parsed->classic.size() == 1 &&
+        parsed->classic.front().header.numMods == 1 &&
+        parsed->classic.front().header.numFiles == 0) {
+        const Region& boot = parsed->classic.front();
+        const std::uint64_t bootSpan = boot.header.physLast >= boot.header.physFirst
+            ? std::uint64_t(boot.header.physLast) - boot.header.physFirst : 0;
+        std::uint64_t start = (bootSpan + 0xfffULL) & ~0xfffULL;
+        for (std::uint64_t off = start; off + 8 < input.size(); off += 0x1000ULL) {
+            const std::uint8_t cmf = input[std::size_t(off)];
+            const std::uint8_t flg = input[std::size_t(off + 1)];
+            if ((cmf & 0x0fU) != 8U || (cmf >> 4) > 7U ||
+                ((std::uint16_t(cmf) << 8) | flg) % 31U != 0U || (flg & 0x20U))
+                continue;
+
+            std::vector<std::uint8_t> compressed(input.begin() + std::ptrdiff_t(off), input.end());
+            std::vector<std::uint8_t> inflated;
+            std::string inflateError;
+            if (!compression::inflateZlib(compressed, std::size_t(kMaxMaterialisedImage),
+                                          &inflated, &inflateError))
+                continue;
+
+            ParsedArchive embedded;
+            if (!parseArchive(inflated, &embedded, false)) continue;
+
+            bool haveNk = false;
+            bool haveCore = false;
+            for (const ResourceEntry& entry : embedded.entries) {
+                if (entry.name.compare(QStringLiteral("nk.exe"), Qt::CaseInsensitive) == 0)
+                    haveNk = true;
+                if (entry.name.compare(QStringLiteral("coredll.dll"), Qt::CaseInsensitive) == 0 ||
+                    entry.name.compare(QStringLiteral("filesys.exe"), Qt::CaseInsensitive) == 0 ||
+                    entry.name.compare(QStringLiteral("gwes.exe"), Qt::CaseInsensitive) == 0)
+                    haveCore = true;
+            }
+            if (!haveNk || !haveCore || embedded.modules < 2) continue;
+
+            // Keep the small first-stage kernel visible, but distinguish it
+            // from the real nk.exe in the embedded operating-system ROM.
+            for (ResourceEntry& entry : parsed->entries) {
+                if (entry.name.compare(QStringLiteral("nk.exe"), Qt::CaseInsensitive) == 0) {
+                    entry.name = QStringLiteral("nk_loader.exe");
+                    break;
+                }
+            }
+            for (ResourceEntry& entry : embedded.entries)
+                parsed->entries.push_back(std::move(entry));
+            parsed->modules += embedded.modules;
+            parsed->files += embedded.files;
+            parsed->imgfs += embedded.imgfs;
+            parsed->imgfsFtl = parsed->imgfsFtl || embedded.imgfsFtl;
+            parsed->description += QStringLiteral(" — embedded zlib CE ROM @ 0x%1")
+                .arg(qulonglong(off), 0, 16);
+            break;
+        }
+    }
+
     uniqueAndSort(&parsed->entries);
     if (parsed->entries.isEmpty()) return false;
 

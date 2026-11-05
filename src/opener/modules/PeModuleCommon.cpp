@@ -23,7 +23,8 @@ void appendPeResources(QVector<ResourceEntry>& destination,
         // archive/firmware image. Structural PE regions (headers/sections) are
         // deliberately not marked this way, preventing self-recursive opens.
         target.isEmbeddedFile = true;
-        target.hierarchyPath = QStringList() << QStringLiteral(".rsrc");
+        target.hierarchyPath = QStringList()
+            << QStringLiteral(".rsrc") << source.type << source.name << source.language;
         destination.push_back(std::move(target));
     }
 }

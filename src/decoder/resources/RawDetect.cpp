@@ -410,32 +410,14 @@ ResourcePreview RawDetect::Get(const ResourceEntry& entry)
     if (resData.isEmpty())
         return preview;
 
-    // Fonts have a sufficiently distinctive header and must be tried before
-    // generic binary/image detection.
-    if (RT_FONT::LooksLikeOs2Fnt(resData))
-    {
+    if (RT_FONT::LooksLikeFont(resData)) {
         ResourceEntry font = entry;
         font.type = QStringLiteral("RT_FONT");
-        font.isOs2 = true;
+        font.isOs2 = RT_FONT::LooksLikeOs2Fnt(resData);
         preview = RT_FONT::preview(font);
-        if (!preview.images.isEmpty() || !preview.text.isEmpty())
-            return preview;
-        // A recognized binary font must not fall through to strict UTF-8
-        // probing, which only produces a misleading decoding error. The GUI
-        // falls back to the same hexadecimal/ASCII viewer used by C#.
-        if (preview.images.isEmpty() && preview.text.isEmpty())
-            preview.text = DumpRaw(resData, true);
-        preview.rawDump = true;
+        if (!preview.images.isEmpty() || !preview.text.isEmpty()) return preview;
+        preview.error = QStringLiteral("Recognized font has no supported preview data.");
         return preview;
-    }
-
-    if (RT_FONT::LooksLikeWindowsFnt(resData))
-    {
-        ResourceEntry font = entry;
-        font.type = QStringLiteral("RT_FONT");
-        preview = RT_FONT::preview(font);
-        if (!preview.images.isEmpty() || !preview.text.isEmpty())
-            return preview;
     }
 
     // Windows Media Player stores its internal skins as binary WSZ trees.

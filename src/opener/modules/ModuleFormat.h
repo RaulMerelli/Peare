@@ -18,7 +18,9 @@ enum class ModuleFormat {
     CON,
     OS2_PACK,
     SZDD,
+    GZIP,
     SIEMENS_IMG,
+    SIEMENS_ADONIS,
     SIEMENS_FWF,
     SIEMENS_FSF,
     ISO9660,
@@ -75,7 +77,17 @@ enum class ModuleFormat {
     PARALLELS_HDD,
     PS2_ROMDIR,
     MSI,
-    MSG
+    MSG,
+    MAC_RESOURCE_FORK,
+    WPI,
+    BZIP2,
+    AR,
+    CPIO,
+    UNIX_COMPRESS,
+    UUE,
+    LHA,
+    SEVEN_ZIP,
+    RAR4
 };
 
 struct ModuleFormatInfo {

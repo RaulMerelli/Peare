@@ -1,5 +1,6 @@
 #include "SiemensFsfModule.h"
 #include "Compat.h"
+#include "DeflateDecoder.h"
 
 #include <QFile>
 #include <QStringList>
@@ -20,6 +21,7 @@ const std::uint16_t kFileRecordType = 1;
 const std::uint16_t kFileRecordVersion = 1;
 const std::uint32_t kMaxRecordCount = 1000000;
 const std::uint16_t kMaxRecordHeader = 0x4000;
+const std::uint32_t kMaxMemberBytes = 512U * 1024U * 1024U;
 
 std::uint16_t readBe16(const std::uint8_t* p) {
     return (std::uint16_t(p[0]) << 8) | std::uint16_t(p[1]);
@@ -28,6 +30,48 @@ std::uint16_t readBe16(const std::uint8_t* p) {
 std::uint32_t readBe32(const std::uint8_t* p) {
     return (std::uint32_t(p[0]) << 24) | (std::uint32_t(p[1]) << 16) |
            (std::uint32_t(p[2]) << 8) | std::uint32_t(p[3]);
+}
+
+std::uint32_t adler32(const std::vector<std::uint8_t>& bytes) {
+    const std::uint32_t mod = 65521;
+    std::uint32_t a = 1, b = 0;
+    for (const std::uint8_t byte : bytes) {
+        a = (a + byte) % mod;
+        b = (b + a) % mod;
+    }
+    return (b << 16) | a;
+}
+
+bool inflateMember(const fs::ByteStorePtr& file, std::int64_t offset,
+                   std::uint32_t expectedSize, std::vector<std::uint8_t>& output,
+                   std::size_t& consumed) {
+    if (expectedSize > kMaxMemberBytes || offset < 0 || offset > file->capacity() - 6)
+        return false;
+    const std::vector<std::uint8_t> input = file->readRange(
+        offset, file->capacity() - offset);
+    if (input.size() < 6 || (input[0] & 0x0fU) != 8U || (input[0] >> 4) > 7U ||
+        (((unsigned(input[0]) << 8) | input[1]) % 31U) != 0U ||
+        (input[1] & 0x20U) != 0U)
+        return false;
+
+    compression::MemoryInflateInput deflate(input.data() + 2, input.size() - 2);
+    std::string error;
+    if (!compression::inflateRawExact(deflate, expectedSize, nullptr, &output, &error))
+        return false;
+    consumed = 2 + deflate.consumed() + 4;
+    if (consumed > input.size()) {
+        output.clear();
+        return false;
+    }
+    const std::size_t trailer = consumed - 4;
+    const std::uint32_t expectedAdler = (std::uint32_t(input[trailer]) << 24) |
+        (std::uint32_t(input[trailer + 1]) << 16) |
+        (std::uint32_t(input[trailer + 2]) << 8) | input[trailer + 3];
+    if (adler32(output) != expectedAdler) {
+        output.clear();
+        return false;
+    }
+    return true;
 }
 
 fs::ByteStorePtr storeForFile(const QString& path) {
@@ -116,8 +160,8 @@ ParseState parseFsf(const fs::ByteStorePtr& file, QVector<ResourceEntry>& resour
         const std::uint16_t type = readBe16(prefix.data());
         const std::uint16_t headerSize = readBe16(prefix.data() + 2);
         const std::uint16_t version = readBe16(prefix.data() + 4);
-        const std::uint32_t flags = readBe32(prefix.data() + 6);
-        const std::uint8_t nameLength = prefix[10];
+        const std::uint8_t storage = prefix[6];
+        const std::uint16_t nameLength = readBe16(prefix.data() + 9);
         const std::uint32_t minimumHeader =
             std::uint32_t(kRecordPrefixSize) + std::uint32_t(nameLength) + 4U;
         if (headerSize < minimumHeader || headerSize > kMaxRecordHeader) {
@@ -152,12 +196,26 @@ ParseState parseFsf(const fs::ByteStorePtr& file, QVector<ResourceEntry>& resour
             return state;
         }
 
-        if (payloadOffset > file->capacity() ||
-            std::uint64_t(payloadSize) >
-                std::uint64_t(file->capacity() - payloadOffset)) {
+        if (payloadOffset > file->capacity() || payloadSize > kMaxMemberBytes) {
             state.truncated = true;
             state.truncatedName = normalized;
             break;
+        }
+
+        std::vector<std::uint8_t> inflated;
+        std::size_t storedSize = payloadSize;
+        if (storage == 0) {
+            if (std::uint64_t(payloadSize) >
+                std::uint64_t(file->capacity() - payloadOffset)) {
+                state.truncated = true;
+                state.truncatedName = normalized;
+                break;
+            }
+        } else if (!inflateMember(file, payloadOffset, payloadSize, inflated, storedSize)) {
+            state.error = QStringLiteral("Invalid compressed Siemens FSF member: %1")
+                              .arg(normalized);
+            resources.clear();
+            return state;
         }
 
         // Type 1/version 1 is the file-member record observed in Siemens HMI
@@ -168,27 +226,29 @@ ParseState parseFsf(const fs::ByteStorePtr& file, QVector<ResourceEntry>& resour
             entry.type = QStringLiteral("SIEMENS_FSF_FILE");
             entry.name = leaf;
             entry.language = QStringLiteral("neutral");
-            entry.dataOffset = quint64(payloadOffset);
             entry.dataSize = quint64(payloadSize);
             entry.format = ModuleFormat::SIEMENS_FSF;
             entry.hierarchyPath = hierarchy;
-            entry.content = std::make_shared<fs::SubStore>(file, payloadOffset, payloadSize);
+            entry.dataOffset = quint64(payloadOffset);
+            if (storage == 0) {
+                entry.content = std::make_shared<fs::SubStore>(file, payloadOffset, payloadSize);
+            } else {
+                entry.data = QByteArray(reinterpret_cast<const char*>(inflated.data()),
+                                        static_cast<int>(inflated.size()));
+            }
             entry.isEmbeddedFile = true;
             resources.push_back(std::move(entry));
             ++state.completeFiles;
             state.completePayloadBytes += payloadSize;
-        } else if (flags != 0) {
-            // Preserve forward compatibility: flags are not interpreted, so a
-            // non-file record with semantics we do not know remains hidden.
         }
 
-        if (std::uint64_t(payloadOffset) + payloadSize >
+        if (std::uint64_t(payloadOffset) + storedSize >
             std::uint64_t(std::numeric_limits<std::int64_t>::max())) {
             state.error = QStringLiteral("Siemens FSF member offset overflow");
             resources.clear();
             return state;
         }
-        pos = payloadOffset + payloadSize;
+        pos = payloadOffset + std::int64_t(storedSize);
     }
 
     if (resources.isEmpty() && state.error.isEmpty()) {

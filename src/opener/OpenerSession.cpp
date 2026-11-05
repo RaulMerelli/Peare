@@ -48,15 +48,23 @@ ResourcePlatform platformFor(const ResourceEntry& entry)
     case ModuleFormat::CON:
         return ResourcePlatform::Other;
     case ModuleFormat::OS2_PACK:
+    case ModuleFormat::WPI:
     case ModuleFormat::OS2_EA:
     case ModuleFormat::HPFS:
         return ResourcePlatform::Os2;
     case ModuleFormat::SZDD:
+    case ModuleFormat::GZIP:
+    case ModuleFormat::BZIP2:
+    case ModuleFormat::AR:
+    case ModuleFormat::CPIO:
+    case ModuleFormat::UNIX_COMPRESS:
     case ModuleFormat::CAB:
+    case ModuleFormat::SEVEN_ZIP:
     case ModuleFormat::ZIP:
     case ModuleFormat::TAR:
     case ModuleFormat::ASAR:
     case ModuleFormat::SIEMENS_IMG:
+    case ModuleFormat::SIEMENS_ADONIS:
     case ModuleFormat::SIEMENS_FWF:
     case ModuleFormat::ISO9660:
     case ModuleFormat::WIM:
@@ -92,6 +100,7 @@ ResourcePlatform platformFor(const ResourceEntry& entry)
     case ModuleFormat::MDF_MDS:
     case ModuleFormat::PARALLELS_HDD:
     case ModuleFormat::PS2_ROMDIR:
+    case ModuleFormat::MAC_RESOURCE_FORK:
         return ResourcePlatform::Other;
     case ModuleFormat::MSI:
     case ModuleFormat::MSG:
@@ -136,20 +145,21 @@ OpenerSession::~OpenerSession() = default;
 OpenerSession::OpenerSession(OpenerSession&&) noexcept = default;
 OpenerSession& OpenerSession::operator=(OpenerSession&&) noexcept = default;
 
-bool OpenerSession::openFile(const QString& filePath)
+bool OpenerSession::openFile(const QString& filePath, const QString& password)
 {
     close();
-    return adoptModule(ModuleFactory::open(filePath), filePath);
+    return adoptModule(ModuleFactory::openWithPassword(filePath, password), filePath);
 }
 
 bool OpenerSession::openStore(const peare::fs::ByteStorePtr& store, const QString& sourceName,
-                              const QString& subPath)
+                              const QString& subPath, const QString& password)
 {
     close();
-    return adoptModule(ModuleFactory::open(store, sourceName, subPath), sourceName);
+    return adoptModule(ModuleFactory::open(store, sourceName, subPath, password), sourceName);
 }
 
-bool OpenerSession::openBuffer(const QByteArray& data, const QString& sourceName)
+bool OpenerSession::openBuffer(const QByteArray& data, const QString& sourceName,
+                               const QString& password)
 {
     close();
 
@@ -167,7 +177,7 @@ bool OpenerSession::openBuffer(const QByteArray& data, const QString& sourceName
 
     const QString temporaryPath = temporary->fileName();
     temporary->close();
-    ModulePtr module = ModuleFactory::open(temporaryPath, sourceName);
+    ModulePtr module = ModuleFactory::open(temporaryPath, sourceName, password);
     bufferFile_ = std::move(temporary);
     return adoptModule(std::move(module), sourceName);
 }
@@ -225,10 +235,7 @@ OpenedResource OpenerSession::openResource(int resourceIndex) const
 
     resource.session = this;
     resource.resourceIndex = resourceIndex;
-    // Array-backed resources carry their (already-in-memory) bytes directly.
-    // Layer-backed resources carry only the store pointer; the bytes are read
-    // lazily when the payload is requested, so merely opening a resource (or
-    // building the sibling list) never reads content.
+    // Array-backed resources provide bytes directly; layer-backed resources read on demand.
     resource.payload = entry->data;
     resource.contentStore = entry->content;
     resource.isDirectory = entry->isDirectory;
@@ -282,11 +289,8 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
     resources_.clear();
     if (resourceContainer_)
         resources_ = resourceContainer_->resources();
-    // Nested containers are expanded only on demand. Whole files receive the
-    // existing deep header probe (needed for ISO/UDF/Btrfs signatures at fixed
-    // offsets). Arbitrary executable resources receive only a 512-byte,
-    // strong-signature probe, which makes embedded ZIP/FWF/etc. navigable without
-    // applying expensive or loose structural heuristics to every RT_* payload.
+    // Probe whole files deeply and arbitrary embedded resources by strong signatures.
+    // This keeps nested detection useful without scanning every resource payload.
     for (ResourceEntry& entry : resources_) {
         entry.isContainer = false;
         if (entry.isDirectory) {
@@ -294,29 +298,37 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
             continue;
         }
 
-        // Only complete embedded files are eligible for recursive format
-        // detection. PE headers/sections and other structural regions can begin
-        // with valid-looking signatures but are not standalone files; probing
-        // them caused the PE_HEADERS -> PE_HEADERS infinite expansion loop.
+        // Probe complete embedded files only; PE structures can resemble nested files.
+        // This prevents recursive PE_HEADERS expansion.
         if (!entry.isEmbeddedFile)
             continue;
 
         const auto readHead = [&](std::int64_t count) -> QByteArray {
             if (entry.content) {
-                const std::vector<std::uint8_t> h = entry.content->readRange(0, count);
-                return QByteArray(reinterpret_cast<const char*>(h.data()),
-                                  static_cast<int>(h.size()));
+                const std::int64_t length = std::min<std::int64_t>(
+                    std::max<std::int64_t>(count, 0),
+                    std::max<std::int64_t>(entry.content->capacity(), 0));
+                QByteArray header(static_cast<int>(length), '\0');
+                if (length)
+                    entry.content->readExactly(0,
+                        reinterpret_cast<std::uint8_t*>(header.data()),
+                        static_cast<int>(length));
+                return header;
             }
-            return entry.data.left(static_cast<int>(count));
+            const int length = static_cast<int>(std::min<std::int64_t>(
+                std::max<std::int64_t>(count, 0), entry.data.size()));
+            return QByteArray::fromRawData(entry.data.constData(), length);
         };
         const auto readTail4 = [&]() -> QByteArray {
             if (entry.content && entry.content->capacity() >= 4) {
-                const std::vector<std::uint8_t> t =
-                    entry.content->readRange(entry.content->capacity() - 4, 4);
-                return QByteArray(reinterpret_cast<const char*>(t.data()),
-                                  static_cast<int>(t.size()));
+                QByteArray tail(4, '\0');
+                entry.content->readExactly(entry.content->capacity() - 4,
+                    reinterpret_cast<std::uint8_t*>(tail.data()), 4);
+                return tail;
             }
-            return entry.data.size() >= 4 ? entry.data.right(4) : QByteArray();
+            return entry.data.size() >= 4
+                ? QByteArray::fromRawData(entry.data.constData() + entry.data.size() - 4, 4)
+                : QByteArray();
         };
 
         const QByteArray prefix = readHead(512);
@@ -339,11 +351,8 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
                 nestedFormat = ModuleFormat::MSI;
         }
 
-        // Siemens ProSave common-file IMG wraps payloads that can begin with a
-        // stronger B000FF signature. Probe the footer only for .IMG resources or
-        // an already-detected WinCE payload, then let the outer wrapper win. This
-        // keeps ordinary ISO directory enumeration at the original one-prefix-
-        // read cost while preserving ISO -> folders -> IMG -> NK.bin.
+        // Check the footer only for IMG candidates because ProSave wraps B000FF data.
+        // Preserve the outer IMG container when its payload also matches WinCE.
         const bool imgCandidate = entry.name.endsWith(QStringLiteral(".img"),
                                                        Qt::CaseInsensitive) ||
                                   nestedFormat == ModuleFormat::WINCE_ROM;
@@ -364,11 +373,8 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
                 : ModuleFormatDetector::detectBuffer(header).format;
         }
 
-        // A complete PS2 BIOS stores ROMDIR around 0x2700, but validating that
-        // directory also requires checking file ranges against the full 4 MiB
-        // image. A prefix-only QByteArray therefore looks truncated and was not
-        // marked expandable when it lived inside ZIP/TAR/CAB. Probe the actual
-        // lazy store for plausible PS2 image names, preserving lazy decompression.
+        // Validate PS2 ROMDIR against the full lazy store, not a truncated prefix.
+        // Restrict the scan to plausible image names and bounded file sizes.
         if (nestedFormat == ModuleFormat::Unknown && entry.content &&
             entry.isEmbeddedFile && entry.content->capacity() >= 64 &&
             entry.content->capacity() <= 64LL * 1024LL * 1024LL &&
@@ -409,8 +415,12 @@ void OpenerSession::rebuildFolders()
     for (int resourceIndex = 0; resourceIndex < entries.size(); ++resourceIndex) {
         const ResourceEntry& entry = entries.at(resourceIndex);
         QStringList path = entry.hierarchyPath;
+        const bool pathIncludesEntry = !path.isEmpty() && path.last() == entry.name;
+        if (pathIncludesEntry)
+            path.removeLast();
         const bool selectableContainer =
-            entry.isDirectory ||  // filesystem directory (lazy nested listing)
+            entry.isDirectory || entry.isEmbeddedFile || entry.isContainer ||
+            pathIncludesEntry ||  // Some modules store the resource leaf in this path.
             entry.type == QStringLiteral("PE_MODULE") ||
             entry.type == QStringLiteral("PE_HEADERS") ||
             entry.type == QStringLiteral("PE_SECTION") ||
@@ -425,6 +435,17 @@ void OpenerSession::rebuildFolders()
             entry.type == QStringLiteral("XUIZ_FILE") ||
             entry.type == QStringLiteral("WINCE_FILE") ||
             entry.type == QStringLiteral("OS2_PACK_FILE") ||
+            entry.type == QStringLiteral("WPI_FILE") ||
+            entry.type == QStringLiteral("BZIP2_FILE") ||
+            entry.type == QStringLiteral("AR_FILE") ||
+            entry.type == QStringLiteral("CPIO_FILE") ||
+            entry.type == QStringLiteral("CPIO_SPECIAL") ||
+            entry.type == QStringLiteral("UNIX_COMPRESS_FILE") ||
+            entry.type == QStringLiteral("UUE_FILE") ||
+            entry.type == QStringLiteral("LHA_FILE") ||
+            entry.type == QStringLiteral("RAR4_FILE") ||
+            entry.type == QStringLiteral("LHA_DIR") ||
+            entry.type == QStringLiteral("LHA_SYMLINK") ||
             entry.type == QStringLiteral("SZDD_FILE") ||
             entry.type == QStringLiteral("RESX_DATA") ||
             entry.type == QStringLiteral("RESX_METADATA") ||
@@ -448,6 +469,14 @@ void OpenerSession::rebuildFolders()
             entry.type == QStringLiteral("ASAR_LINK") ||
             entry.type == QStringLiteral("PUP_SEGMENT") ||
             entry.type == QStringLiteral("WAD_LUMP") ||
+            entry.type == QStringLiteral("WAD_MARKER") ||
+            entry.type == QStringLiteral("WAD_MAP_HEADER") ||
+            entry.type == QStringLiteral("WAD_MAP_LUMP") ||
+            entry.type == QStringLiteral("WAD_PALETTE") ||
+            entry.type == QStringLiteral("WAD_PNAMES") ||
+            entry.type == QStringLiteral("WAD_TEXTUREX") ||
+            entry.type == QStringLiteral("WAD_DOOM_PATCH") ||
+            entry.type == QStringLiteral("WAD_DOOM_SPRITE") ||
             entry.type == QStringLiteral("MDF_TRACK") ||
             entry.type == QStringLiteral("PS2_ROM_FILE") ||
             entry.type == QStringLiteral("MSI_STREAM") ||

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <string>
@@ -35,11 +36,13 @@ std::int64_t alignSector(std::int64_t value) {
 class VmdkSparseStore final : public IByteStore {
 public:
     VmdkSparseStore(ByteStorePtr file, std::int64_t capacitySectors, std::int64_t grainSectors,
-                    std::uint32_t gtesPerGt, std::vector<std::uint32_t> grainDir)
+                    std::uint32_t gtesPerGt, bool zeroedGrainEntries,
+                    std::vector<std::uint32_t> grainDir)
         : file_(std::move(file)),
           capacityBytes_(capacitySectors * kSector),
           grainSectors_(grainSectors),
           gtesPerGt_(gtesPerGt),
+          zeroedGrainEntries_(zeroedGrainEntries),
           grainDir_(std::move(grainDir)) {
         gtCoverageSectors_ = grainSectors_ * static_cast<std::int64_t>(gtesPerGt_);
     }
@@ -71,7 +74,7 @@ public:
                 }
             }
 
-            if (grainStartSector == 0) {
+            if (grainStartSector == 0 || (zeroedGrainEntries_ && grainStartSector == 1)) {
                 std::fill(dst + produced, dst + produced + chunk, std::uint8_t(0));
             } else {
                 const std::int64_t src = grainStartSector * kSector + offsetInGrain;
@@ -92,6 +95,7 @@ private:
     std::int64_t capacityBytes_;
     std::int64_t grainSectors_;
     std::uint32_t gtesPerGt_;
+    bool zeroedGrainEntries_;
     std::vector<std::uint32_t> grainDir_;
     std::int64_t gtCoverageSectors_ = 0;
 };
@@ -100,10 +104,17 @@ class VmdkStreamOptimizedStore final : public IByteStore {
 public:
     VmdkStreamOptimizedStore(ByteStorePtr file, std::int64_t capacitySectors,
                              std::int64_t grainSectors, std::int64_t overheadSectors,
+                             std::uint32_t gtesPerGt, std::int64_t rgdOffsetSectors,
+                             std::int64_t gdOffsetSectors,
                              std::string* error)
         : file_(std::move(file)),
           capacityBytes_(capacitySectors * kSector),
-          grainBytes_(grainSectors * kSector) {
+          grainBytes_(grainSectors * kSector),
+          capacitySectors_(capacitySectors),
+          grainSectors_(grainSectors),
+          gtesPerGt_(gtesPerGt),
+          rgdOffsetSectors_(rgdOffsetSectors),
+          gdOffsetSectors_(gdOffsetSectors) {
         if (!file_ || grainBytes_ <= 0 || capacityBytes_ <= 0) {
             if (error) *error = "Invalid streamOptimized VMDK geometry";
             return;
@@ -157,7 +168,96 @@ private:
         std::uint32_t compressedSize;
     };
 
+    bool validateEmptyStreamMetadata() const {
+        const std::int64_t max = std::numeric_limits<std::int64_t>::max();
+        if (rgdOffsetSectors_ <= 0 || gdOffsetSectors_ <= 0 ||
+            gtesPerGt_ == 0 || gtesPerGt_ > 512 ||
+            grainSectors_ > max / static_cast<std::int64_t>(gtesPerGt_))
+            return false;
+
+        const std::int64_t sectorsPerTable =
+            grainSectors_ * static_cast<std::int64_t>(gtesPerGt_);
+        const std::int64_t tableCount =
+            1 + (capacitySectors_ - 1) / sectorsPerTable;
+        if (tableCount <= 0 || tableCount > 1000000)
+            return false;
+
+        const std::int64_t directoryBytes = tableCount * 4;
+        const std::int64_t directorySectors =
+            (directoryBytes + kSector - 1) / kSector;
+        const std::int64_t tableSectors =
+            (static_cast<std::int64_t>(gtesPerGt_) * 4 + kSector - 1) / kSector;
+        if (tableCount > (max - directorySectors) / tableSectors)
+            return false;
+        const std::int64_t tablesSectors = tableCount * tableSectors;
+        if (rgdOffsetSectors_ > max - directorySectors - tablesSectors ||
+            rgdOffsetSectors_ + directorySectors + tablesSectors != gdOffsetSectors_ ||
+            gdOffsetSectors_ > max - directorySectors - tablesSectors)
+            return false;
+
+        const std::int64_t dataOffset = file_->capacity();
+        if (dataOffset % kSector != 0 ||
+            gdOffsetSectors_ + directorySectors + tablesSectors > dataOffset / kSector)
+            return false;
+        const std::int64_t primaryDirectory = rgdOffsetSectors_ * kSector;
+        const std::int64_t backupDirectory = gdOffsetSectors_ * kSector;
+        const std::int64_t directoryReadBytes = tableCount * 4;
+        const std::int64_t primaryTables =
+            (rgdOffsetSectors_ + directorySectors) * kSector;
+        const std::int64_t backupTables =
+            (gdOffsetSectors_ + directorySectors) * kSector;
+        const std::int64_t tableReadBytes = tablesSectors * kSector;
+        if (primaryDirectory < 0 || backupDirectory < 0 ||
+            primaryDirectory > dataOffset - directoryReadBytes ||
+            backupDirectory > dataOffset - directoryReadBytes ||
+            primaryTables > dataOffset - tableReadBytes ||
+            backupTables > dataOffset - tableReadBytes)
+            return false;
+
+        const std::vector<std::uint8_t> primary =
+            file_->readRange(primaryDirectory, directoryReadBytes);
+        const std::vector<std::uint8_t> backup =
+            file_->readRange(backupDirectory, directoryReadBytes);
+        if (primary.size() != static_cast<std::size_t>(directoryReadBytes) ||
+            backup.size() != static_cast<std::size_t>(directoryReadBytes))
+            return false;
+
+        for (std::int64_t i = 0; i < tableCount; ++i) {
+            const std::uint32_t primarySector =
+                le32(primary.data() + static_cast<std::size_t>(i * 4));
+            const std::uint32_t backupSector =
+                le32(backup.data() + static_cast<std::size_t>(i * 4));
+            if (primarySector != rgdOffsetSectors_ + directorySectors + i * tableSectors ||
+                backupSector != gdOffsetSectors_ + directorySectors + i * tableSectors)
+                return false;
+        }
+
+        const std::int64_t scanChunk = 64 * 1024;
+        for (const std::int64_t tableStart : {primaryTables, backupTables}) {
+            std::int64_t done = 0;
+            while (done < tableReadBytes) {
+                const int count = static_cast<int>(
+                    std::min(scanChunk, tableReadBytes - done));
+                const std::vector<std::uint8_t> tables =
+                    file_->readRange(tableStart + done, count);
+                if (tables.size() != static_cast<std::size_t>(count) ||
+                    std::any_of(tables.begin(), tables.end(),
+                                [](std::uint8_t value) { return value != 0; }))
+                    return false;
+                done += count;
+            }
+        }
+        return true;
+    }
+
     bool buildIndex(std::int64_t pos, std::string* error) {
+        // QEMU can omit EOS when an empty streamOptimized image ends at its data offset.
+        if (pos == file_->capacity()) {
+            if (validateEmptyStreamMetadata())
+                return true;
+            if (error) *error = "Invalid empty streamOptimized VMDK metadata";
+            return false;
+        }
         while (pos + 16 <= file_->capacity()) {
             std::uint8_t marker[16];
             file_->readExactly(pos, marker, 16);
@@ -206,6 +306,11 @@ private:
     ByteStorePtr file_;
     std::int64_t capacityBytes_;
     std::int64_t grainBytes_;
+    std::int64_t capacitySectors_;
+    std::int64_t grainSectors_;
+    std::uint32_t gtesPerGt_;
+    std::int64_t rgdOffsetSectors_;
+    std::int64_t gdOffsetSectors_;
     bool valid_ = false;
     std::map<std::int64_t, GrainRef> grains_;
     mutable std::int64_t cacheIndex_ = -1;
@@ -236,20 +341,22 @@ ByteStorePtr openVmdkExtent(const ByteStorePtr& file, std::string* error) {
         return fail("Not a KDMV sparse extent");
 
     const std::uint32_t flags = le32(h.data() + 8);
+    const std::uint32_t version = le32(h.data() + 4);
     const std::int64_t capacity = le64(h.data() + 0x0C);
     const std::int64_t grainSize = le64(h.data() + 0x14);
     const std::uint32_t gtesPerGt = le32(h.data() + 0x2C);
+    const std::int64_t rgdOffset = le64(h.data() + 0x30);
     const std::int64_t gdOffset = le64(h.data() + 0x38);
     const std::int64_t overHead = le64(h.data() + 0x40);
     const std::uint16_t compress =
         static_cast<std::uint16_t>(h[0x4D] | (h[0x4E] << 8));
-    (void)flags;
 
     if (compress == 1) {
         if (grainSize <= 0 || capacity <= 0 || overHead <= 0)
             return fail("Invalid streamOptimized VMDK geometry");
         ByteStorePtr stream =
-            std::make_shared<VmdkStreamOptimizedStore>(file, capacity, grainSize, overHead, error);
+            std::make_shared<VmdkStreamOptimizedStore>(
+                file, capacity, grainSize, overHead, gtesPerGt, rgdOffset, gdOffset, error);
         if (!static_cast<VmdkStreamOptimizedStore*>(stream.get())->valid())
             return nullptr;
         return stream;
@@ -272,7 +379,9 @@ ByteStorePtr openVmdkExtent(const ByteStorePtr& file, std::string* error) {
     std::vector<std::uint32_t> grainDir(static_cast<std::size_t>(numGrainTables));
     for (std::size_t i = 0; i < grainDir.size(); ++i) grainDir[i] = le32(gd.data() + i * 4);
 
+    const bool zeroedGrainEntries = version >= 2 && bool(flags & 4U);
     return std::make_shared<VmdkSparseStore>(file, capacity, grainSize, gtesPerGt,
+                                             zeroedGrainEntries,
                                              std::move(grainDir));
 }
 

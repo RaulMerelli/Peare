@@ -30,10 +30,9 @@ quint32 u32(const QByteArray& data, qsizetype offset)
            (quint32(bytes[3]) << 24);
 }
 
-// Windows resource types
-// Based on Win1 and Win2 prgref and WINMOD.C for Win3 by Matt Pietrek, 1992
-// Win1: https://www.os2museum.com/files/docs/win10sdk/windows-1.03-sdk-prgref-1986.pdf
-// Win2: https://www.os2museum.com/files/docs/win20sdk/windows-2.0-sdk-prgref-1987.pdf
+// Windows resource type references:
+// https://www.os2museum.com/files/docs/win10sdk/windows-1.03-sdk-prgref-1986.pdf
+// https://www.os2museum.com/files/docs/win20sdk/windows-2.0-sdk-prgref-1987.pdf
 const QHash<int, QString> windowsNeResourceTypes = {
     {0x01, QStringLiteral("RT_CURSOR")},
     {0x02, QStringLiteral("RT_BITMAP")},
@@ -438,7 +437,8 @@ std::unique_ptr<NeModule> NeModule::open(const QString& filePath)
     const quint8 osType = quint8(fileBytes.at(neHeaderOffset + 0x36)); // cannot be always trusted. 0x00 may be OS/2 os MT/MS-DOS
     const VersionType versionType = getNeVersionType(fileBytes, neHeaderOffset);
     const bool isOS2 = versionType == VersionType::OS2;
-    const bool isWindows = versionType == VersionType::Windows;
+    const bool isWindows = versionType == VersionType::Windows ||
+                           versionType == VersionType::Win386;
     module->info_.description = versionDescription(versionType);
 
     appendNeStructure(module->resources_, fileBytes, neHeaderOffset, isOS2,
@@ -607,11 +607,8 @@ std::unique_ptr<NeModule> NeModule::open(const QString& filePath)
                     entry.data = fileBytes.mid(qsizetype(resourceOffset), qsizetype(resourceLength));
             }
 
-            // OS/2 NE stores resource data in segments. A segment whose encoded
-            // length is zero is exactly 64 KiB; resources larger than 64 KiB are
-            // emitted as consecutive resource-table entries with the same type and
-            // name. Merge only when all continuation invariants match, so genuine
-            // duplicate resources remain distinct.
+            // Merge OS/2 NE resource segments only when continuation fields match.
+            // A zero encoded length represents 64 KiB.
             const bool previousWasFullSegment =
                 segmentIndex > 0 &&
                 segmentEntryPos >= segmentTablePos + 8 &&

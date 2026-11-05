@@ -1,11 +1,38 @@
 #include "PeareApi.h"
+#include "peare/peare_decoder.h"
 
 #include <QDir>
 #include <QFileInfo>
 #include <QtEndian>
+#include <map>
 #include <utility>
 
 namespace pearegui {
+namespace {
+
+struct ResourceResolverContext {
+    const Session* session = nullptr;
+    std::map<QString, QByteArray> payloads;
+};
+
+peare_status resolveResource(void* userData, const char* typeUtf8, size_t typeLength,
+                             const char* nameUtf8, size_t nameLength,
+                             const uint8_t** outPayload, size_t* outLength)
+{
+    if (!userData || !typeUtf8 || !nameUtf8 || !outPayload || !outLength)
+        return PEARE_STATUS_INVALID_ARGUMENT;
+    auto* context = static_cast<ResourceResolverContext*>(userData);
+    const QString type = QString::fromUtf8(typeUtf8, int(typeLength));
+    const QString name = QString::fromUtf8(nameUtf8, int(nameLength));
+    Resource resource = context->session->findResource(type, name);
+    if (!resource.isValid()) return PEARE_STATUS_NOT_FOUND;
+    auto inserted = context->payloads.emplace(type.toUpper() + QChar(0x1f) + name.toUpper(), resource.payload());
+    *outPayload = reinterpret_cast<const uint8_t*>(inserted.first->second.constData());
+    *outLength = size_t(inserted.first->second.size());
+    return PEARE_STATUS_OK;
+}
+
+} // namespace
 
 QString blobToString(const peare_blob& blob)
 {
@@ -36,6 +63,7 @@ QString containerName(peare_container_format format)
     case PEARE_CONTAINER_CUE_BIN: return QStringLiteral("BIN/CUE");
     case PEARE_CONTAINER_SZDD: return QStringLiteral("SZDD");
     case PEARE_CONTAINER_SIEMENS_IMG: return QStringLiteral("Siemens IMG");
+    case PEARE_CONTAINER_SIEMENS_ADONIS: return QStringLiteral("Siemens ADONIS");
     case PEARE_CONTAINER_SIEMENS_FWF: return QStringLiteral("Siemens FWF");
     case PEARE_CONTAINER_SIEMENS_FSF: return QStringLiteral("Siemens FSF");
     case PEARE_CONTAINER_ISO9660: return QStringLiteral("ISO 9660");
@@ -90,6 +118,15 @@ QString containerName(peare_container_format format)
     case PEARE_CONTAINER_LINUX_RAID: return QStringLiteral("Linux RAID");
     case PEARE_CONTAINER_DYNAMIC_DISK: return QStringLiteral("Dynamic Disk");
     case PEARE_CONTAINER_WINCE_ROM: return QStringLiteral("Windows CE ROM / IMGFS");
+    case PEARE_CONTAINER_RESOURCE_FORK: return QStringLiteral("Apple resource fork");
+    case PEARE_CONTAINER_WPI: return QStringLiteral("OS/2 WarpIN");
+    case PEARE_CONTAINER_BZIP2: return QStringLiteral("BZIP2");
+    case PEARE_CONTAINER_AR: return QStringLiteral("ar");
+    case PEARE_CONTAINER_CPIO: return QStringLiteral("cpio");
+    case PEARE_CONTAINER_UNIX_COMPRESS: return QStringLiteral("compress (.Z)");
+    case PEARE_CONTAINER_UUE: return QStringLiteral("UUencode");
+    case PEARE_CONTAINER_LHA: return QStringLiteral("LHA / LZH");
+    case PEARE_CONTAINER_RAR4: return QStringLiteral("RAR4");
     default: return QStringLiteral("Unknown");
     }
 }
@@ -129,8 +166,11 @@ QString uniquePath(const QString& path)
     }
 }
 
-QString originalExtension(const QString& type, const QByteArray& payload)
+QString originalExtension(const QString& type, const QByteArray& payload,
+                          const QString& identifier)
 {
+    const QString existing = QFileInfo(identifier).suffix();
+    if (!existing.isEmpty()) return QLatin1Char('.') + existing;
     const QString t = type.trimmed().toUpper();
     if (t == QStringLiteral("PE_MODULE")) return QStringLiteral(".image");
     if (t == QStringLiteral("XUIZ_CONTAINER") || payload.startsWith("XUIZ")) return QStringLiteral(".xzp");
@@ -145,23 +185,33 @@ QString originalExtension(const QString& type, const QByteArray& payload)
 }
 
 Resource::Resource(peare_resource_handle handle) : handle_(handle) {}
+Resource::Resource(QByteArray payload, ResourceContext context)
+    : rawPayload_(std::move(payload)), rawContext_(std::move(context)), rawValid_(true) {}
 Resource::~Resource() { if (handle_) peare_resource_destroy(handle_); }
-Resource::Resource(Resource&& other) noexcept : handle_(other.handle_)
+Resource::Resource(Resource&& other) noexcept
+    : handle_(other.handle_), rawPayload_(std::move(other.rawPayload_)),
+      rawContext_(std::move(other.rawContext_)), rawValid_(other.rawValid_)
 {
     other.handle_ = nullptr;
+    other.rawValid_ = false;
 }
 Resource& Resource::operator=(Resource&& other) noexcept
 {
     if (this != &other) {
         if (handle_) peare_resource_destroy(handle_);
         handle_ = other.handle_;
+        rawPayload_ = std::move(other.rawPayload_);
+        rawContext_ = std::move(other.rawContext_);
+        rawValid_ = other.rawValid_;
         other.handle_ = nullptr;
+        other.rawValid_ = false;
     }
     return *this;
 }
 
 QByteArray Resource::payload() const
 {
+    if (rawValid_) return rawPayload_;
     peare_blob blob{};
     if (!handle_ || peare_resource_get_payload(handle_, &blob) != PEARE_STATUS_OK) return {};
     QByteArray result(reinterpret_cast<const char*>(blob.bytes), static_cast<int>(blob.length));
@@ -187,6 +237,7 @@ QVector<QByteArray> Resource::convert(const QString& extension) const
 
 ResourceContext Resource::context() const
 {
+    if (rawValid_) return rawContext_;
     ResourceContext result;
     peare_resource_context context{};
     if (!handle_ || peare_resource_get_context(handle_, &context) != PEARE_STATUS_OK) return result;
@@ -213,6 +264,11 @@ std::unique_ptr<Session> Session::openNested(size_t folder, size_t resource) con
     peare_source_handle src = nullptr;
     std::unique_ptr<Session> child(new Session());
     if (peare_resource_get_source(rh, &src) == PEARE_STATUS_OK && src) {
+        if (!password_.isNull()) {
+            const QByteArray passwordUtf8 = password_.toUtf8();
+            peare_opener_set_password(child->handle_, passwordUtf8.constData());
+            child->password_ = password_;
+        }
         child->open_ = (peare_opener_open(child->handle_, src) == PEARE_STATUS_OK);
         peare_source_destroy(src);
     }
@@ -225,16 +281,33 @@ std::unique_ptr<Session> Session::openNested(size_t folder, size_t resource) con
 
 Session::Session() { peare_opener_create(&handle_); }
 Session::~Session() { if (handle_) peare_opener_destroy(handle_); }
-bool Session::openFile(const QString& path, QString* error)
+bool Session::openFile(const QString& path, QString* error, const QString& password)
 {
     if (!handle_ && peare_opener_create(&handle_) != PEARE_STATUS_OK) return false;
+    password_.fill(QChar(0));
+    password_ = password;
+    if (!password_.isNull()) {
+        const QByteArray passwordUtf8 = password_.toUtf8();
+        lastStatus_ = peare_opener_set_password(handle_, passwordUtf8.constData());
+        if (lastStatus_ != PEARE_STATUS_OK) return false;
+    } else {
+        lastStatus_ = peare_opener_set_password(handle_, nullptr);
+        if (lastStatus_ != PEARE_STATUS_OK) return false;
+    }
     const QByteArray utf8 = path.toUtf8();
-    const peare_status status = peare_opener_open_file(handle_, utf8.constData());
-    open_ = status == PEARE_STATUS_OK;
-    if (!open_ && error) *error = statusText(status);
+    lastStatus_ = peare_opener_open_file(handle_, utf8.constData());
+    open_ = lastStatus_ == PEARE_STATUS_OK;
+    if (!open_ && error) *error = statusText(lastStatus_);
     return open_;
 }
-void Session::close() { if (handle_) peare_opener_close(handle_); open_ = false; }
+void Session::close()
+{
+    if (handle_) peare_opener_close(handle_);
+    password_.fill(QChar(0));
+    password_.clear();
+    open_ = false;
+    lastStatus_ = PEARE_STATUS_NOT_OPEN;
+}
 peare_container_format Session::containerFormat() const
 {
     peare_container_format format = PEARE_CONTAINER_UNKNOWN;
@@ -297,9 +370,17 @@ Preview decode(const Resource& resource, const Session* session)
     const char* platformArg = platform.isEmpty() ? nullptr : platform.constData();
     const char* typeArg = type.isEmpty() ? nullptr : type.constData();
     peare_blob_array pngs{};
-    const peare_status imageStatus=peare_decode_images(
-        reinterpret_cast<const uint8_t*>(payload.constData()), static_cast<size_t>(payload.size()),
-        platformArg, typeArg, &pngs);
+    peare_status imageStatus;
+    if (session) {
+        ResourceResolverContext resolver{session, {}};
+        imageStatus = peare_decode_images_with_resolver(
+            reinterpret_cast<const uint8_t*>(payload.constData()), size_t(payload.size()),
+            platformArg, type.constData(), resolveResource, &resolver, &pngs);
+    } else {
+        imageStatus = peare_decode_images(
+            reinterpret_cast<const uint8_t*>(payload.constData()), static_cast<size_t>(payload.size()),
+            platformArg, typeArg, &pngs);
+    }
     if (imageStatus==PEARE_STATUS_OK) {
         for (size_t i=0;i<pngs.count;++i) {
             QByteArray png(reinterpret_cast<const char*>(pngs.items[i].bytes),static_cast<int>(pngs.items[i].length));
@@ -366,12 +447,127 @@ QImage renderFont(const Resource& resource, const QString& text, quint32 scale, 
     const ResourceContext context = resource.context();
     const QByteArray platform = platformContextUtf8(context.platform);
     const QByteArray type = (resourceTypeOverride.isEmpty() ? context.type : resourceTypeOverride).toUtf8();
-    if (peare_font_render(
+    if (peare_font_render_with_codepage(
             reinterpret_cast<const uint8_t*>(payload.constData()), static_cast<size_t>(payload.size()),
             platform.isEmpty() ? nullptr : platform.constData(),
-            type.isEmpty() ? nullptr : type.constData(),
+            type.isEmpty() ? nullptr : type.constData(), context.codepage,
             utf8.constData(), &options, &png)!=PEARE_STATUS_OK) return {};
     QImage image; image.loadFromData(png.bytes,static_cast<int>(png.length),"PNG"); peare_blob_free(&png); return image;
+}
+
+QImage renderFontGlyph(const Resource& resource, quint32 glyphIndex, quint32 scale,
+                       quint32 padding, quint32 foregroundRgba, quint32 backgroundRgba,
+                       const QString& resourceTypeOverride)
+{
+    peare_font_render_options options{scale, padding, foregroundRgba, backgroundRgba};
+    peare_blob png{};
+    const QByteArray payload = resource.payload();
+    const ResourceContext context = resource.context();
+    const QByteArray platform = platformContextUtf8(context.platform);
+    const QByteArray type = (resourceTypeOverride.isEmpty() ? context.type : resourceTypeOverride).toUtf8();
+    if (peare_font_render_glyph_index_with_codepage(
+            reinterpret_cast<const uint8_t*>(payload.constData()), size_t(payload.size()),
+            platform.isEmpty() ? nullptr : platform.constData(),
+            type.isEmpty() ? nullptr : type.constData(), context.codepage, glyphIndex, &options,
+            &png) != PEARE_STATUS_OK)
+        return {};
+    QImage image;
+    image.loadFromData(png.bytes, int(png.length), "PNG");
+    peare_blob_free(&png);
+    return image;
+}
+
+QVector<QImage> renderFontGlyphs(const Resource& resource, const QVector<quint32>& glyphIndexes,
+                                quint32 scale, quint32 padding, quint32 foregroundRgba,
+                                quint32 backgroundRgba,
+                                const QString& resourceTypeOverride)
+{
+    peare_font_render_options options{scale, padding, foregroundRgba, backgroundRgba};
+    const QByteArray payload = resource.payload();
+    const ResourceContext context = resource.context();
+    const QByteArray platform = platformContextUtf8(context.platform);
+    const QByteArray type = (resourceTypeOverride.isEmpty() ? context.type : resourceTypeOverride).toUtf8();
+    peare_blob_array pngs{};
+    if (peare_font_render_glyph_indexes_with_codepage(
+            reinterpret_cast<const uint8_t*>(payload.constData()), size_t(payload.size()),
+            platform.isEmpty() ? nullptr : platform.constData(),
+            type.isEmpty() ? nullptr : type.constData(), context.codepage,
+            glyphIndexes.constData(), size_t(glyphIndexes.size()), &options, &pngs) !=
+        PEARE_STATUS_OK)
+        return {};
+    QVector<QImage> images;
+    images.reserve(int(pngs.count));
+    for (size_t i = 0; i < pngs.count; ++i) {
+        QImage image;
+        image.loadFromData(pngs.items[i].bytes, int(pngs.items[i].length), "PNG");
+        if (image.isNull()) {
+            peare_blob_array_free(&pngs);
+            return {};
+        }
+        images.push_back(std::move(image));
+    }
+    peare_blob_array_free(&pngs);
+    return images;
+}
+
+QVector<QByteArray> fontCollectionFaces(const Resource& resource)
+{
+    const QByteArray payload = resource.payload();
+    peare_blob_array faces{};
+    if (peare_font_get_collection_faces(
+            reinterpret_cast<const uint8_t*>(payload.constData()), size_t(payload.size()),
+            &faces) != PEARE_STATUS_OK)
+        return {};
+    QVector<QByteArray> result;
+    result.reserve(int(faces.count));
+    for (size_t i = 0; i < faces.count; ++i)
+        result.push_back(QByteArray(reinterpret_cast<const char*>(faces.items[i].bytes),
+                                    int(faces.items[i].length)));
+    peare_blob_array_free(&faces);
+    return result;
+}
+
+bool fontSupportsText(const Resource& resource, const QString& text, bool* supported,
+                      const QString& resourceTypeOverride)
+{
+    if (!supported) return false;
+    *supported = false;
+    const QByteArray payload = resource.payload();
+    const ResourceContext context = resource.context();
+    const QByteArray platform = platformContextUtf8(context.platform);
+    const QByteArray type = (resourceTypeOverride.isEmpty() ? context.type : resourceTypeOverride).toUtf8();
+    const QByteArray utf8 = text.toUtf8();
+    int result = 0;
+    if (peare_font_supports_text_with_codepage(
+            reinterpret_cast<const uint8_t*>(payload.constData()), size_t(payload.size()),
+            platform.isEmpty() ? nullptr : platform.constData(),
+            type.isEmpty() ? nullptr : type.constData(), context.codepage,
+            utf8.constData(), &result) != PEARE_STATUS_OK)
+        return false;
+    *supported = result != 0;
+    return true;
+}
+
+FontCodepoints fontCodepoints(const Resource& resource, const QString& resourceTypeOverride)
+{
+    FontCodepoints result;
+    const QByteArray payload = resource.payload();
+    const ResourceContext context = resource.context();
+    const QByteArray platform = platformContextUtf8(context.platform);
+    const QByteArray type = (resourceTypeOverride.isEmpty() ? context.type : resourceTypeOverride).toUtf8();
+    peare_font_codepoint_array codepoints{};
+    if (peare_font_get_codepoints_with_codepage(
+            reinterpret_cast<const uint8_t*>(payload.constData()), size_t(payload.size()),
+            platform.isEmpty() ? nullptr : platform.constData(),
+            type.isEmpty() ? nullptr : type.constData(), context.codepage,
+            &codepoints) == PEARE_STATUS_OK) {
+        result.usesGlyphIndexes = codepoints.glyph_index_mode != 0;
+        result.values.reserve(int(codepoints.count));
+        for (size_t i = 0; i < codepoints.count; ++i)
+            result.values.push_back(codepoints.items[i]);
+    }
+    peare_font_codepoint_array_free(&codepoints);
+    return result;
 }
 
 } // namespace pearegui

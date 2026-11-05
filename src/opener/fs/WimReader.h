@@ -1,10 +1,6 @@
 #pragma once
 
-// WIM (Windows Imaging) read-only file system, ported from DiscUtils.Wim
-// (WimFile + WimFileSystem + FileResourceStream). Parses the 512-byte header,
-// the resource lookup table (SHA1 -> resource), the first image's metadata
-// (security block + directory tree), and exposes files whose content is a
-// chunked LZX/XPRESS resource decoded on demand.
+// Read files from the first WIM image and decode LZX/XPRESS resources on demand.
 
 #include <cstdint>
 #include <map>

@@ -1,5 +1,6 @@
 #include "AsarModule.h"
 #include "Compat.h"
+#include "../fs/QFileByteStore.h"
 
 #include <QDir>
 #include <QFile>
@@ -64,9 +65,8 @@ fs::ByteStorePtr storeForFile(const QString& path)
             reinterpret_cast<const std::uint8_t*>(mapped), std::int64_t(size),
             std::static_pointer_cast<void>(holder));
     }
-    const QByteArray bytes = holder->readAll();
-    return std::make_shared<fs::MemoryStore>(
-        reinterpret_cast<const std::uint8_t*>(bytes.constData()), std::size_t(bytes.size()));
+    auto source = std::make_shared<fs::QFileByteStore>(path);
+    return source->validate() ? source : fs::ByteStorePtr();
 }
 
 QString safeLeaf(QString name, int index)
@@ -316,10 +316,8 @@ QString sidecarPath(const QString& physicalPath, const QString& archivePath)
 
 bool AsarModule::isHeader(const QByteArray& data)
 {
-    // Match Chromium Pickle framing, but do not require JSON.stringify() to
-    // place the root "files" property first. @electron/asar itself only
-    // requires a JSON object containing "files", so an exact byte-prefix
-    // check rejects otherwise valid archives produced by compatible packers.
+    // Accept any valid Pickle-wrapped JSON object with a root "files" property.
+    // Compatible packers do not need to place that property first.
     if (data.size() < 17) return false;
     const quint32 sizePicklePayload = le32(data, 0);
     const quint32 headerSize = le32(data, 4);

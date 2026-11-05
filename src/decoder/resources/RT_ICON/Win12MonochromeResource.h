@@ -5,24 +5,8 @@
 namespace peare {
 namespace resources {
 
-/// Decoder for the monochrome cursor/icon resource format used by
-/// Windows 1.x and Windows 2.x.
-///
-/// Layout:
-///   BYTE  bFigure       (1 cursor, 3 icon)
-///   BYTE  bIndependent  (0 device-dependent, 1 device-independent)
-///   WORD  xHotspot
-///   WORD  yHotspot
-///   WORD  cx
-///   WORD  cy
-///   WORD  widthBytes
-///   WORD  clr           (always zero)
-///   BYTE  andMask[cy * widthBytes]
-///   BYTE  xorMask[cy * widthBytes]
-///
-/// Rows are word-aligned and the most-significant bit is the leftmost
-/// pixel. Padding following the two planes is allowed because NE resource
-/// lengths are stored in alignment units.
+/// Decode Windows 1.x and 2.x monochrome icon and cursor resources.
+/// The payload contains aligned AND and XOR planes; trailing alignment padding is valid.
 class Win12MonochromeResource
 {
 public:

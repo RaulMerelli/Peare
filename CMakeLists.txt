@@ -110,20 +110,116 @@ message(STATUS "Peare Qt profile: Qt ${QT_VERSION_MAJOR}")
 message(STATUS "Peare source baseline: C++11; compiler mode: C++${PEARE_EFFECTIVE_CXX_STANDARD}")
 
 if(WIN32)
-    message(STATUS "Peare targets: Peare.exe + PeareOpener.dll + PeareDecoder.dll")
+    message(STATUS "Peare targets: Peare.exe + PeareOpener.dll + PeareDecoder.dll + PeareWriter.dll")
 elseif(APPLE)
-    message(STATUS "Peare targets: Peare + libPeareOpener.dylib + libPeareDecoder.dylib")
+    message(STATUS "Peare targets: Peare + libPeareOpener + libPeareDecoder + libPeareWriter")
 else()
-    message(STATUS "Peare targets: Peare + libPeareOpener + libPeareDecoder")
+    message(STATUS "Peare targets: Peare + libPeareOpener + libPeareDecoder + libPeareWriter")
 endif()
 
-# Internal LZX decoder used by WIM, CAB, XEX and Windows CE containers.
+set(PEARE_FONT_THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/decoder/font/third_party")
+file(GLOB_RECURSE PEARE_BROTLI_COMMON_SOURCES CONFIGURE_DEPENDS
+    "${PEARE_FONT_THIRD_PARTY_DIR}/brotli/c/common/*.c")
+file(GLOB_RECURSE PEARE_BROTLI_DECODER_SOURCES CONFIGURE_DEPENDS
+    "${PEARE_FONT_THIRD_PARTY_DIR}/brotli/c/dec/*.c")
+add_library(PeareBrotliDecoder STATIC
+    ${PEARE_BROTLI_COMMON_SOURCES}
+    ${PEARE_BROTLI_DECODER_SOURCES}
+)
+target_include_directories(PeareBrotliDecoder PUBLIC
+    "${PEARE_FONT_THIRD_PARTY_DIR}/brotli/c/include")
+
+add_library(PeareWoff2Decoder STATIC
+    src/decoder/font/third_party/woff2/src/table_tags.cc
+    src/decoder/font/third_party/woff2/src/variable_length.cc
+    src/decoder/font/third_party/woff2/src/woff2_common.cc
+    src/decoder/font/third_party/woff2/src/woff2_dec.cc
+    src/decoder/font/third_party/woff2/src/woff2_out.cc
+)
+target_compile_features(PeareWoff2Decoder PRIVATE cxx_std_11)
+target_include_directories(PeareWoff2Decoder
+    PUBLIC "${PEARE_FONT_THIRD_PARTY_DIR}/woff2/include"
+    PRIVATE "${PEARE_FONT_THIRD_PARTY_DIR}/woff2/src")
+target_link_libraries(PeareWoff2Decoder PRIVATE PeareBrotliDecoder)
+
+set(PEARE_LIBEOT_DIR "${PEARE_FONT_THIRD_PARTY_DIR}/libeot")
+add_library(PeareMtxDecoder STATIC
+    ${PEARE_LIBEOT_DIR}/src/EOT.c
+    ${PEARE_LIBEOT_DIR}/src/libeot.c
+    ${PEARE_LIBEOT_DIR}/src/triplet_encodings.c
+    ${PEARE_LIBEOT_DIR}/src/writeFontFile.c
+    ${PEARE_LIBEOT_DIR}/src/ctf/parseCTF.c
+    ${PEARE_LIBEOT_DIR}/src/ctf/parseTTF.c
+    ${PEARE_LIBEOT_DIR}/src/ctf/SFNTContainer.c
+    ${PEARE_LIBEOT_DIR}/src/lzcomp/ahuff.c
+    ${PEARE_LIBEOT_DIR}/src/lzcomp/bitio.c
+    ${PEARE_LIBEOT_DIR}/src/lzcomp/liblzcomp.c
+    ${PEARE_LIBEOT_DIR}/src/lzcomp/lzcomp.c
+    ${PEARE_LIBEOT_DIR}/src/lzcomp/mtxmem.c
+    ${PEARE_LIBEOT_DIR}/src/util/stream.c
+    ${PEARE_LIBEOT_DIR}/src/peare_mtx_bridge.c
+)
+set_target_properties(PeareMtxDecoder PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED YES
+)
+target_compile_definitions(PeareMtxDecoder PRIVATE DECOMPRESS_ON)
+target_include_directories(PeareMtxDecoder PRIVATE
+    ${PEARE_LIBEOT_DIR}/inc
+    ${PEARE_LIBEOT_DIR}/src
+    ${PEARE_LIBEOT_DIR}/src/lzcomp
+    ${PEARE_LIBEOT_DIR}/src/util
+)
+
+# Peare-owned compression decoders used by archive and disk readers.
 add_library(PeareOpener SHARED
+    src/opener/compression/peare/Bzip2Decoder.h
+    src/opener/compression/peare/Bzip2Decoder.cpp
+    src/opener/compression/Bcj2Decoder.h
+    src/opener/compression/Bcj2Decoder.cpp
+    src/opener/compression/SevenZipAesDecoder.h
+    src/opener/compression/SevenZipAesDecoder.cpp
+    src/opener/compression/LzmaDecoder.h
+    src/opener/compression/LzmaDecoder.cpp
+    src/opener/compression/third_party/lzma/Compiler.h
+    src/opener/compression/third_party/lzma/Precomp.h
+    src/opener/compression/third_party/lzma/7zTypes.h
+    src/opener/compression/third_party/lzma/Aes.h
+    src/opener/compression/third_party/lzma/Aes.c
+    src/opener/compression/third_party/lzma/Sha256.h
+    src/opener/compression/third_party/lzma/Sha256.c
+    src/opener/compression/third_party/lzma/LzmaDec.h
+    src/opener/compression/third_party/lzma/LzmaDec.c
+    src/opener/compression/third_party/lzma/Lzma2Dec.h
+    src/opener/compression/third_party/lzma/Lzma2Dec.c
+    src/opener/compression/third_party/lzma/Ppmd.h
+    src/opener/compression/third_party/lzma/Ppmd7.h
+    src/opener/compression/third_party/lzma/Ppmd7.c
+    src/opener/compression/third_party/lzma/Ppmd7Dec.c
+    src/opener/compression/third_party/lzma/CpuArch.h
+    src/opener/compression/third_party/lzma/Bcj2.h
+    src/opener/compression/third_party/lzma/Bcj2.c
+    src/opener/compression/third_party/lzma/Bra.h
+    src/opener/compression/third_party/lzma/Bra.c
+    src/opener/compression/third_party/lzma/Bra86.c
+    src/opener/compression/third_party/lzma/RotateDefs.h
+    src/opener/compression/third_party/lzma/Delta.h
+    src/opener/compression/third_party/lzma/Delta.c
+    src/opener/compression/peare/LhaDecoder.h
+    src/opener/compression/peare/LhaDecoder.cpp
+    src/opener/compression/peare/LhaLh23Decoder.h
+    src/opener/compression/peare/LhaLh23Decoder.cpp
+    src/opener/compression/peare/LhaLk7Decoder.h
+    src/opener/compression/peare/LhaLk7Decoder.cpp
+    src/opener/compression/peare/LhaPm1Decoder.h
+    src/opener/compression/peare/LhaPm1Decoder.cpp
+    src/opener/compression/peare/LhaPm2Decoder.h
+    src/opener/compression/peare/LhaPm2Decoder.cpp
     src/opener/api/peare/peare_types.h
     src/opener/api/peare/peare_opener.h
     src/opener/api/Api.cpp
     src/opener/compression/peare/lzx_frontends.h
-    src/opener/compression/LzxDecoder.cpp
+    src/opener/compression/peare/LzxDecoder.cpp
     src/opener/api/PeareResourceSnapshot.h
     src/opener/OpenerSession.h
     src/opener/OpenerSession.cpp
@@ -164,12 +260,32 @@ add_library(PeareOpener SHARED
     src/opener/modules/Os2Pack2Tables.h
     src/opener/modules/SzddModule.h
     src/opener/modules/SzddModule.cpp
+    src/opener/modules/GzipModule.h
+    src/opener/modules/GzipModule.cpp
+    src/opener/modules/Bzip2Module.h
+    src/opener/modules/Bzip2Module.cpp
+    src/opener/modules/ArModule.h
+    src/opener/modules/ArModule.cpp
+    src/opener/modules/CpioModule.cpp
+    src/opener/modules/UnixCompressModule.cpp
+    src/opener/modules/LhaModule.h
+    src/opener/modules/LhaModule.cpp
+    src/opener/modules/SevenZipModule.h
+    src/opener/modules/SevenZipModule.cpp
+    src/opener/modules/Rar4Module.h
+    src/opener/modules/Rar4Module.cpp
+    src/opener/modules/Rar4LzDecoder.h
+    src/opener/modules/Rar4LzDecoder.cpp
+    src/opener/modules/UuencodeModule.h
+    src/opener/modules/UuencodeModule.cpp
     src/opener/modules/ResxModule.h
     src/opener/modules/ResxModule.cpp
     src/opener/modules/CueBinModule.h
     src/opener/modules/CueBinModule.cpp
     src/opener/modules/SiemensImgModule.h
     src/opener/modules/SiemensImgModule.cpp
+    src/opener/modules/SiemensAdonisModule.h
+    src/opener/modules/SiemensAdonisModule.cpp
     src/opener/modules/SiemensFwfModule.h
     src/opener/modules/SiemensFwfModule.cpp
     src/opener/modules/SiemensFsfModule.h
@@ -276,6 +392,8 @@ add_library(PeareOpener SHARED
     src/opener/modules/OleCompound.cpp
     src/opener/modules/MsiModule.h
     src/opener/modules/MsiModule.cpp
+    src/opener/modules/ResourceForkModule.h
+    src/opener/modules/ResourceForkModule.cpp
     src/opener/modules/MsgModule.h
     src/opener/modules/MsgModule.cpp
     src/opener/modules/VhdxModule.h
@@ -326,6 +444,8 @@ add_library(PeareOpener SHARED
     src/opener/modules/ZipModule.cpp
     src/opener/modules/TarModule.h
     src/opener/modules/TarModule.cpp
+    src/opener/modules/WpiModule.h
+    src/opener/modules/WpiModule.cpp
     src/opener/modules/AsarModule.h
     src/opener/modules/AsarModule.cpp
     src/opener/modules/Ps3PupModule.h
@@ -341,6 +461,11 @@ add_library(PeareOpener SHARED
     src/opener/modules/EAppxModule.h
     src/opener/modules/EAppxModule.cpp
 )
+set_source_files_properties(
+    src/opener/compression/third_party/lzma/Aes.c
+    src/opener/compression/third_party/lzma/Sha256.c
+    PROPERTIES COMPILE_DEFINITIONS Z7_NO_CPU_FEATURES
+)
 target_compile_definitions(PeareOpener PRIVATE PEARE_OPENER_BUILD)
 target_include_directories(PeareOpener
     PUBLIC
@@ -350,14 +475,55 @@ target_include_directories(PeareOpener
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/compression
 )
-target_link_libraries(PeareOpener PRIVATE ${PEARE_QT_CORE} ${PEARE_QT_CORE5COMPAT})
+target_link_libraries(PeareOpener PRIVATE
+    ${PEARE_QT_CORE} ${PEARE_QT_CORE5COMPAT})
 set_target_properties(PeareOpener PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED YES
+    C_EXTENSIONS YES
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES
     OUTPUT_NAME PeareOpener
 )
 
 add_library(PeareDecoder SHARED
+    src/decoder/font/AfmFont.h
+    src/decoder/font/AfmFont.cpp
+    src/decoder/font/PfmFont.h
+    src/decoder/font/PfmFont.cpp
+    src/decoder/font/AmigaFont.h
+    src/decoder/font/AmigaFont.cpp
+    src/decoder/font/AmigaAnimFont.h
+    src/decoder/font/AmigaAnimFont.cpp
+    src/decoder/font/SfnFont.h
+    src/decoder/font/SfnFont.cpp
+    src/decoder/font/ShpFont.h
+    src/decoder/font/ShpFont.cpp
+    src/decoder/font/MacFondFont.h
+    src/decoder/font/MacFondFont.cpp
+    src/decoder/font/SnfFont.h
+    src/decoder/font/SnfFont.cpp
+    src/decoder/font/SvgFont.h
+    src/decoder/font/SvgFont.cpp
+    src/decoder/font/BitmapFont.h
+    src/decoder/font/BitmapFont.cpp
+    src/decoder/font/SunNewsFont.h
+    src/decoder/font/SunNewsFont.cpp
+    src/decoder/font/DwfFont.h
+    src/decoder/font/DwfFont.cpp
+    src/decoder/font/MacBitmapSfnt.cpp
+    src/decoder/font/SfntFont.h
+    src/decoder/font/SfntFont.cpp
+    src/decoder/font/EotFont.h
+    src/decoder/font/EotFont.cpp
+    src/decoder/font/WindowsFnt.h
+    src/decoder/font/WindowsFnt.cpp
+    src/decoder/font/WinGdiSfntRenderer.h
+    src/decoder/font/WinGdiSfntRenderer.cpp
+    src/decoder/font/Type1Font.h
+    src/decoder/font/Type1Font.cpp
+    src/decoder/font/Type3Font.h
+    src/decoder/font/Type3Font.cpp
     src/decoder/api/peare/peare.h
     src/opener/api/peare/peare_types.h
     src/decoder/api/peare/peare_decoder.h
@@ -374,9 +540,10 @@ add_library(PeareDecoder SHARED
     src/decoder/resources/ModuleResources.cpp
     src/decoder/resources/RawDetect.h
     src/decoder/resources/RawDetect.cpp
+    src/decoder/resources/WAD/WadImageDecoder.h
+    src/decoder/resources/WAD/WadImageDecoder.cpp
     src/decoder/resources/PCX/PcxDecoder.h
     src/decoder/resources/PCX/PcxDecoder.cpp
-    src/decoder/resources/PCX/LICENSE-Apache-2.0.txt
     src/decoder/resources/GIF/GifRecovery.h
     src/decoder/resources/GIF/GifRecovery.cpp
     src/decoder/ResourceExport.h
@@ -399,6 +566,10 @@ add_library(PeareDecoder SHARED
     src/decoder/resources/RT_GROUP_CURSOR/RT_GROUP_CURSOR.cpp
     src/decoder/resources/RT_BITMAP/RT_BITMAP.h
     src/decoder/resources/RT_BITMAP/RT_BITMAP.cpp
+    src/decoder/resources/SIEMENS_MWIMAGE/SiemensMwImage.h
+    src/decoder/resources/SIEMENS_MWIMAGE/SiemensMwImage.cpp
+    src/decoder/resources/SIEMENS_ADONIS/SiemensAdonis.h
+    src/decoder/resources/SIEMENS_ADONIS/SiemensAdonis.cpp
     src/decoder/resources/RT_POINTER/RT_POINTER.h
     src/decoder/resources/RT_POINTER/RT_POINTER.cpp
     src/decoder/resources/RT_STRING/RT_STRING.h
@@ -444,15 +615,142 @@ target_include_directories(PeareDecoder
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/decoder
 )
 target_link_libraries(PeareDecoder
     PRIVATE ${PEARE_QT_CORE} ${PEARE_QT_GUI} ${PEARE_QT_CORE5COMPAT}
+            PeareWoff2Decoder PeareMtxDecoder
 )
+if(WIN32)
+    target_link_libraries(PeareDecoder PRIVATE gdi32)
+endif()
 set_target_properties(PeareDecoder PROPERTIES
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN YES
     OUTPUT_NAME PeareDecoder
 )
+
+add_library(PeareWriter SHARED
+    src/writer/api/peare/peare_writer.h
+    src/writer/api/Api.cpp
+    src/writer/formats/DiskImageWriter.h
+    src/writer/formats/DiskImageWriter.cpp
+    src/writer/formats/ExtVolumeUpdate.h
+    src/writer/formats/ExtVolumeUpdate.cpp
+    src/writer/formats/NtfsVolumeUpdate.h
+    src/writer/formats/NtfsVolumeUpdate.cpp
+    src/writer/formats/VhdxImageWriter.h
+    src/writer/formats/VhdxImageWriter.cpp
+    src/writer/formats/VhdImageWriter.h
+    src/writer/formats/VhdImageWriter.cpp
+    src/writer/formats/VmdkImageWriter.h
+    src/writer/formats/VmdkImageWriter.cpp
+    src/writer/formats/VmdkStreamOptimizedWriter.h
+    src/writer/formats/VmdkStreamOptimizedWriter.cpp
+    src/writer/formats/VmdkImageAccess.h
+    src/writer/formats/VmdkSplitImageWriter.h
+    src/writer/formats/VmdkSplitImageWriter.cpp
+    src/writer/third_party/fatfs/LICENSE.txt
+    src/writer/third_party/fatfs/diskio.h
+    src/writer/third_party/fatfs/ff.c
+    src/writer/third_party/fatfs/ff.h
+    src/writer/third_party/fatfs/ffconf.h
+    src/writer/third_party/fatfs/ffunicode.c
+    src/opener/modules/DeflateDecoder.cpp
+    src/opener/modules/DeflateDecoder.h
+)
+target_compile_definitions(PeareWriter PRIVATE PEARE_WRITER_BUILD)
+target_include_directories(PeareWriter
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/writer/api>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/writer
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/modules
+)
+target_link_libraries(PeareWriter PRIVATE ${PEARE_QT_CORE})
+set_target_properties(PeareWriter PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN YES
+    OUTPUT_NAME PeareWriter
+)
+
+add_library(PeareExtFs STATIC
+    src/writer/third_party/lwext4/include/ext4.h
+    src/writer/third_party/lwext4/include/ext4_balloc.h
+    src/writer/third_party/lwext4/include/ext4_bcache.h
+    src/writer/third_party/lwext4/include/ext4_bitmap.h
+    src/writer/third_party/lwext4/include/ext4_block_group.h
+    src/writer/third_party/lwext4/include/ext4_blockdev.h
+    src/writer/third_party/lwext4/include/ext4_config.h
+    src/writer/third_party/lwext4/include/ext4_crc32.h
+    src/writer/third_party/lwext4/include/ext4_casefold.h
+    src/writer/third_party/lwext4/include/ext4_debug.h
+    src/writer/third_party/lwext4/include/ext4_dir.h
+    src/writer/third_party/lwext4/include/ext4_dir_idx.h
+    src/writer/third_party/lwext4/include/ext4_errno.h
+    src/writer/third_party/lwext4/include/ext4_extent.h
+    src/writer/third_party/lwext4/include/ext4_fs.h
+    src/writer/third_party/lwext4/include/ext4_hash.h
+    src/writer/third_party/lwext4/include/ext4_ialloc.h
+    src/writer/third_party/lwext4/include/ext4_inode.h
+    src/writer/third_party/lwext4/include/ext4_journal.h
+    src/writer/third_party/lwext4/include/ext4_mbr.h
+    src/writer/third_party/lwext4/include/ext4_misc.h
+    src/writer/third_party/lwext4/include/ext4_mkfs.h
+    src/writer/third_party/lwext4/include/ext4_oflags.h
+    src/writer/third_party/lwext4/include/ext4_super.h
+    src/writer/third_party/lwext4/include/ext4_trans.h
+    src/writer/third_party/lwext4/include/ext4_types.h
+    src/writer/third_party/lwext4/include/ext4_xattr.h
+    src/writer/third_party/lwext4/src/ext4.c
+    src/writer/third_party/lwext4/src/ext4_balloc.c
+    src/writer/third_party/lwext4/src/ext4_bcache.c
+    src/writer/third_party/lwext4/src/ext4_bitmap.c
+    src/writer/third_party/lwext4/src/ext4_block_group.c
+    src/writer/third_party/lwext4/src/ext4_blockdev.c
+    src/writer/third_party/lwext4/src/ext4_crc32.c
+    src/writer/third_party/lwext4/src/ext4_casefold.c
+    src/writer/third_party/lwext4/src/ext4_casefold_data.h
+    src/writer/third_party/lwext4/src/ext4_debug.c
+    src/writer/third_party/lwext4/src/ext4_dir.c
+    src/writer/third_party/lwext4/src/ext4_dir_idx.c
+    src/writer/third_party/lwext4/src/ext4_extent.c
+    src/writer/third_party/lwext4/src/ext4_fs.c
+    src/writer/third_party/lwext4/src/ext4_hash.c
+    src/writer/third_party/lwext4/src/ext4_ialloc.c
+    src/writer/third_party/lwext4/src/ext4_inode.c
+    src/writer/third_party/lwext4/src/ext4_journal.c
+    src/writer/third_party/lwext4/src/ext4_mkfs.c
+    src/writer/third_party/lwext4/src/ext4_super.c
+    src/writer/third_party/lwext4/src/ext4_trans.c
+)
+target_compile_definitions(PeareExtFs PRIVATE
+    CONFIG_USE_DEFAULT_CFG=1
+    CONFIG_EXT_FEATURE_SET_LVL=4
+    CONFIG_EXTENTS_ENABLE=1
+    CONFIG_XATTR_ENABLE=0
+    CONFIG_JOURNALING_ENABLE=1
+    CONFIG_DEBUG_PRINTF=0
+    CONFIG_DEBUG_ASSERT=0
+)
+target_include_directories(PeareExtFs PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/writer/third_party/lwext4/include
+)
+set_target_properties(PeareExtFs PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    POSITION_INDEPENDENT_CODE ON
+)
+target_link_libraries(PeareWriter PRIVATE PeareExtFs)
+set_source_files_properties(src/writer/formats/ExtVolumeUpdate.cpp PROPERTIES
+    COMPILE_DEFINITIONS "CONFIG_USE_DEFAULT_CFG=1;CONFIG_EXT_FEATURE_SET_LVL=4;CONFIG_EXTENTS_ENABLE=1;CONFIG_XATTR_ENABLE=0;CONFIG_JOURNALING_ENABLE=1;CONFIG_DEBUG_PRINTF=0;CONFIG_DEBUG_ASSERT=0"
+)
+
+include(src/writer/third_party/ntfs-3g/PeareNtfs3g.cmake)
 
 set(PEARE_APP_SOURCES
     src/app/main.cpp
@@ -484,15 +782,19 @@ target_include_directories(Peare PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/api
     ${CMAKE_CURRENT_SOURCE_DIR}/src/decoder/api
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/writer/api
 )
-target_link_libraries(Peare PRIVATE PeareOpener PeareDecoder ${PEARE_QT_WIDGETS})
+target_link_libraries(Peare PRIVATE PeareOpener PeareDecoder PeareWriter ${PEARE_QT_WIDGETS})
+if(WIN32)
+    target_link_libraries(Peare PRIVATE shell32)
+endif()
 
 if(ANDROID AND QT_VERSION_MAJOR GREATER_EQUAL 6)
     set_property(TARGET Peare PROPERTY QT_ANDROID_PACKAGE_NAME "org.peare.app")
     qt_finalize_executable(Peare)
 endif()
 
-install(TARGETS PeareOpener PeareDecoder
+install(TARGETS PeareOpener PeareDecoder PeareWriter
     EXPORT PeareTargets
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -504,6 +806,7 @@ install(FILES
     src/opener/api/peare/peare_types.h
     src/opener/api/peare/peare_opener.h
     src/decoder/api/peare/peare_decoder.h
+    src/writer/api/peare/peare_writer.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/peare
 )
 

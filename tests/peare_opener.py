@@ -100,6 +100,8 @@ class PeareLib:
         L.peare_opener_create.argtypes = [C.POINTER(_HANDLE)]
         L.peare_opener_create.restype = C.c_int
         L.peare_opener_destroy.argtypes = [_HANDLE]
+        L.peare_opener_set_password.argtypes = [_HANDLE, C.c_char_p]
+        L.peare_opener_set_password.restype = C.c_int
         L.peare_opener_open_file.argtypes = [_HANDLE, C.c_char_p]
         L.peare_opener_open_file.restype = C.c_int
         L.peare_opener_open.argtypes = [_HANDLE, _HANDLE]
@@ -131,11 +133,17 @@ class PeareLib:
         msg = self._lib.peare_status_message(code)
         return msg.decode("utf-8", "replace") if msg else f"status {code}"
 
-    def open_file(self, path: str) -> "Opener | None":
+    def open_file(self, path: str, password: str | None = None) -> "Opener | None":
         h = _HANDLE()
         if self._lib.peare_opener_create(C.byref(h)) != 0:
             return None
-        if self._lib.peare_opener_open_file(h, path.encode("utf-8")) != 0:
+        if password is not None:
+            status = self._lib.peare_opener_set_password(h, password.encode("utf-8"))
+            if status != 0:
+                self._lib.peare_opener_destroy(h)
+                return None
+        self.last_open_status = self._lib.peare_opener_open_file(h, path.encode("utf-8"))
+        if self.last_open_status != 0:
             self._lib.peare_opener_destroy(h)
             return None
         return Opener(self, h)
@@ -214,6 +222,12 @@ class Opener:
                     fmt = CONTAINER_NAMES.get(ctx.container_format, str(ctx.container_format))
                     size = int(ctx.data_size)
                     self._L.peare_resource_context_free(C.byref(ctx))
+                    folder_path = self.folder_type(folder)
+                    folder_parts = folder_path.split("\x1f") if folder_path else []
+                    is_resource_type = lambda part: (
+                        part.replace("_", "").isalnum() and part.isupper())
+                    if folder_parts and not all(is_resource_type(part) for part in folder_parts):
+                        name = "/".join(folder_parts + [name])
                     path = f"{prefix}/{name}" if prefix else name
 
                     # sha256 of the payload proves byte-exact extraction. Only hash

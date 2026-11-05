@@ -159,6 +159,8 @@ ModulePtr MtfModule::open(const fs::ByteStorePtr& f, const QString& n) {
                 r.dataOffset = dataOff;
                 r.dataSize = len;
                 r.format = ModuleFormat::MTF;
+                r.hierarchyPath = hp;
+                r.hierarchyPath.push_back(r.type);
                 r.isEmbeddedFile = true;
                 r.content = std::make_shared<fs::SubStore>(f, dataOff, len);
                 m->resources_.push_back(std::move(r));

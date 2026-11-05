@@ -189,10 +189,8 @@ void JfsReader::parse() {
         }
     }
 
-    // Both aggregate inode tables are authoritative copies.  OS/2 systems can
-    // leave the primary table readable but stale after a recovery; selecting it
-    // merely because inode 16 has a valid header hides most of the fileset.  Try
-    // both tables and keep the map that resolves the richest valid root tree.
+    // Check both aggregate inode tables because recovery can leave one stale.
+    // Keep the table that resolves the most valid root entries.
     std::vector<Extent> bestMap;
     int bestScore = -1;
     for (int secondary = 0; secondary < 2; ++secondary) {
@@ -390,11 +388,8 @@ JfsReader::Inode JfsReader::readFilesetInode(std::uint32_t number) const {
         (kInodesPerExtent * kInodeSize + blockSize_ - 1) / blockSize_);
     if (extentBlock == 0 || extentBlocks < neededBlocks) return out;
 
-    // OS/2 did not always align 16 KiB inode extents to a 4 KiB page.
-    // The inode number is relative to the start of the extent, not to a
-    // rounded metadata-page boundary.  Computing the byte position directly
-    // preserves every page transition, including extents that begin halfway
-    // through a page.
+    // Inode numbers are relative to the extent start, which may not be page-aligned.
+    // Compute the byte position directly.
     const std::int64_t extentOffset = blockOffset(extentBlock);
     if (extentOffset < 0) return out;
     const std::uint64_t inodeByte =

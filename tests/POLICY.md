@@ -1,33 +1,32 @@
-# Test-data policy
+# Test Sample Policy
 
-Peare's tests must be redistributable with the project. That means **no
-copyrighted or licence-encumbered sample files may be committed**, ever.
+Format sample inputs must come from sources independent of Peare and its test
+code. Do not author sample bytes by hand. Do not write a project script that
+constructs a sample file from format rules or byte layouts. Do not mutate,
+truncate, or corrupt a sample in a test to create another sample.
 
-Every fixture under `tests/formats/**/fixtures/` must be one of:
+An independent program can create a small sample. For example, WinRAR can create
+a RAR archive from project-owned text files. The sample remains synthetic, but
+its format structure comes from a separate implementation. Record the program,
+version, operation, source files, and settings. A project test script is not an
+independent program, even when it uses a standard library or writes valid bytes.
 
-1. **Synthetic** — generated from scratch by a script in `tests/generate/`, whose
-   content is authored in that script (so no third-party bytes are involved). This
-   is the default and preferred source. The generator doubles as proof of
-   provenance: anyone can read it and confirm the fixture carries no external
-   content.
+A real sample can be committed only when its license allows redistribution.
+Record its source and license in a fixture README and in the sample provenance
+index. Do not commit proprietary disk images, firmware, ripped media, or other
+restricted files.
 
-2. **Permissively licensed** — content whose licence explicitly allows
-   redistribution (e.g. FreeDoom for WAD, CC0/public-domain assets). When used,
-   record the source and licence in the format's `fixtures/README.md`.
+Writer output may be the subject of a Writer test. Verify that output with an
+independent reader or tool. Do not use a file written by Peare Writer as evidence
+that Peare Opener can read that format correctly. For Opener tests, use a real
+sample or a sample produced by an independent program.
 
-**Never commit** a real Acronis/Veeam/game/OS image, a ripped disc, firmware you
-were not licensed to redistribute, or any file whose licence you have not checked.
+Test payloads are not format samples. Tests may create payload files for a
+Writer operation, but must not wrap them into a format sample with test code.
 
-## When a format cannot be sampled legally
+If no independent sample is available, do not invent one. Record the format as
+not verified with an independent sample. Test local or restricted samples
+outside the repository when permission allows.
 
-Some formats have no synthetic path and no licence-safe sample (proprietary backup
-containers, for instance). For those:
-
-- Do **not** commit a real file.
-- Where possible, hand-craft a **minimal synthetic header** that exercises
-  detection and top-level parsing without reproducing copyrighted payloads.
-- Otherwise leave the format in the README roadmap under "implemented but not yet
-  verified against any real sample", and verify it privately, out of tree.
-
-The goal: the entire `tests/` tree can be published, audited, and rebuilt by anyone
-without a single licensing question.
+Record the origin of every repository fixture in its fixture README. Do not
+infer a source, license, tool, or version. Mark missing data as unknown.

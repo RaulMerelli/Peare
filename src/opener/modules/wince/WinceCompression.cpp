@@ -1,7 +1,5 @@
-// Windows CE framing is handled here; compressed payloads are decoded by
-// Peare's internal classic LZX implementation. The CE XPRESS/LZW/block-table
-// framing is ported from the MIT-licensed CERF project by Yaroslav Kibysh
-// (gweslab); see CERF-LICENSE.txt in this directory.
+// Decode Windows CE compression with Peare's LZX code and CERF-derived framing.
+// CERF is MIT-licensed; see CERF-LICENSE.txt.
 #include "WinceCompression.h"
 
 #include <peare/lzx_frontends.h>
@@ -110,7 +108,7 @@ QByteArray decompressCe1Lzw(const QByteArray& source, quint32 outputSize)
         return code;
     };
 
-    auto emit = [&](int code, QByteArray* out, int* first) -> bool {
+    auto appendCodeword = [&](int code, QByteArray* out, int* first) -> bool {
         QByteArray stack;
         while (code >= 257) {
             const auto pi = prefix.find(code);
@@ -141,18 +139,18 @@ QByteArray decompressCe1Lzw(const QByteArray& source, quint32 outputSize)
             continue;
         }
         if (previous < 0) {
-            if (!emit(code, &output, nullptr)) return QByteArray();
+            if (!appendCodeword(code, &output, nullptr)) return QByteArray();
             previous = code;
             continue;
         }
 
         int first = 0;
         if (code < nextCode) {
-            if (!emit(code, &output, &first)) return QByteArray();
+            if (!appendCodeword(code, &output, &first)) return QByteArray();
         } else if (code == nextCode) {
             QByteArray previousBytes;
             int previousFirst = 0;
-            if (!emit(previous, &previousBytes, &previousFirst)) return QByteArray();
+            if (!appendCodeword(previous, &previousBytes, &previousFirst)) return QByteArray();
             previousBytes.append(char(previousFirst));
             first = previousFirst;
             output.append(previousBytes);

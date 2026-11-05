@@ -1,5 +1,6 @@
 #include "TarModule.h"
 #include "Compat.h"
+#include "../fs/QFileByteStore.h"
 
 #include <QFile>
 #include <QStringList>
@@ -88,9 +89,8 @@ fs::ByteStorePtr storeForFile(const QString& path) {
         return std::make_shared<fs::ExternalStore>(
             reinterpret_cast<const std::uint8_t*>(mapped), std::int64_t(size),
             std::static_pointer_cast<void>(holder));
-    const QByteArray bytes = holder->readAll();
-    return std::make_shared<fs::MemoryStore>(
-        reinterpret_cast<const std::uint8_t*>(bytes.constData()), std::size_t(bytes.size()));
+    auto source = std::make_shared<fs::QFileByteStore>(path);
+    return source->validate() ? source : fs::ByteStorePtr();
 }
 
 }  // namespace
@@ -106,7 +106,8 @@ ModulePtr TarModule::open(const QByteArray& data, const QString& logicalName) {
                 logicalName);
 }
 
-ModulePtr TarModule::open(const fs::ByteStorePtr& file, const QString& sourceName) {
+ModulePtr TarModule::open(const fs::ByteStorePtr& file, const QString& sourceName,
+                          const QString& subPath) {
     auto module = peare::makeUnique<TarModule>();
     module->info_.filePath = sourceName;
     module->info_.format = ModuleFormat::TAR;
@@ -118,6 +119,7 @@ ModulePtr TarModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
     module->file_ = file;
 
     std::map<QString, fs::ByteStorePtr> fileByPath;
+    QStringList explicitDirectories;
     int index = 0;
     for (std::int64_t pos = 0; pos + kTarBlock <= file->capacity();) {
         std::vector<std::uint8_t> h = file->readRange(pos, kTarBlock);
@@ -141,7 +143,10 @@ ModulePtr TarModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
             return ModulePtr(std::move(module));
         }
 
-        if (type == '\0' || type == '0' || type == '7') {
+        if (type == '5') {
+            while (name.endsWith(QLatin1Char('/'))) name.chop(1);
+            if (!name.isEmpty()) explicitDirectories.push_back(name);
+        } else if (type == '\0' || type == '0' || type == '7') {
             fs::ByteStorePtr content = std::make_shared<fs::SubStore>(file, dataOffset, size);
             fileByPath[name] = content;
             ResourceEntry entry;
@@ -171,6 +176,51 @@ ModulePtr TarModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
         }
 
         pos += kTarBlock + roundUp(size, kTarBlock);
+    }
+
+    const QString requestedDirectory = normalizeName(subPath);
+    if (!requestedDirectory.isEmpty() && explicitDirectories.contains(requestedDirectory)) {
+        bool hasDescendant = false;
+        const QString prefix = requestedDirectory + QLatin1Char('/');
+        for (const ResourceEntry& entry : module->resources_) {
+            const QString path = (entry.hierarchyPath + QStringList{entry.name})
+                                    .join(QLatin1Char('/'));
+            if (path == requestedDirectory || path.startsWith(prefix)) {
+                hasDescendant = true;
+                break;
+            }
+        }
+        if (!hasDescendant) {
+            module->resources_.clear();
+            return ModulePtr(std::move(module));
+        }
+    }
+
+    for (const QString& path : explicitDirectories) {
+        const QString prefix = path + QLatin1Char('/');
+        bool hasDescendant = false;
+        for (const ResourceEntry& entry : module->resources_) {
+            const QString entryPath = (entry.hierarchyPath + QStringList{entry.name})
+                                          .join(QLatin1Char('/'));
+            if (entryPath == path || entryPath.startsWith(prefix)) {
+                hasDescendant = true;
+                break;
+            }
+        }
+        if (hasDescendant) continue;
+        const QStringList parts = path.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+        if (parts.isEmpty()) continue;
+        ResourceEntry entry;
+        entry.type = QStringLiteral("TAR_DIR");
+        entry.name = parts.last();
+        entry.language = QStringLiteral("neutral");
+        entry.format = ModuleFormat::TAR;
+        entry.hierarchyPath = parts;
+        entry.hierarchyPath.removeLast();
+        entry.content = file;
+        entry.isDirectory = true;
+        entry.containerSubPath = path;
+        module->resources_.push_back(std::move(entry));
     }
     return ModulePtr(std::move(module));
 }

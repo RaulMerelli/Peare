@@ -30,7 +30,7 @@ fs::ByteStorePtr storeForFile(const QString& path) {
 }  // namespace
 
 ModulePtr VhdxModule::buildFromDisk(const fs::ByteStorePtr& disk, const QString& sourceName,
-                                    const QString& error) {
+                                    const QString& error, std::uint32_t logicalSectorSize) {
     auto module = peare::makeUnique<VhdxModule>();
     module->info_.filePath = sourceName;
     module->info_.format = ModuleFormat::VHDX;
@@ -41,7 +41,7 @@ ModulePtr VhdxModule::buildFromDisk(const fs::ByteStorePtr& disk, const QString&
     }
     module->disk_ = disk;
 
-    std::vector<fs::PartitionInfo> parts = fs::readPartitionTable(disk);
+    std::vector<fs::PartitionInfo> parts = fs::readPartitionTable(disk, logicalSectorSize);
     auto addPartition = [&](const QString& name, std::int64_t off, std::int64_t len,
                             const fs::ByteStorePtr& content = fs::ByteStorePtr()) {
         ResourceEntry entry;
@@ -72,8 +72,9 @@ ModulePtr VhdxModule::buildFromDisk(const fs::ByteStorePtr& disk, const QString&
 
 ModulePtr VhdxModule::open(const fs::ByteStorePtr& file, const QString& sourceName) {
     std::string err;
-    fs::ByteStorePtr disk = fs::openVhdxDisk(file, &err);
-    return buildFromDisk(disk, sourceName, QString::fromStdString(err));
+    std::uint32_t logicalSectorSize = 512;
+    fs::ByteStorePtr disk = fs::openVhdxDisk(file, &err, &logicalSectorSize);
+    return buildFromDisk(disk, sourceName, QString::fromStdString(err), logicalSectorSize);
 }
 
 ModulePtr VhdxModule::open(const QString& filePath) {

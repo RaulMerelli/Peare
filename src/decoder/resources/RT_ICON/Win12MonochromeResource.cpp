@@ -120,10 +120,7 @@ bool Win12MonochromeResource::TryLocateHeader(
         return true;
     }
 
-    // Be tolerant of cursor payloads that have already acquired the
-    // later four-byte hotspot prefix before the historical header.
-    // This is not the canonical Win1/Win2 layout, but accepting it makes
-    // extraction paths and standalone resource dumps interoperable.
+    // Accept cursor payloads with a later four-byte hotspot prefix.
     if (IsValidHeaderAt(data, 4, expectedFigure))
     {
         headerOffset = 4;

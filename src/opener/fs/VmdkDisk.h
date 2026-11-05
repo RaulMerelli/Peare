@@ -1,13 +1,7 @@
 #pragma once
 
-// VMware Virtual Disk (VMDK) reader, ported from DiscUtils.Vmdk
-// (HostedSparseExtentHeader + CommonSparseExtentStream grain lookup, plus the
-// text disk descriptor that ties multi-extent disks together). It turns a .vmdk
-// into a positioned byte store over the *logical* disk.
-//
-// Supported: monolithicSparse (single KDMV extent), split sparse/flat disks
-// (twoGbMaxExtentSparse/Flat) described by a text descriptor referencing sibling
-// extent files, and streamOptimized compressed extents.
+// Read VMDK sparse, flat, split, and stream-optimized disks.
+// Expose each image as a logical byte store.
 
 #include <cstdint>
 #include <functional>

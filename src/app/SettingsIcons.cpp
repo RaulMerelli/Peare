@@ -10,6 +10,8 @@
 #include <QPixmap>
 #include <QSet>
 
+#include <memory>
+
 namespace {
 struct DefaultSection {
     const char* section;
@@ -103,71 +105,115 @@ void SettingsIcons::load()
     const QStringList sections = settings.childGroups();
     for (const QString& section : sections) {
         settings.beginGroup(section);
-        IconSetting value;
-        value.path = settings.value(QStringLiteral("path")).toString();
-        value.ordinal = settings.value(QStringLiteral("ordinal")).toString();
-        value.iconExt = settings.value(QStringLiteral("iconExt")).toString();
+        const QString iconExt = settings.value(QStringLiteral("iconExt")).toString();
         settings.endGroup();
 
-        extensions_.insert(section, value.iconExt);
-        QIcon icon = loadConfiguredIcon(section, value);
-        if (icon.isNull()) {
-            if (value.iconExt.startsWith(QStringLiteral("folder"), Qt::CaseInsensitive))
-                icon = IconFromExt::getFolder();
-            else
-                icon = IconFromExt::get(value.iconExt);
-        }
-        if (!icon.isNull())
-            icons_.insert(section, icon);
+        extensions_.insert(section, iconExt);
     }
 }
 
-QIcon SettingsIcons::loadConfiguredIcon(const QString& section,
-                                        const IconSetting& setting)
+QString SettingsIcons::settingsFilePath() const
 {
-    if (setting.path.isEmpty() || setting.ordinal.isEmpty() ||
-        !QFileInfo::exists(setting.path))
-        return {};
-
-    pearegui::Session session;
-    if (!session.openFile(setting.path))
-        return {};
-
-    bool isOs2 = false;
-    for (size_t folder = 0; folder < session.folderCount() && !isOs2; ++folder) {
-        for (size_t item = 0; item < session.resourceCount(folder); ++item) {
-            pearegui::Resource resource = session.openResource(folder, item);
-            if (resource.isValid() && resource.context().platform == PEARE_PLATFORM_OS2) {
-                isOs2 = true;
-                break;
-            }
-        }
-    }
-
-    const QString desiredType = isOs2
-        ? QStringLiteral("RT_POINTER")
-        : QStringLiteral("RT_GROUP_ICON");
-    const QString desiredName = normalizedName(setting.ordinal);
-
-    for (size_t folder = 0; folder < session.folderCount(); ++folder) {
-        if (session.folderType(folder).compare(desiredType, Qt::CaseInsensitive) != 0)
-            continue;
-        for (size_t item = 0; item < session.resourceCount(folder); ++item) {
-            pearegui::Resource resource = session.openResource(folder, item);
-            if (!resource.isValid())
-                continue;
-            const pearegui::ResourceContext context = resource.context();
-            if (normalizedName(context.identifier).compare(desiredName, Qt::CaseInsensitive) != 0)
-                continue;
-            return selectBest16(pearegui::decode(resource));
-        }
-    }
-
-    Q_UNUSED(section)
-    return {};
+    return filePath_;
 }
 
-QIcon SettingsIcons::selectBest16(const pearegui::Preview& preview)
+SettingsIcons::ConfiguredImages SettingsIcons::loadConfiguredImages(
+    const QString& filePath)
+{
+    struct SourceCache {
+        std::unique_ptr<pearegui::Session> session;
+        bool isOs2 = false;
+        QHash<QString, QPair<size_t, size_t>> iconResources;
+        QHash<QString, QImage> decodedIcons;
+    };
+
+    ConfiguredImages images;
+    QHash<QString, std::shared_ptr<SourceCache>> sources;
+    QSettings settings(filePath, QSettings::IniFormat);
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+    settings.setIniCodec("UTF-8");
+#endif
+
+    for (const QString& section : settings.childGroups()) {
+        settings.beginGroup(section);
+        IconSetting setting;
+        setting.path = settings.value(QStringLiteral("path")).toString();
+        setting.ordinal = settings.value(QStringLiteral("ordinal")).toString();
+        settings.endGroup();
+        if (setting.path.isEmpty() || setting.ordinal.isEmpty() ||
+            !QFileInfo::exists(setting.path))
+            continue;
+
+        std::shared_ptr<SourceCache> source = sources.value(setting.path);
+        if (!source) {
+            source = std::make_shared<SourceCache>();
+            source->session.reset(new pearegui::Session());
+            if (!source->session->openFile(setting.path)) {
+                sources.insert(setting.path, source);
+                continue;
+            }
+
+            pearegui::Session& session = *source->session;
+            for (size_t folder = 0; folder < session.folderCount() && !source->isOs2;
+                 ++folder) {
+                for (size_t item = 0; item < session.resourceCount(folder); ++item) {
+                    pearegui::Resource resource = session.openResource(folder, item);
+                    if (resource.isValid() &&
+                        resource.context().platform == PEARE_PLATFORM_OS2) {
+                        source->isOs2 = true;
+                        break;
+                    }
+                }
+            }
+
+            const QString desiredType = source->isOs2
+                ? QStringLiteral("RT_POINTER")
+                : QStringLiteral("RT_GROUP_ICON");
+            for (size_t folder = 0; folder < session.folderCount(); ++folder) {
+                for (size_t item = 0; item < session.resourceCount(folder); ++item) {
+                    pearegui::Resource resource = session.openResource(folder, item);
+                    if (!resource.isValid())
+                        continue;
+                    const pearegui::ResourceContext context = resource.context();
+                    if (context.type.compare(desiredType, Qt::CaseInsensitive) != 0)
+                        continue;
+                    const QString identifier = normalizedName(context.identifier);
+                    if (!source->iconResources.contains(identifier))
+                        source->iconResources.insert(identifier, qMakePair(folder, item));
+                }
+            }
+            sources.insert(setting.path, source);
+        }
+        if (!source->session || !source->session->isOpen())
+            continue;
+
+        const QString desiredName = normalizedName(setting.ordinal);
+        if (!source->decodedIcons.contains(desiredName)) {
+            QImage image;
+            const auto resourceIndex = source->iconResources.constFind(desiredName);
+            if (resourceIndex != source->iconResources.constEnd()) {
+                pearegui::Resource resource = source->session->openResource(
+                    resourceIndex.value().first, resourceIndex.value().second);
+                if (resource.isValid())
+                    image = selectBest16(pearegui::decode(resource, source->session.get()));
+            }
+            source->decodedIcons.insert(desiredName, image);
+        }
+
+        const QImage image = source->decodedIcons.value(desiredName);
+        if (!image.isNull())
+            images.insert(section, image);
+    }
+    return images;
+}
+
+void SettingsIcons::applyConfiguredImages(const ConfiguredImages& images)
+{
+    for (auto it = images.constBegin(); it != images.constEnd(); ++it)
+        icons_.insert(it.key(), QIcon(QPixmap::fromImage(it.value())));
+}
+
+QImage SettingsIcons::selectBest16(const pearegui::Preview& preview)
 {
     const QImage* selected = nullptr;
     int selectedColors = -1;
@@ -180,7 +226,7 @@ QIcon SettingsIcons::selectBest16(const pearegui::Preview& preview)
             selectedColors = colors;
         }
     }
-    return selected ? QIcon(QPixmap::fromImage(*selected)) : QIcon();
+    return selected ? *selected : QImage();
 }
 
 QIcon SettingsIcons::selectBestSmall(const pearegui::Preview& preview)
@@ -269,10 +315,8 @@ QIcon SettingsIcons::iconForEmbeddedFile(const QString& fileName,
     QIcon icon;
     std::unique_ptr<pearegui::Session> nested = session->openNested(folder, resource);
     if (nested) {
-        // Same intent as Disk Manager's old PeareModule path, but entirely through
-        // the unified Qt Peare opener/decoder and without a temporary .exe file.
-        // OS/2 NE/LE/LX modules use RT_POINTER for their program icon, while PE
-        // and Windows NE use RT_GROUP_ICON.
+        // Resolve embedded icons through the Opener and Decoder without temp files.
+        // OS/2 NE/LE/LX use RT_POINTER; PE and Windows NE use RT_GROUP_ICON.
         bool isOs2 = false;
         for (size_t f = 0; f < nested->folderCount() && !isOs2; ++f) {
             for (size_t r = 0; r < nested->resourceCount(f); ++r) {
@@ -300,7 +344,7 @@ QIcon SettingsIcons::iconForEmbeddedFile(const QString& fileName,
                     if (context.type.compare(desiredType, Qt::CaseInsensitive) != 0)
                         continue;
                     const pearegui::Preview preview = pearegui::decode(iconResource, nested.get());
-                    icon = selectBest16(preview);
+                    icon = QIcon(QPixmap::fromImage(selectBest16(preview)));
                     if (icon.isNull())
                         icon = selectBestSmall(preview);
                     if (!icon.isNull())

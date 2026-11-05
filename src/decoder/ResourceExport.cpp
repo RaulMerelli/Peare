@@ -221,6 +221,7 @@ ResourceFileFormat structural(const QString& type)
 ResourceFileFormat typed(const QString& type)
 {
     if (type == QLatin1String("RT_BITMAP")) return format(".dib", "Device-independent bitmap resource", "image/bmp");
+    if (type == QLatin1String("SIEMENS_MWIMAGE")) return format(".mwi", "Siemens/Microwindows embedded image", "application/octet-stream");
     if (type == QLatin1String("RT_ICON")) return format(".dib", "Icon image resource", "image/bmp");
     if (type == QLatin1String("RT_FONT")) return format(".fnt", "Bitmap font resource", "application/x-font");
     if (type == QLatin1String("RT_HTML")) return format(".html", "HTML document", "text/html");

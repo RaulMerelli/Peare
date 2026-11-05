@@ -3,13 +3,20 @@
 #include "PeareApi.h"
 
 #include <QHash>
+#include <QImage>
 #include <QIcon>
 #include <QString>
 
 class SettingsIcons final
 {
 public:
+    using ConfiguredImages = QHash<QString, QImage>;
+
     SettingsIcons();
+
+    QString settingsFilePath() const;
+    static ConfiguredImages loadConfiguredImages(const QString& filePath);
+    void applyConfiguredImages(const ConfiguredImages& images);
 
     QIcon iconFor(const QString& section) const;
     QIcon resourceIcon(const QString& type) const;
@@ -32,9 +39,7 @@ private:
 
     void writeDefaults();
     void load();
-    static QIcon loadConfiguredIcon(const QString& section,
-                                    const IconSetting& setting);
-    static QIcon selectBest16(const pearegui::Preview& preview);
+    static QImage selectBest16(const pearegui::Preview& preview);
     static QIcon selectBestSmall(const pearegui::Preview& preview);
     static QString defaultExtensionForType(const QString& type);
 

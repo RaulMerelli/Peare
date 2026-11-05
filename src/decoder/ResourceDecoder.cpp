@@ -100,10 +100,8 @@ bool looksLikePeMenu(const QByteArray& data)
 {
     if (data.size() < 8 || readLe16(data, 0) != 0 || readLe16(data, 2) != 0)
         return false;
-    // A standard PE menu template starts with version/offset WORDs followed by
-    // UTF-16 strings. Require at least one zero high byte in the first text area
-    // to avoid treating a legacy ANSI menu as Unicode merely because it starts
-    // with zero flags.
+    // Check for UTF-16 text before treating a PE menu template as Unicode.
+    // Zero flags alone do not distinguish Unicode from legacy ANSI menus.
     const int limit = qMin(data.size(), 48);
     for (int i = 7; i < limit; i += 2)
         if (data.at(i) == '\0' && data.at(i - 1) != '\0')
@@ -261,6 +259,46 @@ QImage ResourceDecoder::renderFont(const OpenedResource& resource, const QString
         if (error) *error = QStringLiteral("Font rendering failed: unknown exception");
     }
     return {};
+}
+
+QImage ResourceDecoder::renderFontGlyph(const OpenedResource& resource, quint32 glyphIndex,
+                                        int scale, int padding, QRgb foregroundRgba,
+                                        QRgb backgroundRgba, QString* error) noexcept
+{
+    if (error) error->clear();
+    if (!resource.isValid()) {
+        if (error) *error = resource.error.isEmpty()
+            ? QStringLiteral("Invalid resource handle") : resource.error;
+        return {};
+    }
+    try {
+        return resources::RT_FONT::renderGlyphIndex(decoderEntryFor(resource), glyphIndex, scale,
+                                                    padding, foregroundRgba, backgroundRgba, error);
+    } catch (...) {
+        if (error) *error = QStringLiteral("Font glyph rendering failed.");
+        return {};
+    }
+}
+
+QVector<QImage> ResourceDecoder::renderFontGlyphs(const OpenedResource& resource,
+                                                  const QVector<quint32>& glyphIndexes,
+                                                  int scale, int padding,
+                                                  QRgb foregroundRgba, QRgb backgroundRgba,
+                                                  QString* error) noexcept
+{
+    if (error) error->clear();
+    if (!resource.isValid()) {
+        if (error) *error = resource.error.isEmpty()
+            ? QStringLiteral("Invalid resource handle") : resource.error;
+        return {};
+    }
+    try {
+        return resources::RT_FONT::renderGlyphIndexes(decoderEntryFor(resource), glyphIndexes,
+            scale, padding, foregroundRgba, backgroundRgba, error);
+    } catch (...) {
+        if (error) *error = QStringLiteral("Font glyph rendering failed.");
+        return {};
+    }
 }
 
 } // namespace peare

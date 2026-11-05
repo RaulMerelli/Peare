@@ -5,7 +5,7 @@
 #include "../fs/RegistryHiveReader.h"
 
 #include <QFile>
-#include <QRegExp>
+#include <QRegularExpression>
 #include <QStringList>
 
 #include <algorithm>
@@ -49,7 +49,8 @@ quint64 parseIntegerValue(const QString& payload, bool* ok = nullptr) {
 std::vector<std::uint8_t> parseHexBytes(const QString& payload) {
     std::vector<std::uint8_t> out;
     const QString value = payloadValue(payload);
-    const QStringList parts = value.split(QRegExp(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+    const QStringList parts = value.split(
+        QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
     for (const QString& p : parts) {
         bool ok = false;
         const uint v = p.toUInt(&ok, 16);

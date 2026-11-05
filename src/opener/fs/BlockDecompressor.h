@@ -1,15 +1,7 @@
 #pragma once
 
-// Block decompressor abstraction, ported faithfully from DiscUtils'
-// DiscUtils.Core/Compression/IBlockDecompressor.cs:
-//
-//   bool TryDecompress(ReadOnlySpan<byte> source, Span<byte> decompressed,
-//                      out int decompressedSize)
-//
-// DiscUtils selects a codec per compressed resource (WIM: LZX or XPRESS) behind
-// this single interface. We keep the interface (the DiscUtils shape) and port
-// every codec behind the same interface. LZX is implemented by Peare's internal
-// decoder and exposed through the peare_lzx_wim_* frontend.
+// Decompress one WIM block with the selected codec.
+// LZX uses Peare's internal decoder through the peare_lzx_wim_* interface.
 
 #include <cstddef>
 #include <cstdint>

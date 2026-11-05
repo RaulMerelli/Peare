@@ -7,10 +7,14 @@
 #include <climits>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <new>
 struct SessionState { peare::OpenerSession session; };
-struct peare_opener_handle_s { std::shared_ptr<SessionState> state; };
+struct peare_opener_handle_s {
+    std::shared_ptr<SessionState> state;
+    QString password;
+};
 
 // A source to be opened. Exactly one backing is used: a file path, a lazy
 // layer-backed store (a resource's content window), or an in-memory array.
@@ -33,6 +37,24 @@ peare_status copyBytes(const char* data, size_t length, peare_blob* out) {
     if (!copy) return PEARE_STATUS_ALLOCATION_FAILED;
     std::memcpy(copy,data,length); out->bytes=copy; out->length=length; return PEARE_STATUS_OK;
 }
+peare_status copyStore(const peare::fs::IByteStore& store, peare_blob* out) {
+    if (!out) return PEARE_STATUS_INVALID_ARGUMENT;
+    out->bytes = nullptr; out->length = 0;
+    const std::int64_t capacity = store.capacity();
+    if (capacity < 0 || static_cast<std::uint64_t>(capacity) >
+        std::numeric_limits<size_t>::max()) return PEARE_STATUS_ALLOCATION_FAILED;
+    const size_t length = static_cast<size_t>(capacity);
+    if (!length)
+        return store.validate() ? PEARE_STATUS_OK : PEARE_STATUS_INTEGRITY_FAILED;
+    auto* copy = static_cast<std::uint8_t*>(std::malloc(length));
+    if (!copy) return PEARE_STATUS_ALLOCATION_FAILED;
+    if (!store.copyTo(copy, length)) {
+        std::free(copy);
+        return PEARE_STATUS_INTEGRITY_FAILED;
+    }
+    out->bytes = copy; out->length = length;
+    return PEARE_STATUS_OK;
+}
 peare_status copyByteArray(const QByteArray& bytes, peare_blob* out) { return copyBytes(bytes.constData(),static_cast<size_t>(bytes.size()),out); }
 peare_status copyUtf8(const QString& text, peare_blob* out) { return copyByteArray(text.toUtf8(),out); }
 peare_container_format toCFormat(peare::ModuleFormat f)
@@ -51,6 +73,16 @@ peare_container_format toCFormat(peare::ModuleFormat f)
     case peare::ModuleFormat::OS2_PACK: return PEARE_CONTAINER_OS2_PACK;
     case peare::ModuleFormat::SZDD: return PEARE_CONTAINER_SZDD;
     case peare::ModuleFormat::SIEMENS_IMG: return PEARE_CONTAINER_SIEMENS_IMG;
+    case peare::ModuleFormat::SIEMENS_ADONIS: return PEARE_CONTAINER_SIEMENS_ADONIS;
+    case peare::ModuleFormat::GZIP: return PEARE_CONTAINER_GZIP;
+    case peare::ModuleFormat::BZIP2: return PEARE_CONTAINER_BZIP2;
+    case peare::ModuleFormat::AR: return PEARE_CONTAINER_AR;
+    case peare::ModuleFormat::CPIO: return PEARE_CONTAINER_CPIO;
+    case peare::ModuleFormat::UNIX_COMPRESS: return PEARE_CONTAINER_UNIX_COMPRESS;
+    case peare::ModuleFormat::UUE: return PEARE_CONTAINER_UUE;
+    case peare::ModuleFormat::LHA: return PEARE_CONTAINER_LHA;
+    case peare::ModuleFormat::SEVEN_ZIP: return PEARE_CONTAINER_SEVEN_ZIP;
+    case peare::ModuleFormat::RAR4: return PEARE_CONTAINER_RAR4;
     case peare::ModuleFormat::SIEMENS_FWF: return PEARE_CONTAINER_SIEMENS_FWF;
     case peare::ModuleFormat::SIEMENS_FSF: return PEARE_CONTAINER_SIEMENS_FSF;
     case peare::ModuleFormat::ISO9660: return PEARE_CONTAINER_ISO9660;
@@ -100,6 +132,8 @@ peare_container_format toCFormat(peare::ModuleFormat f)
     case peare::ModuleFormat::PS2_ROMDIR: return PEARE_CONTAINER_PS2_ROMDIR;
     case peare::ModuleFormat::MSI: return PEARE_CONTAINER_MSI;
     case peare::ModuleFormat::MSG: return PEARE_CONTAINER_MSG;
+    case peare::ModuleFormat::MAC_RESOURCE_FORK: return PEARE_CONTAINER_RESOURCE_FORK;
+    case peare::ModuleFormat::WPI: return PEARE_CONTAINER_WPI;
     case peare::ModuleFormat::APPX: return PEARE_CONTAINER_APPX;
     case peare::ModuleFormat::MSIX: return PEARE_CONTAINER_MSIX;
     case peare::ModuleFormat::APPXBUNDLE: return PEARE_CONTAINER_APPXBUNDLE;
@@ -202,9 +236,7 @@ peare_status makeResourceHandle(const std::shared_ptr<SessionState>& state,
     if (status != PEARE_STATUS_OK) {
         destroySnapshot(handle); delete handle; return status;
     }
-    // The sibling ("related") snapshot was built here for every resource open but
-    // is exposed by no public function Ã¢â‚¬â€ pure O(N) waste per open, i.e. O(N^2)
-    // when a consumer walks every resource (e.g. building a tree). Dropped.
+    // Do not build the unused related snapshot for each resource.
     *out_resource = handle;
     return PEARE_STATUS_OK;
 }
@@ -230,7 +262,17 @@ peare_status peare_opener_create(peare_opener_handle* out_opener)
 
 void peare_opener_destroy(peare_opener_handle opener)
 {
+    if (opener) opener->password.fill(QChar(0));
     delete opener;
+}
+
+peare_status peare_opener_set_password(peare_opener_handle opener,
+                                       const char* password_utf8)
+{
+    if (!opener || !opener->state) return PEARE_STATUS_INVALID_HANDLE;
+    opener->password.fill(QChar(0));
+    opener->password = password_utf8 ? QString::fromUtf8(password_utf8) : QString();
+    return PEARE_STATUS_OK;
 }
 
 // ---- Unified open --------------------------------------------------------
@@ -283,23 +325,32 @@ peare_status peare_opener_open(peare_opener_handle opener, peare_source_handle s
 {
     if (!opener || !opener->state) return PEARE_STATUS_INVALID_HANDLE;
     if (!source) return PEARE_STATUS_INVALID_ARGUMENT;
+    if (source->store && !source->store->validate())
+        return PEARE_STATUS_INTEGRITY_FAILED;
     try {
         auto next = std::make_shared<SessionState>();
         bool opened = false;
         if (source->isFile) {
-            opened = next->session.openFile(source->filePath);
+            opened = next->session.openFile(source->filePath, opener->password);
         } else if (source->store) {
-            // Open straight from the positioned source Ã¢â‚¬â€ no materialisation. A
-            // filesystem (ISO/WIM) reads only what it needs; a big nested image
-            // is never copied. This is the recursion point for nested containers.
-            // A non-empty subPath reopens a filesystem image at a directory (the
-            // lazy per-directory enumeration seam).
-            opened = next->session.openStore(source->store, source->name, source->subPath);
+            // Open the positioned source without copying the full nested image.
+            // A subPath selects one directory for lazy file-system enumeration.
+            opened = next->session.openStore(source->store, source->name, source->subPath,
+                                             opener->password);
         } else {
-            opened = next->session.openBuffer(source->bytes, source->name);
+            opened = next->session.openBuffer(source->bytes, source->name, opener->password);
         }
         opener->state = std::move(next);
-        return opened ? PEARE_STATUS_OK : PEARE_STATUS_OPEN_FAILED;
+        if (opened) return PEARE_STATUS_OK;
+        switch (opener->state->session.info().openError) {
+        case peare::ModuleOpenError::PasswordRequired:
+            return PEARE_STATUS_PASSWORD_REQUIRED;
+        case peare::ModuleOpenError::PasswordInvalidOrCorrupt:
+            return PEARE_STATUS_PASSWORD_INVALID;
+        case peare::ModuleOpenError::None:
+            return PEARE_STATUS_OPEN_FAILED;
+        }
+        return PEARE_STATUS_OPEN_FAILED;
     } catch (...) {
         return PEARE_STATUS_INTERNAL_ERROR;
     }
@@ -327,6 +378,8 @@ peare_status peare_opener_close(peare_opener_handle opener)
     if (!opener || !opener->state)
         return PEARE_STATUS_INVALID_HANDLE;
     try {
+        opener->password.fill(QChar(0));
+        opener->password = QString();
         opener->state = std::make_shared<SessionState>();
         return PEARE_STATUS_OK;
     } catch (const std::bad_alloc&) {
@@ -476,17 +529,14 @@ peare_status peare_resource_get_payload(peare_resource_handle resource, peare_bl
     if (!out_payload) return PEARE_STATUS_INVALID_ARGUMENT;
     out_payload->bytes = nullptr; out_payload->length = 0;
     if (!peare_resource_snapshot_valid(resource)) return PEARE_STATUS_INVALID_HANDLE;
-    // A directory container has no byte payload (its store is the whole fs image,
-    // which must never be materialised here); open it as a container instead.
+    // Directory containers have no file payload; their store is the full image.
+    // Open the directory as a container instead of materializing the image.
     if (resource->primary.is_directory) return PEARE_STATUS_OK;
-    // Layer-backed: read the content now (this is the only place a file's bytes
-    // are materialised Ã¢â‚¬â€ one file, on demand, when the consumer asks for it).
+    // Materialize one layer-backed file only when the caller requests its bytes.
     if (resource->primary.lazy_content) {
         auto* store = static_cast<peare::fs::ByteStorePtr*>(resource->primary.lazy_content);
         if (store && *store) {
-            const std::vector<std::uint8_t> bytes = (*store)->readAll();
-            return copyBytes(reinterpret_cast<const char*>(bytes.data()),
-                             bytes.size(), out_payload);
+            return copyStore(**store, out_payload);
         }
     }
     return copyBytes(reinterpret_cast<const char*>(resource->primary.payload.bytes),
@@ -608,6 +658,9 @@ const char* peare_status_message(peare_status status)
     case PEARE_STATUS_DECODE_FAILED: return "Resource decoding failed";
     case PEARE_STATUS_VALUE_NOT_DETERMINABLE: return "Known value could not be determined";
     case PEARE_STATUS_UNSUPPORTED_INFO: return "Information identifier is not supported";
+    case PEARE_STATUS_INTEGRITY_FAILED: return "Resource integrity verification failed";
+    case PEARE_STATUS_PASSWORD_REQUIRED: return "A password is required";
+    case PEARE_STATUS_PASSWORD_INVALID: return "The password is incorrect or the archive is damaged";
     }
     return "Unknown status";
 }

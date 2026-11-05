@@ -1,4 +1,5 @@
 #include "DecoderRoute.h"
+#include "resources/SIEMENS_ADONIS/SiemensAdonis.h"
 
 namespace peare {
 namespace {
@@ -51,6 +52,10 @@ ResourceKind DecoderRoute::classify(const ResourceEntry& entry) noexcept
     if (typeIs(type, "RT_DIALOG", "DIALOG")) return ResourceKind::Dialog;
     if (type == QLatin1String("XBE_LOGO_RLE")) return ResourceKind::XbeLogoRle;
     if (type == QLatin1String("FMIM")) return ResourceKind::Fmim;
+    if (type == QLatin1String("SIEMENS_MWIMAGE")) return ResourceKind::SiemensMwImage;
+    if (type == QLatin1String("SIEMENS_ADONIS_DATA") ||
+        resources::SiemensAdonis::recognizes(entry.data))
+        return ResourceKind::SiemensAdonis;
 
     // Numeric Windows resource identifiers are accepted only when the
     // originating container says Windows. This preserves named OS/2 types.

@@ -1,9 +1,11 @@
 # Copyright and trademarks
 
-All format specifications, product names, and trademarks referenced or supported
-by Peare are the property of their respective owners. Peare provides independent,
-clean-room readers and is not affiliated with, authorized by, or endorsed by any
-of them. Owners referenced include, among others:
+Format specifications, product names, and trademarks referenced by Peare belong
+to their respective owners. Peare is independent and is not affiliated with or
+endorsed by those owners. Peare includes both original code and third-party
+components. See [THIRDPARTY.md](THIRDPARTY.md) for source and license notices.
+
+Referenced owners include, among others:
 
 - **Microsoft Corporation** — Windows, MS-DOS, Windows CE (ROM / IMGFS),
   PE / NE / LE / LX consumers, NTFS, exFAT, FAT, WIM, Full Flash Update (FFU),
@@ -28,9 +30,10 @@ of them. Owners referenced include, among others:
 - **OSTA, Ecma International, and ISO/IEC** — UDF and ISO 9660
   (ECMA-119 / ECMA-167).
 - **PKWARE, Inc.** — the ZIP format.
+- **Adobe Inc.** — PostScript Type 1 and Type 3 fonts, and AFM metrics.
 - The **Linux kernel community and other open-source authors** — ext2/3/4,
   XFS (originally SGI), Btrfs, SquashFS, LVM2, Linux MD / RAID, the swap format,
   and TAR.
 
-Trademarks are used only to identify the formats Peare reads; such use does not
-imply any endorsement.
+Trademarks identify formats that Peare reads or writes. Their use does not imply
+endorsement.

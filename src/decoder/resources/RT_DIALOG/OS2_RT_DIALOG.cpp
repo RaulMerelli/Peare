@@ -585,12 +585,8 @@ private:
             if (childListSize != 0) {
                 int currentChildPtr = childListStartPtr + 2;
 
-                // Some LX dialog resources insert a padding WORD between the
-                // presentation-parameter list size and the first parameter
-                // block.  Res2Dlg accepts these resources; starting at +2
-                // interprets the padding as the low half of paramValue and the
-                // following DWORD as an enormous count.  Select +4 only when
-                // +2 is structurally impossible and +4 forms a complete block.
+                // Some LX resources pad the first parameter block by one WORD.
+                // Use +4 only when +2 cannot form a complete valid block.
                 const auto parameterBlockFits = [this](int ptr) -> bool {
                     if (ptr < 0 || ptr + 8 > buffer.size())
                         return false;

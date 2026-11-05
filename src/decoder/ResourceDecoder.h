@@ -17,6 +17,14 @@ public:
     static QImage renderFont(const OpenedResource& resource, const QString& text, int scale,
                              int padding, QRgb foregroundRgba, QRgb backgroundRgba,
                              QString* error = nullptr) noexcept;
+    static QImage renderFontGlyph(const OpenedResource& resource, quint32 glyphIndex, int scale,
+                                  int padding, QRgb foregroundRgba, QRgb backgroundRgba,
+                                  QString* error = nullptr) noexcept;
+    static QVector<QImage> renderFontGlyphs(const OpenedResource& resource,
+                                            const QVector<quint32>& glyphIndexes, int scale,
+                                            int padding, QRgb foregroundRgba,
+                                            QRgb backgroundRgba,
+                                            QString* error = nullptr) noexcept;
 };
 
 } // namespace peare

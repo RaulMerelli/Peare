@@ -11,12 +11,19 @@
 
 namespace peare {
 
+enum class ModuleOpenError {
+    None,
+    PasswordRequired,
+    PasswordInvalidOrCorrupt
+};
+
 struct ModuleInfo {
     QString filePath;
     ModuleFormat format = ModuleFormat::Unknown;
     QString description;
     quint64 headerOffset = 0;
     QString error;
+    ModuleOpenError openError = ModuleOpenError::None;
 
     bool isValid() const noexcept { return error.isEmpty(); }
 };
@@ -33,24 +40,15 @@ struct ResourceEntry {
     int baseId = 0;
     QStringList hierarchyPath;
     QByteArray data;
-    // Module-declared: this resource is a whole embedded file (an OS2 pack
-    // member, an ISO file, ...), i.e. a candidate to be opened as a nested
-    // container. Sub-resources (RT_* icons, sections) leave it false so they are
-    // never probed. Not a heuristic — the module states it.
+    // True when this resource is a complete embedded file eligible for nesting.
     bool isEmbeddedFile = false;
     // Computed by the session for isEmbeddedFile resources: a cheap header peek
     // recognised an openable format, so the consumer may offer to expand it.
     bool isContainer = false;
-    // Lazy, layer-backed content (DiscUtils-compatible fs stack). When set it is
-    // the authoritative content, read on demand when the resource is opened;
-    // otherwise `data` (the flat array) is used. This single seam is what lets
-    // the common opener ABI hide whether a resource is array- or layer-backed.
+    // When set, this lazy store is authoritative; otherwise the flat `data` is used.
     peare::fs::ByteStorePtr content;
-    // Directory-level container: a filesystem opener lists one directory at a
-    // time; a subdirectory is exposed as this kind of entry. `content` holds the
-    // whole filesystem image (the volume/partition store) and `containerSubPath`
-    // the directory path inside it. Navigating it reopens the same image rooted
-    // at that path — the lazy-enumeration seam for the DiscUtils fs stack.
+    // Directory containers retain the image store and the selected directory path.
+    // Navigation reopens the same image at that path.
     bool isDirectory = false;
     QString containerSubPath;
 };

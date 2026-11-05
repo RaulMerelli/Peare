@@ -1,11 +1,7 @@
 #pragma once
 
-// Shared helper for the DiscUtils-family filesystem opener modules (ISO, WIM,
-// FAT, exFAT, ext, UDF). Instead of walking the whole tree at open time, a module
-// lists ONE directory level: files become <PREFIX>_FILE leaves with lazy content,
-// and subdirectories become <PREFIX>_DIR container entries that reopen the same
-// image rooted at the child path. This is the lazy-enumeration seam — the entire
-// tree is never materialised, so a full OS image opens instantly.
+// Shared helper for file-system modules that enumerate directories on demand.
+// It exposes files as lazy leaves and subdirectories as nested containers.
 
 #include "Module.h"
 

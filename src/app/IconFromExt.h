@@ -3,10 +3,7 @@
 #include <QIcon>
 #include <QString>
 
-// Cross-platform equivalent of IconFromExt.cs.
-// The C# implementation asks the Windows shell for the small icon associated
-// with a file extension or a folder. QFileIconProvider delegates the same task
-// to the current platform integration, without shell32.dll/user32.dll.
+// Get extension and folder icons through Qt's platform integration.
 class IconFromExt final
 {
 public:

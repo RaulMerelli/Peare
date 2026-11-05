@@ -6,10 +6,7 @@
 
 namespace peare {
 
-// Opener module for VMware Virtual Disk (VMDK) images. It exposes the logical
-// disk's partitions (MBR/GPT) as nested containers: each partition's content is a
-// window over the disk, so the file-system openers (FAT, exFAT, ...) open inside
-// it through the common lazy nesting path.
+// Expose VMDK partitions as nested containers over the logical disk.
 class VmdkModule final : public IModule, public IResourceContainer {
 public:
     static ModulePtr open(const QString& filePath);

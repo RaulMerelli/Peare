@@ -436,15 +436,8 @@ std::uint32_t HpfsReader::directoryRootDnode(const FnodeInfo& fnode,
     if (!fnode.valid || (!knownDirectory && !fnode.directory) ||
         fnode.raw.size() != kSectorSize) return 0;
 
-    // HPFS directories use the first external fnode allocation entry as a
-    // direct pointer to the root dnode. Linux does the same and does not require
-    // file_secno==0; treating it as a generic file extent rejected valid OS/2
-    // directory fnodes produced by some installers/optimizers.
-    // A directory fnode's first external allocation record is the dnode
-    // pointer.  OS/2 and the Linux driver read it directly; historical/repair
-    // tools do not always keep the generic B+ header counters consistent, so
-    // do not gate this field on n_used_nodes or BP_internal.  Validate the
-    // target itself instead.
+    // A directory fnode's first external allocation record points to its root dnode.
+    // Validate the target directly; legacy images can have inconsistent B+ counters.
     const std::uint32_t direct = le32(fnode.raw.data() + 72);
     if (direct >= 18 && direct + 4 <= sectorCount_) {
         const std::vector<std::uint8_t> dnode = readSectors(direct, 4);

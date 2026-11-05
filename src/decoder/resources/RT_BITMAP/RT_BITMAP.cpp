@@ -1148,12 +1148,7 @@ Optional<Img> Decode_RT_POINTER_V1(
     // === First block (mask) ===
     const quint16 header = readUInt16();
 
-    // "CI", "IC", "CP", "PT" are basically the same format, for a different use.
-    // The main difference is that the bitmap data block might be missing and
-    // there is only the first block (mask) that contains also the bitmap data.
-    // IC icon (OS/2 1.x)
-    // CI icon (OS/2 2.x+)
-    // PT pointer
+    // IC, CI, CP, and PT records share this bitmap layout with type-specific masks.
     if (header != 0x4943
         && header != 0x4349
         && header != 0x5043
@@ -1390,12 +1385,7 @@ Optional<Img> Decode_RT_POINTER_V2(
 
     const quint16 header = readUInt16();
 
-    // "CI", "IC", "CP", "PT" are basically the same format, for a different use.
-    // The main difference is that the bitmap data block might be missing and
-    // there is only the first block (mask) that contains also the bitmap data.
-    // IC icon (OS/2 1.x)
-    // CI icon (OS/2 2.x+)
-    // PT pointer
+    // IC, CI, CP, and PT records share this bitmap layout with type-specific masks.
     if (header != 0x4943
         && header != 0x4349
         && header != 0x5043
@@ -1741,10 +1731,7 @@ Optional<Img> Decode_BITMAP_OS2_V2(
                 4);
     }
 
-    // --- Extract the raw/compressed pixel data from resData ---
-    // This is the *compressed* or *uncompressed* data as it appears in the file.
-    // If cbImage is 0, it means uncompressed and the size should be calculated.
-    // For compressed data, cbImage should contain the actual size of the compressed data.
+    // Use cbImage for compressed data; calculate the size when it is zero.
     int actualCompressedDataSize =
         static_cast<int>(
             cbImage == 0
@@ -1851,18 +1838,7 @@ QByteArray DecompressRLE4(
 {
     Q_UNUSED(palette)
 
-    // RLE4: 4 bits per pixel. Each byte contains two 4-bit pixels.
-    // A common RLE scheme for 4bpp uses special codes.
-    // E.g., for Windows BMP RLE4:
-    // - Byte 1: Count (N)
-    // - Byte 2: Two pixels (e.g., AABB for 4 bits each)
-    //   -> N pairs of (A, B) pixels are repeated.
-    // - If Byte 1 == 0:
-    //   - Byte 2 == 0: End of scanline (EOL)
-    //   - Byte 2 == 1: End of bitmap (EOB)
-    //   - Byte 2 == 2: Delta (Byte 3 = X, Byte 4 = Y offset) - less common for basic RLE
-    //   - Byte 2 > 2: Absolute mode: Byte 2 (N) is number of *pixels* to read, followed by N/2 bytes.
-    //     The N bytes are padded to a word (16-bit) boundary.
+    // Decode RLE4 runs, absolute pixel sequences, deltas, and scanline markers.
 
     const int uncompressedBytesPerRow =
         (((width * 4 + 7) / 8) + 3) / 4 * 4; // Padded to 4-byte boundary
@@ -2051,17 +2027,7 @@ QByteArray DecompressRLE8(
     int width,
     int height)
 {
-    // RLE8: 8 bits per pixel (1 byte per pixel).
-    // Similar RLE scheme to RLE4, but values are 1 byte.
-    // - Byte 1: Count (N)
-    // - Byte 2: Pixel value (P)
-    //   -> N occurrences of P are repeated.
-    // - If Byte 1 == 0:
-    //   - Byte 2 == 0: End of scanline (EOL)
-    //   - Byte 2 == 1: End of bitmap (EOB)
-    //   - Byte 2 == 2: Delta (Byte 3 = X, Byte 4 = Y offset)
-    //   - Byte 2 > 2: Absolute mode: Byte 2 (N) is number of *pixels* to read, followed by N bytes.
-    //     The N bytes are padded to a word (16-bit) boundary.
+    // Decode RLE8 runs, absolute pixel sequences, deltas, and scanline markers.
 
     const int uncompressedBytesPerRow =
         ((width + 3) / 4) * 4; // Padded to 4-byte boundary
@@ -2195,14 +2161,7 @@ QByteArray DecompressRLE24(
     int width,
     int height)
 {
-    // RLE24: 24 bits per pixel (3 bytes per pixel).
-    // RLE for 24bpp is simpler, usually just run-length encoding.
-    // - Byte 1: Count (N)
-    // - Bytes 2,3,4: BGR color value
-    //   -> N occurrences of BGR color are repeated.
-    // There might be special codes (0x00 followed by command), but often 24bpp is just simple runs.
-    // We'll implement the simple run mode, as explicit OS/2 RLE24 documentation is scarce.
-    // If a file uses complex RLE24 (like 0x00 escape codes), this would need adjustment.
+    // Decode supported OS/2 RLE24 runs; reject unsupported escape commands.
 
     const int uncompressedBytesPerRow =
         ((width * 3 + 3) / 4) * 4; // Padded to 4-byte boundary

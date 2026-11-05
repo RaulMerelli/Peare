@@ -6,12 +6,7 @@
 
 namespace peare {
 
-// Opener module for ISO 9660 (+ Joliet) images. It is a thin bridge: the actual
-// parsing and lazy content live in the DiscUtils-compatible fs stack
-// (fs::Iso9660Reader over an fs::IByteStore). Files are exposed as ordinary
-// ResourceEntry nodes whose content is a lazy fs window, so the common opener
-// ABI serves them like any other format without knowing a layered stack is
-// behind them.
+// Open ISO 9660 and Joliet images through the lazy file-system reader.
 class IsoModule final : public IModule, public IResourceContainer {
 public:
     static ModulePtr open(const QString& filePath);

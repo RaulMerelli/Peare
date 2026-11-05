@@ -45,10 +45,7 @@ struct OpenedResource {
     const OpenerSession* session = nullptr;
     int resourceIndex = -1;
     QByteArray payload;
-    // Layer-backed content, when the resource is served by the fs stack. It is
-    // NOT read here: the bytes are materialised only when the payload is actually
-    // requested (peare_resource_get_payload), so opening/enumerating a resource
-    // never pays for its content.
+    // Layer-backed content is read only when peare_resource_get_payload requests it.
     peare::fs::ByteStorePtr contentStore;
     ResourceContext context;
     QString error;
@@ -71,12 +68,13 @@ public:
     OpenerSession(OpenerSession&&) noexcept;
     OpenerSession& operator=(OpenerSession&&) noexcept;
 
-    bool openFile(const QString& filePath);
-    bool openBuffer(const QByteArray& data, const QString& sourceName = QStringLiteral("memory.bin"));
+    bool openFile(const QString& filePath, const QString& password = QString());
+    bool openBuffer(const QByteArray& data, const QString& sourceName = QStringLiteral("memory.bin"),
+                    const QString& password = QString());
     // Open over a positioned byte source without materialising it (filesystem
     // formats read straight from the source).
     bool openStore(const peare::fs::ByteStorePtr& store, const QString& sourceName,
-                   const QString& subPath = QString());
+                   const QString& subPath = QString(), const QString& password = QString());
     void close();
 
     bool isOpen() const noexcept;

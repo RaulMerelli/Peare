@@ -202,7 +202,10 @@ bool readMetadata(const ByteStorePtr& file, const Region& r, VhdxLayout* layout,
         if (error) *error = "VHDX differencing images require a parent image";
         return false;
     }
-    if (layout->diskSize <= 0 || layout->blockSize == 0 || layout->logicalSectorSize == 0) {
+    if (layout->diskSize <= 0 || layout->blockSize == 0 ||
+        (layout->logicalSectorSize != 512 && layout->logicalSectorSize != 4096) ||
+        layout->diskSize % layout->logicalSectorSize != 0 ||
+        layout->blockSize % layout->logicalSectorSize != 0) {
         if (error) *error = "Invalid VHDX geometry";
         return false;
     }
@@ -316,10 +319,12 @@ private:
 
 }  // namespace
 
-ByteStorePtr openVhdxDisk(const ByteStorePtr& file, std::string* error) {
+ByteStorePtr openVhdxDisk(const ByteStorePtr& file, std::string* error,
+                          std::uint32_t* logicalSectorSize) {
     VhdxLayout layout;
     if (!readLayout(file, &layout, error))
         return nullptr;
+    if (logicalSectorSize) *logicalSectorSize = layout.logicalSectorSize;
     ByteStorePtr disk = std::make_shared<VhdxStore>(file, layout, error);
     if (!static_cast<VhdxStore*>(disk.get())->valid())
         return nullptr;

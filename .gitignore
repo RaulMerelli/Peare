@@ -57,6 +57,18 @@ __pycache__/
 .mypy_cache/
 .venv/
 
+# Peare test artifacts; keep this working area out of version control.
+/tmp/
+
+# Local sample inventories and machine-specific test evidence.
+/docs/testing/ARCHIVE_PERFORMANCE_CHECKLIST.md
+/docs/testing/EXT_WRITER_FEATURE_MATRIX.md
+/docs/testing/FONT_SAMPLE_MATRIX.md
+/docs/testing/LOCAL_DISK_SAMPLES.md
+/docs/testing/SAMPLE_PROVENANCE.md
+/docs/testing/WRITER_GOAL_CHECKLIST.md
+/docs/testing/WRITER_SUPPORT_EVIDENCE.md
+
 # Backup files from in-place edits
 *.os2
 

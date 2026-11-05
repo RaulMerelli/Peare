@@ -130,10 +130,8 @@ QString RT_STRING::ReadLenString(const QByteArray& data,
 
     QTextCodec* encoding = codecForCodePage(codepage);
 
-    // All historical Windows/OS2 resource code pages used here are
-    // single-byte, while PE string tables are UTF-16LE. Handle those two
-    // cases directly: this is equivalent to Decoder.Convert in the C# code
-    // and avoids QTextDecoder buffering one input byte at a time.
+    // Historical Windows and OS/2 code pages are single-byte; PE strings use UTF-16LE.
+    // Decode each case directly to avoid buffering one input byte at a time.
     if (codepage == 1200 || codepage == 1201) {
         const qsizetype byteCount = qsizetype(len) * 2;
         if (offset + byteCount > data.size())
@@ -185,10 +183,7 @@ QString RT_STRING::ReadNullTerminatedString(const QByteArray& data,
 
     QTextCodec* encoding = codecForCodePage(codepage);
 
-    // Determine the null terminator for the given encoding.
-    // For most single-byte encodings, this is 0x00.
-    // For UTF-16, it's 0x00 0x00.
-    // This is a simplification; a robust solution might need a more complex way to get the null terminator.
+    // Single-byte strings terminate with 0x00; UTF-16 strings use 0x00 0x00.
     const QByteArray nullTerminatorBytes =
         (codepage == 1200 || codepage == 1201) ? QByteArray(2, '\0') : QByteArray(1, '\0');
 
@@ -322,10 +317,8 @@ QString RT_STRING::Get(const QByteArray& data,
         return best.text;
     }
 
-    // Real files exist both with and without the two-byte code-page prefix.
-    // Evaluate all layouts and keep the structurally strongest parse instead
-    // of committing to the first two bytes, which may simply be the first
-    // string length and character.
+    // Try layouts with and without a code-page prefix.
+    // Keep the structurally strongest parse.
     QVector<ParseResult> candidates;
     if (data.size() >= 2) {
         const quint16 declared = quint16(uchar(data.at(0))) |

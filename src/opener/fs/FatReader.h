@@ -1,9 +1,7 @@
 #pragma once
 
-// FAT12/16/32 read-only file system, ported from DiscUtils.Fat (FatFileSystem,
-// FatBuffer, ClusterReader, Directory, DirectoryEntry/FatFileName). Parses the
-// BPB, follows cluster chains through the FAT, and exposes files whose content is
-// a zero-copy view over the cluster runs (no decompression — FAT is plain).
+// Read FAT12/16/32 volumes and expose files as lazy cluster-run views.
+// FAT payloads are uncompressed.
 
 #include <cstdint>
 #include <string>

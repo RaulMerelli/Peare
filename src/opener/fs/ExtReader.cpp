@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <limits>
+
+#include <QCryptographicHash>
 
 namespace peare {
 namespace fs {
@@ -35,6 +38,8 @@ void splitPath(const std::string& path, std::vector<std::string>* out) {
 }
 
 const std::uint32_t kExtentsFlag = 0x80000;
+const std::uint32_t kVerityFlag = 0x00100000;
+const std::uint32_t kInlineDataFlag = 0x10000000;
 const std::uint16_t kExtentMagic = 0xF30A;
 
 }  // namespace
@@ -98,9 +103,11 @@ ExtReader::Inode ExtReader::readInode(std::uint32_t inodeNum) const {
     if (static_cast<int>(data.size()) < 128) return in;
 
     in.mode = le16(data.data());
+    in.inodeNumber = inodeNum;
     std::uint64_t size = le32(data.data() + 4);
     const std::uint32_t blocksCount = le32(data.data() + 28);
     const std::uint32_t flags = le32(data.data() + 32);
+    in.flags = flags;
     const std::uint16_t ft = static_cast<std::uint16_t>((in.mode >> 12) & 0xF);
     // Fast symlink: target path (< 60 bytes) is stored inline in i_block.
     in.fastSymlink = (ft == 0xA) && blocksCount == 0;
@@ -116,7 +123,7 @@ ExtReader::Inode ExtReader::readInode(std::uint32_t inodeNum) const {
 
 bool ExtReader::findExtent(const std::vector<std::uint8_t>& node, std::uint64_t logical,
                            std::uint64_t* firstLogical, std::uint64_t* physBlock,
-                           std::uint64_t* numBlocks) const {
+                           std::uint64_t* numBlocks, bool* unwritten) const {
     if (node.size() < 12 || le16(node.data()) != kExtentMagic) return false;
     const std::uint16_t entries = le16(node.data() + 2);
     const std::uint16_t depth = le16(node.data() + 6);
@@ -133,7 +140,9 @@ bool ExtReader::findExtent(const std::vector<std::uint8_t>& node, std::uint64_t 
         if (sel < 0) sel = 0;
         const std::uint8_t* e = node.data() + 12 + sel * 12;
         *firstLogical = le32(e);
-        *numBlocks = le16(e + 4);
+        const std::uint16_t encodedLength = le16(e + 4);
+        *unwritten = encodedLength > 0x8000;
+        *numBlocks = *unwritten ? encodedLength - 0x8000 : encodedLength;
         *physBlock = static_cast<std::uint64_t>(le32(e + 8)) |
                      (static_cast<std::uint64_t>(le16(e + 6)) << 32);
         return true;
@@ -154,7 +163,7 @@ bool ExtReader::findExtent(const std::vector<std::uint8_t>& node, std::uint64_t 
                                (static_cast<std::uint64_t>(le16(ix + 8)) << 32);
     std::vector<std::uint8_t> child =
         disc_->readRange(static_cast<std::int64_t>(leaf) * blockSize_, blockSize_);
-    return findExtent(child, logical, firstLogical, physBlock, numBlocks);
+    return findExtent(child, logical, firstLogical, physBlock, numBlocks, unwritten);
 }
 
 std::uint32_t ExtReader::indirectLookup(const Inode& in, std::uint64_t logical) const {
@@ -194,7 +203,8 @@ void ExtReader::resolveRun(const Inode& in, std::uint64_t logical, std::uint64_t
                            std::uint64_t* physStart, std::uint64_t* runLen, bool* hole) const {
     if (in.usesExtents) {
         std::uint64_t fl = 0, phys = 0, num = 0;
-        if (!findExtent(in.blockMap, logical, &fl, &phys, &num)) {
+        bool unwritten = false;
+        if (!findExtent(in.blockMap, logical, &fl, &phys, &num, &unwritten)) {
             *hole = true; *physStart = 0; *runLen = totalBlocks - logical;
             return;
         }
@@ -208,8 +218,8 @@ void ExtReader::resolveRun(const Inode& in, std::uint64_t logical, std::uint64_t
             *hole = true; *physStart = 0; *runLen = 1;
             return;
         }
-        *hole = false;
-        *physStart = phys + inExtent;
+        *hole = unwritten;
+        *physStart = unwritten ? 0 : phys + inExtent;
         *runLen = std::min<std::uint64_t>(num - inExtent, totalBlocks - logical);
         return;
     }
@@ -264,6 +274,218 @@ ByteStorePtr ExtReader::buildContent(const Inode& in) const {
     const std::int64_t n =
         std::min<std::int64_t>(concat->capacity(), static_cast<std::int64_t>(in.fileSize));
     return std::make_shared<SubStore>(concat, 0, n);
+}
+
+bool ExtReader::lastExtentEnd(const std::vector<std::uint8_t>& node,
+                              std::uint64_t* logicalEnd, unsigned depth) const {
+    if (!logicalEnd || depth > 5 || node.size() < 12 || le16(node.data()) != kExtentMagic)
+        return false;
+    const std::uint16_t entries = le16(node.data() + 2);
+    const std::uint16_t maximum = le16(node.data() + 4);
+    const std::uint16_t nodeDepth = le16(node.data() + 6);
+    if (!entries || entries > maximum || 12u + std::size_t(entries) * 12u > node.size())
+        return false;
+    const std::uint8_t* last = node.data() + 12u + std::size_t(entries - 1) * 12u;
+    if (nodeDepth == 0) {
+        const std::uint64_t first = le32(last);
+        const std::uint16_t encodedLength = le16(last + 4);
+        const std::uint64_t length = encodedLength > 0x8000
+            ? encodedLength - 0x8000 : encodedLength;
+        if (!length || first > std::numeric_limits<std::uint64_t>::max() - length)
+            return false;
+        *logicalEnd = first + length;
+        return true;
+    }
+    if (nodeDepth > 5) return false;
+    const std::uint64_t child = static_cast<std::uint64_t>(le32(last + 4)) |
+                                (static_cast<std::uint64_t>(le16(last + 8)) << 32);
+    const auto block = disc_->readRange(static_cast<std::int64_t>(child) * blockSize_, blockSize_);
+    if (block.size() != blockSize_) return false;
+    return lastExtentEnd(block, logicalEnd, depth + 1);
+}
+
+bool ExtReader::readInodeBytes(const Inode& in, std::uint64_t offset,
+                               std::uint8_t* dst, std::size_t size) const {
+    if (!dst || !in.usesExtents || offset > std::numeric_limits<std::uint64_t>::max() - size)
+        return false;
+    std::size_t done = 0;
+    while (done < size) {
+        const std::uint64_t pos = offset + done;
+        const std::uint64_t logical = pos / blockSize_;
+        const std::size_t within = static_cast<std::size_t>(pos % blockSize_);
+        const std::size_t amount = std::min<std::size_t>(size - done, blockSize_ - within);
+        std::uint64_t first = 0, physical = 0, count = 0;
+        bool unwritten = false;
+        if (!findExtent(in.blockMap, logical, &first, &physical, &count, &unwritten) ||
+            logical < first || logical - first >= count || unwritten)
+            return false;
+        physical += logical - first;
+        if (physical > static_cast<std::uint64_t>(
+                std::numeric_limits<std::int64_t>::max()) / blockSize_) return false;
+        const std::int64_t diskPos = static_cast<std::int64_t>(physical) * blockSize_ +
+                                     static_cast<std::int64_t>(within);
+        if (disc_->read(diskPos, dst + done, static_cast<int>(amount)) !=
+            static_cast<int>(amount)) return false;
+        done += amount;
+    }
+    return true;
+}
+
+bool ExtReader::verifyVerity(const Inode& in) const {
+    if (!(in.flags & kVerityFlag) || !(in.flags & kExtentsFlag) ||
+        (in.flags & kInlineDataFlag) || !in.usesExtents || ((in.mode >> 12) & 0xF) != 0x8)
+        return false;
+
+    std::uint64_t logicalEnd = 0;
+    if (!lastExtentEnd(in.blockMap, &logicalEnd, 0) || logicalEnd == 0 ||
+        logicalEnd > std::numeric_limits<std::uint64_t>::max() / blockSize_) {
+        return false;
+    }
+    const std::uint64_t markerPosition = logicalEnd * blockSize_ - 4;
+    std::uint8_t marker[4];
+    if (!readInodeBytes(in, markerPosition, marker, sizeof(marker))) {
+        return false;
+    }
+    const std::uint32_t descriptorSize = le32(marker);
+    if (descriptorSize < 256 || descriptorSize > 256 + 16128 ||
+        markerPosition < descriptorSize) {
+        return false;
+    }
+    const std::uint64_t descriptorPosition =
+        ((markerPosition - descriptorSize) / blockSize_) * blockSize_;
+    std::vector<std::uint8_t> descriptor(descriptorSize);
+    if (!readInodeBytes(in, descriptorPosition, descriptor.data(), descriptor.size()))
+        return false;
+
+    const std::uint8_t version = descriptor[0];
+    const std::uint8_t algorithm = descriptor[1];
+    const std::uint8_t logBlockSize = descriptor[2];
+    const std::uint8_t saltSize = descriptor[3];
+    const std::uint32_t signatureSize = le32(descriptor.data() + 4);
+    const std::uint64_t dataSize = static_cast<std::uint64_t>(le32(descriptor.data() + 8)) |
+        (static_cast<std::uint64_t>(le32(descriptor.data() + 12)) << 32);
+    if (version != 1 || (algorithm != 1 && algorithm != 2) || saltSize > 32 ||
+        signatureSize != descriptorSize - 256 || dataSize != in.fileSize ||
+        logBlockSize < 10 || logBlockSize > 16) {
+        return false;
+    }
+    const std::uint32_t hashBlockSize = 1u << logBlockSize;
+    if (hashBlockSize > blockSize_ || hashBlockSize > 65536) {
+        return false;
+    }
+    const int digestSize = algorithm == 1 ? 32 : 64;
+    const int compressionBlockSize = algorithm == 1 ? 64 : 128;
+    const auto allZero = [](const std::uint8_t* p, std::size_t n) {
+        return std::all_of(p, p + n, [](std::uint8_t b) { return b == 0; });
+    };
+    if (!allZero(descriptor.data() + 16 + digestSize, 64 - digestSize) ||
+        !allZero(descriptor.data() + 80 + saltSize, 32 - saltSize) ||
+        !allZero(descriptor.data() + 112, 144)) {
+        return false;
+    }
+
+    const QCryptographicHash::Algorithm qtAlgorithm = algorithm == 1
+        ? QCryptographicHash::Sha256 : QCryptographicHash::Sha512;
+    QByteArray paddedSalt;
+    if (saltSize) {
+        paddedSalt = QByteArray(compressionBlockSize, '\0');
+        std::memcpy(paddedSalt.data(), descriptor.data() + 80, saltSize);
+    }
+    const auto hashBlock = [&](const std::uint8_t* bytes) {
+        QCryptographicHash hash(qtAlgorithm);
+        hash.addData(paddedSalt);
+        hash.addData(reinterpret_cast<const char*>(bytes), static_cast<int>(hashBlockSize));
+        return hash.result();
+    };
+    if (in.fileSize > std::numeric_limits<std::uint64_t>::max() - 65535u) return false;
+    if (in.fileSize > std::numeric_limits<std::uint64_t>::max() - hashBlockSize + 1u)
+        return false;
+    const std::uint64_t dataBlocks = in.fileSize == 0 ? 0 :
+        (in.fileSize + hashBlockSize - 1) / hashBlockSize;
+    const std::uint64_t treeStart = (in.fileSize + 65535u) & ~std::uint64_t(65535u);
+    if (dataBlocks <= 1) {
+        const std::uint64_t expectedDescriptorPosition =
+            (treeStart + blockSize_ - 1) / blockSize_ * blockSize_;
+        if (expectedDescriptorPosition != descriptorPosition) return false;
+    }
+
+    if (dataBlocks == 0) {
+        if (!allZero(descriptor.data() + 16, digestSize)) return false;
+    } else if (dataBlocks == 1) {
+        QByteArray data(static_cast<int>(hashBlockSize), '\0');
+        const std::size_t actual = static_cast<std::size_t>(in.fileSize);
+        if (!readInodeBytes(in, 0, reinterpret_cast<std::uint8_t*>(data.data()), actual))
+            return false;
+        if (hashBlock(reinterpret_cast<const std::uint8_t*>(data.constData())) !=
+            QByteArray(reinterpret_cast<const char*>(descriptor.data() + 16), digestSize))
+            return false;
+    } else {
+        const std::uint64_t hashesPerBlock = hashBlockSize / digestSize;
+        std::vector<std::uint64_t> levelBlockCounts;
+        std::uint64_t hashCount = dataBlocks;
+        std::uint64_t treeBlockCount = 0;
+        while (hashCount > 1) {
+            const std::uint64_t count = (hashCount + hashesPerBlock - 1) / hashesPerBlock;
+            if (treeBlockCount > std::numeric_limits<std::uint64_t>::max() - count)
+                return false;
+            levelBlockCounts.push_back(count);
+            treeBlockCount += count;
+            hashCount = count;
+        }
+        if (treeBlockCount > (std::numeric_limits<std::uint64_t>::max() - treeStart) /
+                             hashBlockSize) return false;
+        const std::uint64_t treeEnd = treeStart + treeBlockCount * hashBlockSize;
+        if (treeEnd > std::numeric_limits<std::uint64_t>::max() - blockSize_ + 1u)
+            return false;
+        const std::uint64_t expectedDescriptorPosition =
+            (treeEnd + blockSize_ - 1) / blockSize_ * blockSize_;
+        if (expectedDescriptorPosition != descriptorPosition) return false;
+
+        std::vector<QByteArray> hashes;
+        if (dataBlocks > hashes.max_size()) return false;
+        hashes.reserve(static_cast<std::size_t>(dataBlocks));
+        for (std::uint64_t i = 0; i < dataBlocks; ++i) {
+            QByteArray data(static_cast<int>(hashBlockSize), '\0');
+            const std::uint64_t dataOffset = i * hashBlockSize;
+            const std::size_t actual = static_cast<std::size_t>(
+                std::min<std::uint64_t>(hashBlockSize, in.fileSize - dataOffset));
+            if (!readInodeBytes(in, dataOffset,
+                                reinterpret_cast<std::uint8_t*>(data.data()), actual)) return false;
+            hashes.push_back(hashBlock(reinterpret_cast<const std::uint8_t*>(data.constData())));
+        }
+
+        std::uint64_t blocksBelow = 0;
+        for (std::size_t level = 0; level < levelBlockCounts.size(); ++level) {
+            const std::uint64_t blockCount = levelBlockCounts[level];
+            const std::uint64_t blocksAbove = treeBlockCount - blocksBelow - blockCount;
+            const std::uint64_t levelOffset = treeStart + blocksAbove * hashBlockSize;
+            std::vector<QByteArray> parentHashes;
+            parentHashes.reserve(static_cast<std::size_t>(blockCount));
+            for (std::uint64_t b = 0; b < blockCount; ++b) {
+                QByteArray expected(static_cast<int>(hashBlockSize), '\0');
+                const std::uint64_t firstHash = b * hashesPerBlock;
+                const std::uint64_t hashesInBlock = std::min<std::uint64_t>(
+                    hashesPerBlock, hashes.size() - static_cast<std::size_t>(firstHash));
+                for (std::uint64_t h = 0; h < hashesInBlock; ++h)
+                    std::memcpy(expected.data() + h * digestSize,
+                                hashes[static_cast<std::size_t>(firstHash + h)].constData(),
+                                static_cast<std::size_t>(digestSize));
+                std::vector<std::uint8_t> stored(hashBlockSize);
+                const std::uint64_t blockOffset = levelOffset + b * hashBlockSize;
+                if (!readInodeBytes(in, blockOffset, stored.data(), stored.size()) ||
+                    std::memcmp(stored.data(), expected.constData(), stored.size()) != 0)
+                    return false;
+                parentHashes.push_back(hashBlock(stored.data()));
+            }
+            hashes = std::move(parentHashes);
+            blocksBelow += blockCount;
+        }
+        if (hashes.size() != 1 || hashes.front() !=
+            QByteArray(reinterpret_cast<const char*>(descriptor.data() + 16), digestSize))
+            return false;
+    }
+
+    return true;
 }
 
 std::vector<ExtReader::DirRec> ExtReader::readDirectory(const Inode& dir) const {
@@ -340,7 +562,12 @@ ByteStorePtr ExtReader::openFile(const std::string& path) const {
     Inode in;
     if (!resolvePath(path, &in)) return nullptr;
     if (((in.mode >> 12) & 0xF) == 0x4) return nullptr;  // directory
-    return buildContent(in);
+    ByteStorePtr content = buildContent(in);
+    if (!(in.flags & kVerityFlag)) return content;
+    const ExtReader verifier = *this;
+    return std::make_shared<ValidatedStore>(content, [verifier, in] {
+        return verifier.verifyVerity(in);
+    });
 }
 
 }  // namespace fs

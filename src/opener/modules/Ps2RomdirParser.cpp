@@ -221,9 +221,20 @@ qint64 findPs2Romdir(const fs::ByteStorePtr& store, quint64 scanLimit)
 qint64 findPs2Romdir(const QByteArray& data)
 {
     if (data.isEmpty()) return -1;
-    const auto store = std::make_shared<fs::MemoryStore>(
-        reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size()));
-    return findPs2Romdir(store, quint64(data.size()));
+    const QByteArray signature("RESET\0\0\0\0\0", 10);
+    std::shared_ptr<fs::MemoryStore> store;
+    int pos = -1;
+    while ((pos = data.indexOf(signature, pos + 1)) >= 0) {
+        if ((pos & 15) != 0) continue;
+        if (!store) {
+            store = std::make_shared<fs::MemoryStore>(
+                reinterpret_cast<const std::uint8_t*>(data.constData()),
+                std::size_t(data.size()));
+        }
+        Ps2RomdirImageInfo image;
+        if (parsePs2Romdir(store, quint64(pos), &image)) return pos;
+    }
+    return -1;
 }
 
 } // namespace peare

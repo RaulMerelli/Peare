@@ -285,9 +285,10 @@ std::vector<std::uint16_t> infer_crc_polynomials(const ChunkProbe& probe) {
 }
 
 std::vector<std::uint8_t> lzss_decompress(const std::uint8_t* input,
-                                          std::size_t input_size) {
+                                          std::size_t input_size,
+                                          std::size_t max_output = kMaxChunkOutput) {
   std::vector<std::uint8_t> output;
-  output.reserve(kMaxChunkOutput);
+  output.reserve(max_output);
   std::size_t pos = 0;
   int bits_left = 1;
   std::uint8_t flags = 0;
@@ -317,8 +318,8 @@ std::vector<std::uint8_t> lzss_decompress(const std::uint8_t* input,
       if (distance == 0 || distance > output.size()) {
         throw Error("invalid LZSS back-reference distance");
       }
-      if (output.size() + length > kMaxChunkOutput) {
-        throw Error("LZSS chunk exceeds ProSave's 0x4000-byte buffer");
+      if (output.size() + length > max_output) {
+        throw Error("LZSS chunk exceeds its declared output buffer");
       }
       for (std::size_t i = 0; i < length; ++i) {
         output.push_back(output[output.size() - distance]);
@@ -336,8 +337,8 @@ std::vector<std::uint8_t> lzss_decompress(const std::uint8_t* input,
     if (pos >= input_size) {
       throw Error("truncated LZSS literal");
     }
-    if (output.size() == kMaxChunkOutput) {
-      throw Error("LZSS chunk exceeds ProSave's 0x4000-byte buffer");
+    if (output.size() == max_output) {
+      throw Error("LZSS chunk exceeds its declared output buffer");
     }
     output.push_back(input[pos++]);
   }
@@ -673,10 +674,8 @@ void write_reconstructed_images(
     const std::uint32_t size = read_u32(descriptor.data() + 14);
     const auto& payload_ref = payloads.at(*data_index);
     if (size != payload_ref.size()) {
-      // Some V1 ce00 / V12 277F-W2 / TP177B 4" images store the NK section as
-      // a single zlib (deflate) stream whose inflated length matches the
-      // descriptor. ProSave's transferred-payload path (sub_1001E9D0) feeds
-      // such streams through the standard inflate before writing to flash.
+      // Some V1, V12, and TP177B images store NK as one zlib stream.
+      // Its decoded size matches the section descriptor.
       if (has_zlib_header(payload_ref)) {
         inflated_overrides.emplace(
             *data_index, inflate_zlib(payload_ref, size));
@@ -724,12 +723,8 @@ void write_reconstructed_images(
        << std::setfill('0') << image_base << ".nb0";
   write_file(root / "reconstructed" / name.str(), flash);
 
-  // Several Siemens panels leave the ROMHDR file-offset field at ECEC+8 as
-  // zero because the on-device loader uses only the virtual pointer at
-  // ECEC+4. Walkers that resolve the ROMHDR via file offsets (notably
-  // every off-device WinCE ROM scanner) need it populated. We compute the
-  // file offset from the virtual pointer minus the image base and write it
-  // in. This does not modify any code bytes; only an unused header field.
+  // Some panels leave the ROMHDR file offset at ECEC+8 as zero.
+  // Derive it from the virtual pointer and image base for offline readers.
   for (std::size_t off = 0; off + 12 <= flash.size(); ++off) {
     if (read_u32(flash.data() + off) != 0x43454345U ||
         read_u32(flash.data() + off + 8) != 0) {
@@ -781,6 +776,216 @@ std::string build_manifest(const fs::path& input, const Footer& footer,
 }
 
 std::size_t common_file_payload_end(const std::vector<std::uint8_t>& image,
+                                    const Footer& footer);
+
+struct SmartCommonRecord {
+  std::size_t header_offset{};
+  std::size_t data_offset{};
+  std::uint32_t load_address{};
+  std::uint32_t data_size{};
+  std::string tag;
+};
+
+bool bytes_equal(const std::vector<std::uint8_t>& data, std::size_t offset,
+                 const char* value, std::size_t size) {
+  return offset <= data.size() && size <= data.size() - offset &&
+         std::memcmp(data.data() + offset, value, size) == 0;
+}
+
+std::string read_mart_tag(const std::vector<std::uint8_t>& image,
+                          std::size_t offset) {
+  // M@RT stores its four-character record tag as UTF-16LE in the last eight
+  // bytes of the 0x30-byte header (e.g. "@RT_" and "@SET").
+  std::string tag;
+  tag.reserve(4);
+  for (std::size_t i = 0; i < 4; ++i) {
+    const std::uint8_t lo = image[offset + i * 2];
+    const std::uint8_t hi = image[offset + i * 2 + 1];
+    if (hi != 0 || lo < 0x20 || lo > 0x7e) return std::string();
+    tag.push_back(static_cast<char>(lo));
+  }
+  return tag;
+}
+
+std::vector<SmartCommonRecord> parse_smart_common_records(
+    const std::vector<std::uint8_t>& image, const Footer& footer) {
+  const std::size_t payload_end = common_file_payload_end(image, footer);
+  if (payload_end < 0x30) return {};
+
+  // Basic Panels store an SM@R directory near the start of the common file.
+  // Bound the scan to prevent false matches in later firmware data.
+  const std::size_t scan_end = std::min<std::size_t>(payload_end, 0x1000);
+  std::size_t directory = payload_end;
+  for (std::size_t off = 0; off + 0x10 <= scan_end; ++off) {
+    if (bytes_equal(image, off, "SM@R", 4)) {
+      directory = off;
+      break;
+    }
+  }
+  if (directory == payload_end) return {};
+
+  const std::uint32_t first_record_u32 = read_u32(image.data() + directory + 0x0c);
+  const std::size_t first_record = static_cast<std::size_t>(first_record_u32);
+  if (first_record < directory + 0x10 || first_record + 0x30 > payload_end ||
+      !bytes_equal(image, first_record, "M@RT", 4)) {
+    return {};
+  }
+
+  std::vector<SmartCommonRecord> records;
+  std::size_t pos = first_record;
+  while (pos < payload_end) {
+    if (pos + 0x30 > payload_end || !bytes_equal(image, pos, "M@RT", 4))
+      return {};
+
+    const std::uint32_t header_size_u32 = read_u32(image.data() + pos + 0x0c);
+    const std::size_t header_size = static_cast<std::size_t>(header_size_u32);
+    if (header_size < 0x30 || header_size > 0x1000 || header_size > payload_end - pos)
+      return {};
+
+    const std::uint32_t tag_offset_u32 = read_u32(image.data() + pos + 0x18);
+    const std::size_t tag_offset = static_cast<std::size_t>(tag_offset_u32);
+    const std::size_t data_offset = pos + header_size;
+    // In this M@RT variant +0x18 points at the 8-byte UTF-16LE tag immediately
+    // preceding the payload.  Requiring that relationship makes detection
+    // deliberately strict and prevents false positives in a WinCE common file.
+    if (tag_offset < pos || tag_offset + 8 != data_offset || tag_offset + 8 > payload_end)
+      return {};
+
+    const std::string tag = read_mart_tag(image, tag_offset);
+    if (tag.empty()) return {};
+
+    const std::uint32_t data_size = read_u32(image.data() + pos + 0x20);
+    if (data_size > payload_end - data_offset) return {};
+
+    SmartCommonRecord record;
+    record.header_offset = pos;
+    record.data_offset = data_offset;
+    record.load_address = read_u32(image.data() + pos + 0x14);
+    record.data_size = data_size;
+    record.tag = tag;
+    records.push_back(record);
+
+    pos = data_offset + data_size;
+    if (pos == payload_end) break;
+    // Records are packed back-to-back.  If something else follows, this is not
+    // the Basic-Panel SM@R/M@RT layout we know how to extract safely.
+    if (pos + 4 > payload_end || !bytes_equal(image, pos, "M@RT", 4)) return {};
+  }
+
+  return pos == payload_end ? records : std::vector<SmartCommonRecord>();
+}
+
+struct Ce00Image {
+  std::uint32_t load_address{};
+  std::uint32_t packed_size{};
+  std::uint32_t unpacked_size{};
+  std::uint32_t checksum{};
+  std::size_t chunk_count{};
+  std::vector<std::uint8_t> data;
+};
+
+std::uint32_t joined_u16_u32(const std::uint8_t* low, const std::uint8_t* high) {
+  return static_cast<std::uint32_t>(read_u16(low)) |
+         (static_cast<std::uint32_t>(read_u16(high)) << 16U);
+}
+
+Ce00Image decompress_ce00(const std::uint8_t* input, std::size_t input_size) {
+  constexpr std::size_t kCe00HeaderSize = 0x40;
+  constexpr std::size_t kCe00ChunkOutput = 0x8000;
+  if (input_size < kCe00HeaderSize || std::memcmp(input, "CE00", 4) != 0)
+    throw Error("invalid CE00 firmware header");
+  if (read_u32(input + 4) != 3U)
+    throw Error("unsupported CE00 firmware version");
+
+  Ce00Image result;
+  // CE00 stores these 32-bit values as adjacent 16-bit halves rather than as
+  // naturally aligned DWORDs.  packed_size/unpacked_size include the 0x40-byte
+  // CE00 header; the expanded load image itself does not.
+  result.load_address = static_cast<std::uint32_t>(read_u16(input + 0x0c)) << 16U;
+  result.unpacked_size = joined_u16_u32(input + 0x0e, input + 0x10);
+  result.packed_size = joined_u16_u32(input + 0x12, input + 0x14);
+  result.checksum = joined_u16_u32(input + 0x16, input + 0x18);
+
+  if (result.packed_size < kCe00HeaderSize || result.packed_size != input_size)
+    throw Error("invalid CE00 packed size");
+  if (result.unpacked_size < kCe00HeaderSize)
+    throw Error("invalid CE00 unpacked size");
+  const std::size_t expected_output =
+      static_cast<std::size_t>(result.unpacked_size) - kCe00HeaderSize;
+  if (read_u32(input + 0x30) != expected_output)
+    throw Error("CE00 expanded-size fields disagree");
+
+  result.data.reserve(expected_output);
+  std::size_t pos = kCe00HeaderSize;
+  while (pos < result.packed_size) {
+    if (result.packed_size - pos < 2)
+      throw Error("truncated CE00 chunk header");
+    const std::size_t packed_chunk = read_u16(input + pos);
+    pos += 2;
+    if (packed_chunk == 0 || packed_chunk > result.packed_size - pos)
+      throw Error("invalid CE00 LZSS chunk size");
+
+    const auto chunk = lzss_decompress(input + pos, packed_chunk, kCe00ChunkOutput);
+    pos += packed_chunk;
+    if (chunk.empty() || chunk.size() > kCe00ChunkOutput)
+      throw Error("invalid CE00 LZSS chunk output");
+    if (result.data.size() + chunk.size() > expected_output)
+      throw Error("CE00 data expands beyond declared size");
+    result.data.insert(result.data.end(), chunk.begin(), chunk.end());
+    ++result.chunk_count;
+  }
+
+  if (pos != result.packed_size || result.data.size() != expected_output)
+    throw Error("CE00 data does not match declared expanded size");
+  return result;
+}
+
+bool is_ce00_record(const std::vector<std::uint8_t>& image,
+                    const SmartCommonRecord& record) {
+  return record.data_size >= 0x40 &&
+         bytes_equal(image, record.data_offset, "CE00", 4);
+}
+
+std::string smart_common_record_filename(const std::vector<std::uint8_t>& image,
+                                         const SmartCommonRecord& record,
+                                         std::size_t index) {
+  std::string tag = record.tag;
+  while (!tag.empty() && (tag.front() == '@' || tag.front() == '_')) tag.erase(tag.begin());
+  while (!tag.empty() && (tag.back() == '@' || tag.back() == '_')) tag.pop_back();
+  for (std::size_t i = 0; i < tag.size(); ++i) {
+    const unsigned char c = static_cast<unsigned char>(tag[i]);
+    if (!std::isalnum(c) && c != '-' && c != '_') tag[i] = '_';
+  }
+
+  std::string payload_magic;
+  if (record.data_size >= 4) {
+    bool printable = true;
+    for (std::size_t i = 0; i < 4; ++i) {
+      const unsigned char c = image[record.data_offset + i];
+      if (c < 0x20 || c > 0x7e) { printable = false; break; }
+      payload_magic.push_back(static_cast<char>(c));
+    }
+    if (!printable) payload_magic.clear();
+    for (std::size_t i = 0; i < payload_magic.size(); ++i) {
+      const unsigned char c = static_cast<unsigned char>(payload_magic[i]);
+      if (!std::isalnum(c) && c != '-' && c != '_') payload_magic[i] = '_';
+    }
+  }
+
+  if (record.tag == "@RT_") {
+    return payload_magic.empty() ? "firmware.bin" : "firmware_" + payload_magic + ".bin";
+  }
+  if (record.tag == "@SET") return "settings.bin";
+
+  std::ostringstream name;
+  name << "record_" << index;
+  if (!tag.empty()) name << '_' << tag;
+  if (!payload_magic.empty()) name << '_' << payload_magic;
+  name << ".bin";
+  return name.str();
+}
+
+std::size_t common_file_payload_end(const std::vector<std::uint8_t>& image,
                                     const Footer& footer) {
   const std::size_t footer_begin = image.size() - kFooterSize;
   const std::size_t payload_end =
@@ -795,12 +1000,7 @@ void extract_smart_common_file(const fs::path& input, const fs::path& output,
                                const std::vector<std::uint8_t>& image,
                                const Footer& footer) {
   const std::size_t payload_end = common_file_payload_end(image, footer);
-
-  // ps_osupdate_smart passes zero-section IMG files to ImageTransfer as the
-  // CommonFile itself. Saving the equivalent transfer payload therefore only
-  // removes the ProSave-owned auxiliary data and footer.
-  std::vector<std::uint8_t> payload(image.begin(), image.begin() + payload_end);
-  write_file(output / "reconstructed" / "NK.bin", payload);
+  const auto records = parse_smart_common_records(image, footer);
 
   std::ostringstream manifest;
   manifest << "{\n"
@@ -808,11 +1008,43 @@ void extract_smart_common_file(const fs::path& input, const fs::path& output,
            << "  \"footer_magic\": \"0x03031998\",\n"
            << "  \"layout\": \"smart-common-file\",\n"
            << "  \"section_count\": 0,\n"
-           << "  \"auxiliary_offset\": " << footer.auxiliary_offset << ",\n"
-           << "  \"output_size\": " << payload.size() << "\n"
-           << "}\n";
+           << "  \"auxiliary_offset\": " << footer.auxiliary_offset << ",\n";
+
+  if (!records.empty()) {
+    manifest << "  \"directory\": \"SM@R/M@RT\",\n"
+             << "  \"records\": [\n";
+    for (std::size_t i = 0; i < records.size(); ++i) {
+      const auto& record = records[i];
+      const std::string filename = smart_common_record_filename(image, record, i);
+      const std::vector<std::uint8_t> payload(
+          image.begin() + record.data_offset,
+          image.begin() + record.data_offset + record.data_size);
+      write_file(output / "reconstructed" / filename, payload);
+      if (is_ce00_record(image, record)) {
+        const auto ce00 = decompress_ce00(payload.data(), payload.size());
+        write_file(output / "reconstructed" / "firmware.bin", ce00.data);
+      }
+      manifest << "    {\"index\": " << i
+               << ", \"tag\": \"" << record.tag
+               << "\", \"load_address\": \"" << hex32(record.load_address)
+               << "\", \"file_offset\": " << record.data_offset
+               << ", \"size\": " << record.data_size
+               << ", \"file\": \"" << filename << "\"}"
+               << (i + 1 == records.size() ? "\n" : ",\n");
+      std::cout << record.tag << " -> " << filename << " (" << record.data_size
+                << " bytes, load " << hex32(record.load_address) << ")\n";
+    }
+    manifest << "  ]\n";
+  } else {
+    // Legacy WinCE common-file layout: the payload itself is the NK image.
+    std::vector<std::uint8_t> payload(image.begin(), image.begin() + payload_end);
+    write_file(output / "reconstructed" / "NK.bin", payload);
+    manifest << "  \"output_file\": \"NK.bin\",\n"
+             << "  \"output_size\": " << payload.size() << "\n";
+    std::cout << "common-file payload -> " << payload.size() << " bytes\n";
+  }
+  manifest << "}\n";
   write_text(output / "manifest.json", manifest.str());
-  std::cout << "common-file payload -> " << payload.size() << " bytes\n";
 }
 
 void extract_image(const fs::path& input, const fs::path& output,

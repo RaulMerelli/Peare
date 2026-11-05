@@ -17,7 +17,8 @@ QString statusText(peare_status status);
 QString containerName(peare_container_format format);
 QString sanitizeFileName(QString value);
 QString uniquePath(const QString& path);
-QString originalExtension(const QString& type, const QByteArray& payload);
+QString originalExtension(const QString& type, const QByteArray& payload,
+                          const QString& identifier = {});
 
 struct ResourceContext {
     peare_container_format containerFormat = PEARE_CONTAINER_UNKNOWN;
@@ -36,13 +37,14 @@ class Resource final {
 public:
     Resource() = default;
     explicit Resource(peare_resource_handle handle);
+    Resource(QByteArray payload, ResourceContext context);
     ~Resource();
     Resource(Resource&& other) noexcept;
     Resource& operator=(Resource&& other) noexcept;
     Resource(const Resource&) = delete;
     Resource& operator=(const Resource&) = delete;
 
-    bool isValid() const { return handle_ != nullptr; }
+    bool isValid() const { return handle_ != nullptr || rawValid_; }
     peare_resource_handle handle() const { return handle_; }
     QByteArray payload() const;
     ResourceContext context() const;
@@ -51,6 +53,9 @@ public:
 
 private:
     peare_resource_handle handle_ = nullptr;
+    QByteArray rawPayload_;
+    ResourceContext rawContext_;
+    bool rawValid_ = false;
 };
 
 class Session final {
@@ -60,9 +65,11 @@ public:
     Session(const Session&) = delete;
     Session& operator=(const Session&) = delete;
 
-    bool openFile(const QString& path, QString* error = nullptr);
+    bool openFile(const QString& path, QString* error = nullptr,
+                  const QString& password = QString());
     void close();
     bool isOpen() const { return open_; }
+    peare_status lastStatus() const { return lastStatus_; }
     peare_container_format containerFormat() const;
     QString description() const;
     size_t folderCount() const;
@@ -79,6 +86,8 @@ public:
 private:
     peare_opener_handle handle_ = nullptr;
     bool open_ = false;
+    peare_status lastStatus_ = PEARE_STATUS_NOT_OPEN;
+    QString password_;
 };
 
 struct Preview {
@@ -97,5 +106,22 @@ QImage renderFont(const Resource& resource, const QString& text,
                   quint32 scale, quint32 padding,
                   quint32 foregroundRgba, quint32 backgroundRgba,
                   const QString& resourceTypeOverride = {});
+QImage renderFontGlyph(const Resource& resource, quint32 glyphIndex,
+                       quint32 scale, quint32 padding,
+                       quint32 foregroundRgba, quint32 backgroundRgba,
+                       const QString& resourceTypeOverride = {});
+QVector<QImage> renderFontGlyphs(const Resource& resource, const QVector<quint32>& glyphIndexes,
+                                 quint32 scale, quint32 padding, quint32 foregroundRgba,
+                                 quint32 backgroundRgba,
+                                 const QString& resourceTypeOverride = {});
+QVector<QByteArray> fontCollectionFaces(const Resource& resource);
+bool fontSupportsText(const Resource& resource, const QString& text, bool* supported,
+                      const QString& resourceTypeOverride = {});
+struct FontCodepoints {
+    QVector<quint32> values;
+    bool usesGlyphIndexes = false;
+};
+FontCodepoints fontCodepoints(const Resource& resource,
+                              const QString& resourceTypeOverride = {});
 
 } // namespace pearegui
