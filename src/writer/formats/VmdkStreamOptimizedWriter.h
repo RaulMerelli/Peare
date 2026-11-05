@@ -29,6 +29,10 @@ private:
     struct GrainRef {
         qint64 offset = 0;
         quint32 size = 0;
+
+        GrainRef() = default;
+        GrainRef(qint64 grainOffset, quint32 grainSize)
+            : offset(grainOffset), size(grainSize) {}
     };
 
     bool parse(QString* error);

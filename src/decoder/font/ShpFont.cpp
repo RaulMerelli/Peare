@@ -540,7 +540,8 @@ bool parseCompiledBigFont(const QByteArray& data, ShpFont* font, QString* error)
         spans.append(qMakePair(bodyOffset, quint32(bodyEnd)));
         codesSeen.insert(code);
     }
-    std::sort(spans.begin(), spans.end(), [](const auto& left, const auto& right) {
+    std::sort(spans.begin(), spans.end(), [](const QPair<quint32, quint32>& left,
+                                              const QPair<quint32, quint32>& right) {
         return left.first < right.first;
     });
     for (int index = 1; index < spans.size(); ++index) {

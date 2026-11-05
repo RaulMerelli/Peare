@@ -862,6 +862,9 @@ struct QuotaUsage { quint64 bytes = 0; quint64 inodes = 0; };
 struct QuotaRecord {
     quint32 id = 0;
     quint64 offset = 0;
+
+    QuotaRecord(quint32 recordId, quint64 recordOffset)
+        : id(recordId), offset(recordOffset) {}
 };
 
 bool addQuotaUsage(std::map<quint32, QuotaUsage>* usage,
@@ -1129,6 +1132,9 @@ struct SharedOwner {
     quint32 inode = 0;
     ext4_lblk_t logical = 0;
     bool unwritten = false;
+
+    SharedOwner(quint32 ownerInode, ext4_lblk_t logicalBlock, bool isUnwritten)
+        : inode(ownerInode), logical(logicalBlock), unwritten(isUnwritten) {}
 };
 
 struct ExtentFileMap {

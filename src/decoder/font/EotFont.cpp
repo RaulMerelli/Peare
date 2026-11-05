@@ -1,9 +1,8 @@
 #include "EotFont.h"
 #include "third_party/libeot/src/peare_mtx_bridge.h"
 
-#include <QtEndian>
-
 #include <limits>
+#include <QtEndian>
 
 namespace peare {
 namespace font {
