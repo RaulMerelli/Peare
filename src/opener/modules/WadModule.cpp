@@ -16,6 +16,9 @@ struct NamespaceRange {
     int start = 0;
     int end = -1;
     QString key;
+
+    NamespaceRange(int rangeStart, int rangeEnd, const QString& rangeKey)
+        : start(rangeStart), end(rangeEnd), key(rangeKey) {}
 };
 
 fs::ByteStorePtr storeForFile(const QString& path) {

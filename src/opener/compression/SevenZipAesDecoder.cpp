@@ -3,6 +3,7 @@
 #include "third_party/lzma/Aes.h"
 #include "third_party/lzma/Sha256.h"
 
+#include <limits>
 #include <QtEndian>
 
 #include <algorithm>

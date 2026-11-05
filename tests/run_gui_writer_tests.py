@@ -75,19 +75,20 @@ def main():
     if not executable.is_file() or not sample.is_file() or not scenario.is_file():
         print("Executable, image, or scenario file does not exist.", file=sys.stderr)
         return 2
+    plugin_name = ("qoffscreen.dll" if sys.platform == "win32" else
+                   "libqoffscreen.dylib" if sys.platform == "darwin" else
+                   "libqoffscreen.so")
     plugin_dir = args.qt_platform_plugin_dir
     if plugin_dir is None:
         configured = os.environ.get("QT_QPA_PLATFORM_PLUGIN_PATH")
         if configured:
             plugin_dir = Path(configured)
-        elif sys.platform == "win32":
-            plugin_dir = REPO_ROOT / "build-windows" / "test-plugins" / "platforms"
         else:
-            plugin_dir = executable.parent / "platforms"
+            candidates = [REPO_ROOT / "build-windows" / "test-plugins" / "platforms",
+                          executable.parent / "platforms"]
+            plugin_dir = next((path for path in candidates
+                               if (path / plugin_name).is_file()), candidates[-1])
     plugin_dir = plugin_dir.resolve()
-    plugin_name = ("qoffscreen.dll" if sys.platform == "win32" else
-                   "libqoffscreen.dylib" if sys.platform == "darwin" else
-                   "libqoffscreen.so")
     if not (plugin_dir / plugin_name).is_file():
         print(f"Qt offscreen platform plugin not found: {plugin_dir / plugin_name}",
               file=sys.stderr)

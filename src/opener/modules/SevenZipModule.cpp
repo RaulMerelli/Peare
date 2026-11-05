@@ -176,6 +176,10 @@ private:
 struct Digest {
     bool defined = false;
     std::uint32_t value = 0;
+
+    Digest() = default;
+    Digest(bool isDefined, std::uint32_t digestValue)
+        : defined(isDefined), value(digestValue) {}
 };
 
 struct PackInfo {
@@ -212,6 +216,10 @@ struct Folder {
 struct PackedStream {
     const std::uint8_t* data = nullptr;
     std::size_t size = 0;
+
+    PackedStream() = default;
+    PackedStream(const std::uint8_t* bytes, std::size_t byteCount)
+        : data(bytes), size(byteCount) {}
 };
 
 struct StreamsInfo {

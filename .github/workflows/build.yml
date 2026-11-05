@@ -87,6 +87,8 @@ jobs:
           mkdir dist
           for /r build %%f in (Peare.exe PeareOpener.dll PeareDecoder.dll) do copy "%%f" dist\ >nul 2>&1
           "%QT_ROOT_DIR%\bin\windeployqt.exe" --release --no-translations dist\Peare.exe
+          mkdir dist\platforms
+          copy "%QT_ROOT_DIR%\plugins\platforms\qoffscreen.dll" dist\platforms\ >nul
           copy README.md dist\ >nul 2>&1
           dir dist
 

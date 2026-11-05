@@ -210,6 +210,9 @@ struct Rar4MemberRecord {
     struct DataPart {
         std::int64_t offset = 0;
         std::uint64_t packed = 0;
+
+        DataPart(std::int64_t dataOffset, std::uint64_t packedSize)
+            : offset(dataOffset), packed(packedSize) {}
     };
     std::int64_t offset = 0;
     std::uint64_t packed = 0;

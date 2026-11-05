@@ -33,6 +33,7 @@
 #endif
 
 #include <errno.h>	/* ENODATA */
+#include <stddef.h>
 
 #ifndef ENODATA
 #define ENODATA ENOENT

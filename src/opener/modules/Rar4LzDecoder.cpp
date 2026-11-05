@@ -103,6 +103,9 @@ struct PpmdMemoryInput {
     std::size_t size = 0;
     std::size_t position = 0;
     bool exhausted = false;
+
+    PpmdMemoryInput(const Byte* bytes, std::size_t byteCount)
+        : data(bytes), size(byteCount) {}
 };
 
 struct FilterRecord {
@@ -675,8 +678,8 @@ BlockResult decodePpmdBlock(BitReader* bits, const std::uint8_t* packed,
     if (!bits->bytePosition(&startByte) || startByte > packedSize)
         return BlockResult::Error;
     const auto* packedBytes = reinterpret_cast<const Byte*>(packed);
-    PpmdMemoryInput input = {packedBytes ? packedBytes + startByte : nullptr,
-        packedSize - startByte, 0, false};
+    PpmdMemoryInput input(packedBytes ? packedBytes + startByte : nullptr,
+                          packedSize - startByte);
     PeareRar4PpmdDecoder decoder{};
     if (!peare_rar4_ppmd_init(&decoder, readPpmdByte, &input) || input.exhausted)
         return BlockResult::Error;

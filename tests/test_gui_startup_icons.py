@@ -9,22 +9,25 @@ import pytest
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows resource icons only")
 def test_startup_icons_load_in_background(peare_gui_path, tmp_path):
-    repo_root = peare_gui_path.resolve().parents[2]
-    icon_source = Path(r"C:\Windows\System32\notepad.exe")
-    if not icon_source.is_file():
-        pytest.skip("Windows Notepad icon source is not available")
+    icon_source = Path(__file__).parent / "formats" / "pe" / "fixtures" / \
+        "MerelliBattleShip.exe"
     settings_file = tmp_path / "startup-icons.ini"
     settings_file.write_text(
         "[RT_FOLDER_CLOSE]\n"
         f"path={icon_source.as_posix()}\n"
-        "ordinal=#2\n"
+        "ordinal=#32512\n"
         "iconExt=folder_close\n",
         encoding="utf-8")
-    plugin_dir = Path(os.environ.get(
-        "QT_QPA_PLATFORM_PLUGIN_PATH",
-        repo_root / "build-windows" / "test-plugins" / "platforms"))
-    if not plugin_dir.is_dir():
-        plugin_dir = peare_gui_path.resolve().parent / "platforms"
+    plugin_name = "qoffscreen.dll"
+    plugin_dir = os.environ.get("QT_QPA_PLATFORM_PLUGIN_PATH")
+    if plugin_dir:
+        plugin_dir = Path(plugin_dir)
+    else:
+        repo_root = Path(__file__).resolve().parents[1]
+        candidates = [repo_root / "build-windows" / "test-plugins" / "platforms",
+                      peare_gui_path.resolve().parent / "platforms"]
+        plugin_dir = next((path for path in candidates
+                           if (path / plugin_name).is_file()), candidates[-1])
 
     environment = dict(os.environ)
     environment["QT_QPA_PLATFORM"] = "offscreen"
