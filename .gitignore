@@ -60,6 +60,31 @@ __pycache__/
 # Peare test artifacts; keep this working area out of version control.
 /tmp/
 
+# Generated Autotools files in the vendored NTFS-3G source tree.
+/src/writer/third_party/ntfs-3g/autom4te.cache/
+/src/writer/third_party/ntfs-3g/**/Makefile.in
+/src/writer/third_party/ntfs-3g/INSTALL
+/src/writer/third_party/ntfs-3g/Makefile.in
+/src/writer/third_party/ntfs-3g/aclocal.m4
+/src/writer/third_party/ntfs-3g/compile
+/src/writer/third_party/ntfs-3g/config.guess
+/src/writer/third_party/ntfs-3g/config.guess~
+/src/writer/third_party/ntfs-3g/config.h.in
+/src/writer/third_party/ntfs-3g/config.log
+/src/writer/third_party/ntfs-3g/config.sub
+/src/writer/third_party/ntfs-3g/config.sub~
+/src/writer/third_party/ntfs-3g/configure
+/src/writer/third_party/ntfs-3g/configure~
+/src/writer/third_party/ntfs-3g/depcomp
+/src/writer/third_party/ntfs-3g/install-sh
+/src/writer/third_party/ntfs-3g/ltmain.sh
+/src/writer/third_party/ntfs-3g/m4/libtool.m4
+/src/writer/third_party/ntfs-3g/m4/ltoptions.m4
+/src/writer/third_party/ntfs-3g/m4/ltsugar.m4
+/src/writer/third_party/ntfs-3g/m4/ltversion.m4
+/src/writer/third_party/ntfs-3g/m4/lt~obsolete.m4
+/src/writer/third_party/ntfs-3g/missing
+
 # Local sample inventories and machine-specific test evidence.
 /docs/testing/ARCHIVE_PERFORMANCE_CHECKLIST.md
 /docs/testing/EXT_WRITER_FEATURE_MATRIX.md

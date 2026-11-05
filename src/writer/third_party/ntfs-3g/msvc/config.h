@@ -1,0 +1,23 @@
+#ifndef PEARE_NTFS_CONFIG_H
+#define PEARE_NTFS_CONFIG_H
+
+#define HAVE_CONFIG_H 1
+#define HAVE_STDINT_H 1
+#define HAVE_INTTYPES_H 1
+#define HAVE_STDIO_H 1
+#define HAVE_STDLIB_H 1
+#define HAVE_STRING_H 1
+#define HAVE_STDARG_H 1
+#define HAVE_ERRNO_H 1
+#define HAVE_FCNTL_H 1
+#define HAVE_LIMITS_H 1
+#define HAVE_LOCALE_H 1
+#define HAVE_SYS_TYPES_H 1
+#define HAVE_SYS_STAT_H 1
+#define WORDS_LITTLEENDIAN 1
+#define HAVE_DAEMON 1
+#define WINDOWS 1
+#define NO_NTFS_DEVICE_DEFAULT_IO_OPS 1
+#define POSIXACLS 0
+
+#endif
