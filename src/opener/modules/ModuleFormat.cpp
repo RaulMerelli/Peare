@@ -739,7 +739,11 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         return {ModuleFormat::Unknown, 0, {}, file.errorString()};
     }
 
-    const QByteArray rarPrefix = file.read(1024 * 1024 + 7);
+    const QByteArray rarPrefix = file.read(1024 * 1024 + 8);
+    const QByteArray rar5Marker("Rar!\x1a\x07\x01\x00", 8);
+    const qsizetype rar5Offset = rarPrefix.indexOf(rar5Marker);
+    if (rar5Offset >= 0)
+        return {ModuleFormat::RAR5, quint32(rar5Offset), QStringLiteral("RAR5 archive"), {}};
     const QByteArray rar4Marker("Rar!\x1a\x07\x00", 7);
     const qsizetype rarOffset = rarPrefix.indexOf(rar4Marker);
     if (rarOffset >= 0)
@@ -1585,6 +1589,11 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
 
 ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
 {
+    const QByteArray rar5Marker("Rar!\x1a\x07\x01\x00", 8);
+    const qsizetype rar5Offset = data.left(qMin<qsizetype>(
+        data.size(), qsizetype(1024 * 1024 + 8))).indexOf(rar5Marker);
+    if (rar5Offset >= 0)
+        return {ModuleFormat::RAR5, quint32(rar5Offset), QStringLiteral("RAR5 archive"), {}};
     const QByteArray rarMarker("Rar!\x1a\x07\x00", 7);
     const qsizetype rarOffset = data.left(qMin<qsizetype>(
         data.size(), qsizetype(1024 * 1024 + 7))).indexOf(rarMarker);
@@ -1893,6 +1902,11 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
 
 ModuleFormatInfo ModuleFormatDetector::detectNestedBuffer(const QByteArray& data)
 {
+    const QByteArray rar5Marker("Rar!\x1a\x07\x01\x00", 8);
+    const qsizetype rar5Offset = data.left(qMin<qsizetype>(
+        data.size(), qsizetype(1024 * 1024 + 8))).indexOf(rar5Marker);
+    if (rar5Offset >= 0)
+        return {ModuleFormat::RAR5, quint32(rar5Offset), QStringLiteral("RAR5 archive"), {}};
     const QByteArray rarMarker("Rar!\x1a\x07\x00", 7);
     const qsizetype rarOffset = data.left(qMin<qsizetype>(
         data.size(), qsizetype(1024 * 1024 + 7))).indexOf(rarMarker);
@@ -2081,6 +2095,7 @@ QString ModuleFormatDetector::formatName(ModuleFormat format)
     case ModuleFormat::LHA: return QStringLiteral("LHA");
     case ModuleFormat::SEVEN_ZIP: return QStringLiteral("7-Zip");
     case ModuleFormat::RAR4: return QStringLiteral("RAR4");
+    case ModuleFormat::RAR5: return QStringLiteral("RAR5");
     case ModuleFormat::SIEMENS_IMG: return QStringLiteral("Siemens IMG");
     case ModuleFormat::SIEMENS_ADONIS: return QStringLiteral("Siemens ADONIS");
     case ModuleFormat::SIEMENS_FWF: return QStringLiteral("Siemens FWF");

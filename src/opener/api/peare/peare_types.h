@@ -155,7 +155,8 @@ typedef enum peare_container_format {
     PEARE_CONTAINER_UUE,
     PEARE_CONTAINER_LHA,
     PEARE_CONTAINER_SEVEN_ZIP,
-    PEARE_CONTAINER_RAR4
+    PEARE_CONTAINER_RAR4,
+    PEARE_CONTAINER_RAR5
 } peare_container_format;
 
 typedef enum peare_platform {

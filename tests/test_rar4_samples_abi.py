@@ -20,11 +20,10 @@ SAMPLES = tuple(
      "ppmd_lzss_conversion_test.txt", None),
     ("winrar/rar4-ppmd-m8.rar", "README.md", None),
     ("libarchive/test_read_format_rar_filter.rar", "bsdcat.exe", None),
-)
-
-UNSUPPORTED_SAMPLES = (
     ("rar4-encrypted-data.rar", "ModuleFormat.cpp", "PeareRAR4"),
     ("rar4-encrypted-headers.rar", "ModuleFormat.cpp", "PeareRAR4"),
+    ("winrar/rar4-multivol-ep.part1.rar", "CMakeLists.txt", None),
+    ("winrar/rar4-multivol-old.rar", "CMakeLists.txt", None),
 )
 
 
@@ -36,11 +35,11 @@ def _seven_zip():
     return next((path for path in candidates if path and Path(path).is_file()), None)
 
 
-def _rar_payload(peare_lib, archive, entry_name, password):
+def _rar_payload(peare_lib, archive, entry_name, password, expected_format="RAR4"):
     opener = peare_lib.open_file(str(archive), password=password)
-    assert opener is not None
+    assert opener is not None, peare_lib.status_message(peare_lib.last_open_status)
     with opener:
-        assert opener.container_format() == "RAR4"
+        assert opener.container_format() == expected_format
         matches = []
         for folder in range(opener.folder_count()):
             for index in range(opener.resource_count(folder)):
@@ -108,12 +107,12 @@ def test_rar4_samples_match_7zip(peare_lib, sample_name, entry_name, password):
         )
 
 
-@pytest.mark.parametrize(("sample_name", "entry_name", "password"), UNSUPPORTED_SAMPLES)
-def test_rar4_encryption_is_rejected(peare_lib, sample_name, entry_name, password):
+def test_rar4_encrypted_headers_require_a_valid_password(peare_lib):
     root_value = os.environ.get("PEARE_RAR4_SAMPLE_ROOT")
     if not root_value:
         pytest.skip("Set PEARE_RAR4_SAMPLE_ROOT to the external WinRAR sample set")
-    archive = Path(root_value) / sample_name
+    archive = Path(root_value) / "rar4-encrypted-headers.rar"
     if not archive.is_file():
         pytest.skip(f"Missing external RAR4 sample: {archive.name}")
-    assert peare_lib.open_file(str(archive), password=password) is None
+    assert peare_lib.open_file(str(archive)) is None
+    assert peare_lib.open_file(str(archive), password="incorrect") is None

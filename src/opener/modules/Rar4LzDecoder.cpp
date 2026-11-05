@@ -1,15 +1,15 @@
 #include "Rar4LzDecoder.h"
+#include "../compression/peare/Rar4PpmdDecoder.h"
+#include "Rar4Vm.h"
 
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <functional>
 #include <limits>
 
 namespace peare {
 namespace rar4 {
-
-extern "C" BoolInt Ppmd7r_RangeDec_Init(CPpmd7_RangeDec* decoder);
-extern "C" int Ppmd7r_DecodeSymbol(CPpmd7* model);
 
 namespace {
 
@@ -65,6 +65,33 @@ public:
         return true;
     }
 
+    bool readData(std::uint32_t* value)
+    {
+        std::uint32_t form = 0;
+        if (!read(2, &form)) return false;
+        if (form == 0) return read(4, value);
+        if (form == 1) {
+            std::uint32_t marker = 0;
+            if (!read(4, &marker)) return false;
+            if (marker == 0) {
+                std::uint32_t byte = 0;
+                if (!read(8, &byte)) return false;
+                *value = (byte & 0x80U) ? byte | 0xffffff00U : byte;
+            } else {
+                std::uint32_t low = 0;
+                if (!read(4, &low)) return false;
+                *value = (marker << 4) | low;
+            }
+            return true;
+        }
+        if (form == 2) return read(16, value);
+        std::uint32_t high = 0;
+        std::uint32_t low = 0;
+        if (!read(16, &high) || !read(16, &low)) return false;
+        *value = (high << 16) | low;
+        return true;
+    }
+
 private:
     const std::uint8_t* data_;
     std::size_t size_;
@@ -72,21 +99,140 @@ private:
 };
 
 struct PpmdMemoryInput {
-    IByteIn interface;
     const Byte* data = nullptr;
     std::size_t size = 0;
     std::size_t position = 0;
     bool exhausted = false;
 };
 
-Byte readPpmdByte(IByteInPtr interface)
+struct FilterRecord {
+    std::uint8_t firstByte = 0;
+    std::size_t filterIndex = 0;
+    std::uint32_t outputStart = 0;
+    std::uint32_t blockLength = 0;
+    std::array<std::uint32_t, 7> registers{};
+    std::vector<std::uint8_t> code;
+};
+
+bool parseFilterRecord(std::uint8_t firstByte, const std::vector<std::uint8_t>& record,
+                      std::size_t outputPosition, std::vector<FilterRecord>* programs,
+                      std::size_t* lastFilter, FilterRecord* filter)
 {
-    auto* input = reinterpret_cast<PpmdMemoryInput*>(const_cast<IByteIn*>(interface));
-    if (input->position >= input->size) {
-        input->exhausted = true;
+    filter->firstByte = firstByte;
+    BitReader codeBits(record.data(), record.size());
+    std::uint32_t filterIndex = 0;
+    if (firstByte & 0x80U) {
+        if (!codeBits.readData(&filterIndex) || filterIndex > 0x1000U) return false;
+        if (filterIndex == 0) programs->clear();
+        else --filterIndex;
+    } else {
+        filterIndex = static_cast<std::uint32_t>(*lastFilter);
+    }
+    if (filterIndex > programs->size()) return false;
+    const bool newProgram = filterIndex == programs->size();
+    filter->filterIndex = filterIndex;
+    *lastFilter = filterIndex;
+    std::uint32_t blockStart = 0;
+    if (!codeBits.readData(&blockStart)) return false;
+    if ((filter->firstByte & 0x40U) && blockStart > 0xffffffffU - 258U) return false;
+    if (filter->firstByte & 0x40U) blockStart += 258U;
+    if (blockStart > 0xffffffffU - outputPosition) return false;
+    filter->outputStart = static_cast<std::uint32_t>(outputPosition + blockStart);
+    if (filter->firstByte & 0x20U) {
+        if (!codeBits.readData(&filter->blockLength)) return false;
+    } else {
+        filter->blockLength = newProgram ? 0 : (*programs)[filterIndex].blockLength;
+    }
+    filter->registers[4] = filter->blockLength;
+    if (filter->firstByte & 0x10U) {
+        std::uint32_t mask = 0;
+        if (!codeBits.read(7, &mask)) return false;
+        for (unsigned i = 0; i < 7; ++i)
+            if ((mask & (1U << i)) && !codeBits.readData(&filter->registers[i]))
+                return false;
+    }
+    if (newProgram) {
+        std::uint32_t vmCodeSize = 0;
+        if (!codeBits.readData(&vmCodeSize) || vmCodeSize == 0 || vmCodeSize >= 0x10000U)
+            return false;
+        filter->code.resize(vmCodeSize);
+        for (std::uint32_t i = 0; i < vmCodeSize; ++i) {
+            std::uint32_t byte = 0;
+            if (!codeBits.read(8, &byte)) return false;
+            filter->code[i] = static_cast<std::uint8_t>(byte);
+        }
+        programs->push_back(*filter);
+    } else {
+        filter->code = (*programs)[filterIndex].code;
+    }
+    return true;
+}
+
+bool readPpmdFilter(const std::function<int()>& readSymbol,
+                    std::size_t outputPosition, std::vector<FilterRecord>* programs,
+                    std::size_t* lastFilter,
+                    FilterRecord* filter)
+{
+    const int first = readSymbol();
+    if (first < 0) return false;
+    const std::uint8_t firstByte = static_cast<std::uint8_t>(first);
+    std::uint32_t recordLength = (firstByte & 7U) + 1U;
+    if (recordLength == 7) {
+        const int extra = readSymbol();
+        if (extra < 0) return false;
+        recordLength = static_cast<std::uint32_t>(extra) + 7U;
+    } else if (recordLength == 8) {
+        const int high = readSymbol();
+        const int low = readSymbol();
+        if (high < 0 || low < 0) return false;
+        recordLength = static_cast<std::uint32_t>(high * 256 + low);
+    }
+    if (recordLength == 0 || recordLength > 0xffffU) return false;
+    std::vector<std::uint8_t> record(recordLength);
+    for (std::uint32_t i = 0; i < recordLength; ++i) {
+        const int byte = readSymbol();
+        if (byte < 0) return false;
+        record[i] = static_cast<std::uint8_t>(byte);
+    }
+    return parseFilterRecord(firstByte, record, outputPosition, programs, lastFilter, filter);
+}
+
+bool readLzFilter(BitReader* bits, std::size_t outputPosition,
+                  std::vector<FilterRecord>* programs, std::size_t* lastFilter,
+                  FilterRecord* filter)
+{
+    std::uint32_t firstValue = 0;
+    if (!bits->read(8, &firstValue)) return false;
+    const std::uint8_t firstByte = static_cast<std::uint8_t>(firstValue);
+    std::uint32_t recordLength = (firstByte & 7U) + 1U;
+    if (recordLength == 7) {
+        std::uint32_t extra = 0;
+        if (!bits->read(8, &extra)) return false;
+        recordLength = extra + 7U;
+    } else if (recordLength == 8) {
+        std::uint32_t extended = 0;
+        if (!bits->read(16, &extended)) return false;
+        recordLength = extended;
+    }
+    if (recordLength == 0 || recordLength > 0xffffU) return false;
+    std::vector<std::uint8_t> record(recordLength);
+    for (std::uint32_t i = 0; i < recordLength; ++i) {
+        std::uint32_t byte = 0;
+        if (!bits->read(8, &byte)) return false;
+        record[i] = static_cast<std::uint8_t>(byte);
+    }
+    return parseFilterRecord(firstByte, record, outputPosition, programs, lastFilter, filter);
+}
+
+int readPpmdByte(void* context, std::uint8_t* value)
+{
+    auto* input = static_cast<PpmdMemoryInput*>(context);
+    if (!input || !value || input->position >= input->size) {
+        if (input) input->exhausted = true;
         return 0;
     }
-    return input->data[input->position++];
+    *value = input->data[input->position++];
+    return 1;
 }
 
 void* allocPpmdMemory(ISzAllocPtr, size_t size)
@@ -392,7 +538,10 @@ enum class BlockResult { Done, Next, Error };
 
 BlockResult decodeLzBlock(BitReader* bits, std::size_t outputSize,
                           std::size_t historyWindow, LzState* state,
-                          std::vector<std::uint8_t>* output)
+                          std::vector<std::uint8_t>* output,
+                          std::vector<FilterRecord>* filters,
+                          std::vector<FilterRecord>* filterPrograms,
+                          std::size_t* lastFilter)
 {
     Tables tables;
     if (!beginLzBlock(bits, &tables, state)) return BlockResult::Error;
@@ -408,16 +557,25 @@ BlockResult decodeLzBlock(BitReader* bits, std::size_t outputSize,
         }
         if (symbol == 256) {
             std::uint32_t first = 0;
-            std::uint32_t second = 0;
-            if (!bits->read(1, &first) || !bits->read(1, &second))
-                return BlockResult::Error;
-            if (first != 0 || second != 0) {
+            if (!bits->read(1, &first)) return BlockResult::Error;
+            if (first != 0) {
                 state->repeatedLowDistance = 0;
                 return BlockResult::Next;
             }
+            std::uint32_t second = 0;
+            if (!bits->read(1, &second)) return BlockResult::Error;
+            (void)second;
             return output->size() == outputSize ? BlockResult::Done : BlockResult::Error;
         }
-        if (symbol == 257) return BlockResult::Error;
+        if (symbol == 257) {
+            FilterRecord filter;
+            if (!readLzFilter(bits, output->size(), filterPrograms, lastFilter, &filter))
+                return BlockResult::Error;
+            if (filter.filterIndex < filterPrograms->size())
+                (*filterPrograms)[filter.filterIndex].blockLength = filter.blockLength;
+            filters->push_back(std::move(filter));
+            continue;
+        }
 
         std::uint32_t distance = 0;
         std::uint32_t length = 0;
@@ -471,20 +629,38 @@ BlockResult decodeLzBlock(BitReader* bits, std::size_t outputSize,
 BlockResult decodePpmdBlock(BitReader* bits, const std::uint8_t* packed,
                             std::size_t packedSize, std::size_t outputSize,
                             std::size_t historyWindow, LzState* state,
-                            std::vector<std::uint8_t>* output)
+                            std::vector<std::uint8_t>* output,
+                            std::vector<FilterRecord>* filters,
+                            std::vector<FilterRecord>* filterPrograms,
+                            std::size_t* lastFilter)
 {
     std::uint32_t flags = 0;
     if (!bits->read(7, &flags)) return BlockResult::Error;
 
+    std::uint32_t memorySize = state->ppmdMemorySize;
+    unsigned order = state->ppmdModel.MaxOrder;
     if (flags & 0x20) {
         std::uint32_t memoryByte = 0;
         if (!bits->read(8, &memoryByte)) return BlockResult::Error;
-        const std::uint32_t memorySize = (memoryByte + 1) * 1024U * 1024U;
+        memorySize = (memoryByte + 1) * 1024U * 1024U;
         const unsigned encodedOrder = unsigned(flags & 0x1f) + 1;
-        const unsigned order = encodedOrder > 16
-            ? 16 + (encodedOrder - 16) * 3 : encodedOrder;
-        if (order == 1 || order > PPMD7_MAX_ORDER) return BlockResult::Error;
+        order = encodedOrder > 16 ? 16 + (encodedOrder - 16) * 3 : encodedOrder;
+        if (order < PPMD7_MIN_ORDER || order > PPMD7_MAX_ORDER)
+            return BlockResult::Error;
+    }
+
+    std::uint8_t escapeValue = 2;
+    const bool hasCustomEscape = (flags & 0x40) != 0;
+    if (hasCustomEscape) {
+        std::uint32_t escape = 0;
+        if (!bits->read(8, &escape)) return BlockResult::Error;
+        escapeValue = static_cast<std::uint8_t>(escape);
+    }
+    if (flags & 0x20) {
         state->resetPpmd();
+        state->ppmdEscape = escapeValue;
+        if (hasCustomEscape)
+            state->ppmdModel.InitEsc = state->ppmdEscape;
         if (!Ppmd7_Alloc(&state->ppmdModel, memorySize, &kPpmdAllocator))
             return BlockResult::Error;
         state->ppmdMemorySize = memorySize;
@@ -492,35 +668,23 @@ BlockResult decodePpmdBlock(BitReader* bits, const std::uint8_t* packed,
         state->ppmdValid = true;
     } else if (!state->ppmdValid) {
         return BlockResult::Error;
-    }
-
-    if (flags & 0x40) {
-        std::uint32_t escape = 0;
-        if (!bits->read(8, &escape)) return BlockResult::Error;
-        state->ppmdEscape = static_cast<std::uint8_t>(escape);
     } else {
-        state->ppmdEscape = 2;
+        state->ppmdEscape = escapeValue;
     }
-    state->ppmdModel.InitEsc = state->ppmdEscape;
     std::size_t startByte = 0;
     if (!bits->bytePosition(&startByte) || startByte > packedSize)
         return BlockResult::Error;
     const auto* packedBytes = reinterpret_cast<const Byte*>(packed);
-    PpmdMemoryInput input = {{readPpmdByte},
-        packedBytes ? packedBytes + startByte : nullptr, packedSize - startByte,
-        0, false};
-    state->ppmdModel.rc.dec.Stream = &input.interface;
-    if (!Ppmd7r_RangeDec_Init(&state->ppmdModel.rc.dec) || input.exhausted) {
-        state->ppmdModel.rc.dec.Stream = nullptr;
+    PpmdMemoryInput input = {packedBytes ? packedBytes + startByte : nullptr,
+        packedSize - startByte, 0, false};
+    PeareRar4PpmdDecoder decoder{};
+    if (!peare_rar4_ppmd_init(&decoder, readPpmdByte, &input) || input.exhausted)
         return BlockResult::Error;
-    }
-
     const auto readSymbol = [&]() -> int {
-        const int symbol = Ppmd7r_DecodeSymbol(&state->ppmdModel);
+        const int symbol = peare_rar4_ppmd_decode_symbol(&decoder, &state->ppmdModel);
         return input.exhausted ? PPMD7_SYM_ERROR : symbol;
     };
     const auto finish = [&](BlockResult result) -> BlockResult {
-        state->ppmdModel.rc.dec.Stream = nullptr;
         if (!bits->seekBytePosition(startByte + input.position))
             return BlockResult::Error;
         return result;
@@ -542,7 +706,16 @@ BlockResult decodePpmdBlock(BitReader* bits, const std::uint8_t* packed,
             return finish(output->size() == outputSize
                 ? BlockResult::Done : BlockResult::Error);
         }
-        if (command == 3) return finish(BlockResult::Error);
+        if (command == 3) {
+            FilterRecord filter;
+            if (!readPpmdFilter(readSymbol, output->size(), filterPrograms,
+                                lastFilter, &filter))
+                return finish(BlockResult::Error);
+            if (filter.filterIndex < filterPrograms->size())
+                (*filterPrograms)[filter.filterIndex].blockLength = filter.blockLength;
+            filters->push_back(std::move(filter));
+            continue;
+        }
         if (command == 4) {
             const int b0 = readSymbol();
             const int b1 = readSymbol();
@@ -576,16 +749,21 @@ BlockResult decodePpmdBlock(BitReader* bits, const std::uint8_t* packed,
 bool decodeStream(BitReader* bits, const std::uint8_t* packed,
                   std::size_t packedSize, std::size_t outputSize,
                   std::size_t historyWindow, LzState* state,
-                  std::vector<std::uint8_t>* output)
+                  std::vector<std::uint8_t>* output,
+                  std::vector<FilterRecord>* filters,
+                  std::vector<FilterRecord>* filterPrograms,
+                  std::size_t* lastFilter)
 {
     for (std::size_t blockCount = 0; blockCount <= packedSize; ++blockCount) {
         if (!bits->alignByte()) return false;
         std::uint32_t mode = 0;
         if (!bits->read(1, &mode)) return false;
         const BlockResult result = mode == 0
-            ? decodeLzBlock(bits, outputSize, historyWindow, state, output)
+            ? decodeLzBlock(bits, outputSize, historyWindow, state, output, filters,
+                            filterPrograms, lastFilter)
             : decodePpmdBlock(bits, packed, packedSize, outputSize,
-                              historyWindow, state, output);
+                              historyWindow, state, output, filters,
+                              filterPrograms, lastFilter);
         if (result == BlockResult::Done) return output->size() == outputSize;
         if (result == BlockResult::Error) return false;
     }
@@ -609,6 +787,7 @@ void LzState::resetPpmd()
     if (Ppmd7_WasAllocated(&ppmdModel))
         Ppmd7_Free(&ppmdModel, &kPpmdAllocator);
     Ppmd7_Construct(&ppmdModel);
+    ppmdModel.InitEsc = 0;
     ppmdValid = false;
     ppmdMemorySize = 0;
     ppmdEscape = 2;
@@ -660,9 +839,53 @@ bool decodeLz(const std::uint8_t* input, std::size_t inputSize,
     if (outputSize > output->max_size()) return false;
     output->reserve(outputSize);
     BitReader bits(input, inputSize);
+    std::vector<FilterRecord> filters;
+    std::vector<FilterRecord> filterPrograms;
+    std::size_t lastFilter = 0;
     const bool valid = decodeStream(&bits, input, inputSize, outputSize,
-                                    historyWindow, state, output) &&
+                                    historyWindow, state, output, &filters,
+                                    &filterPrograms, &lastFilter) &&
         output->size() == outputSize;
+    if (valid) {
+        for (std::size_t filterIndex = 0; filterIndex < filters.size(); ++filterIndex) {
+            const FilterRecord& filter = filters[filterIndex];
+            if (filter.outputStart > output->size() ||
+                filter.blockLength > output->size() - filter.outputStart ||
+                filter.blockLength > 0x40000U)
+                return false;
+            std::vector<std::uint8_t> memory(0x40004U, 0);
+            std::copy(output->begin() + filter.outputStart,
+                      output->begin() + filter.outputStart + filter.blockLength,
+                      memory.begin());
+            VmState vmState;
+            for (unsigned i = 0; i < filter.registers.size(); ++i)
+                vmState.registers[i] = filter.registers[i];
+            vmState.registers[3] = 0x3c000U;
+            vmState.registers[4] = filter.blockLength;
+            vmState.registers[6] = filter.outputStart;
+            const VmResult vmResult = executeVm(filter.code, &memory, &vmState);
+            if (!vmResult.success) return false;
+            if (vmResult.outputPosition > memory.size() ||
+                vmResult.outputSize > memory.size() - vmResult.outputPosition)
+                return false;
+            const std::vector<std::uint8_t> filtered(
+                memory.begin() + vmResult.outputPosition,
+                memory.begin() + vmResult.outputPosition + vmResult.outputSize);
+            const std::size_t replaceEnd = filter.outputStart + filter.blockLength;
+            output->erase(output->begin() + filter.outputStart,
+                          output->begin() + replaceEnd);
+            output->insert(output->begin() + filter.outputStart,
+                           filtered.begin(), filtered.end());
+            if (filtered.size() != filter.blockLength) {
+                const std::int64_t delta = static_cast<std::int64_t>(filtered.size()) -
+                    static_cast<std::int64_t>(filter.blockLength);
+                for (std::size_t next = filterIndex + 1; next < filters.size(); ++next)
+                    if (filters[next].outputStart >= replaceEnd)
+                        filters[next].outputStart = static_cast<std::uint32_t>(
+                            static_cast<std::int64_t>(filters[next].outputStart) + delta);
+            }
+        }
+    }
     if (!valid) {
         output->clear();
         state->resetPpmd();

@@ -23,6 +23,7 @@
 #include "LhaModule.h"
 #include "SevenZipModule.h"
 #include "Rar4Module.h"
+#include "Rar5Module.h"
 #include "ResxModule.h"
 #include "CueBinModule.h"
 #include "CabModule.h"
@@ -134,6 +135,7 @@ bool usesPositionedArchiveReader(ModuleFormat format)
 {
     return format == ModuleFormat::AR || format == ModuleFormat::ASAR ||
         format == ModuleFormat::CPIO || format == ModuleFormat::RAR4 ||
+        format == ModuleFormat::RAR5 ||
         format == ModuleFormat::CAB || format == ModuleFormat::LHA ||
         format == ModuleFormat::TAR ||
         format == ModuleFormat::UNIX_COMPRESS ||
@@ -160,6 +162,8 @@ ModulePtr ModuleFactory::openWithPassword(const QString& filePath, const QString
 {
     ModuleInfo info = detect(filePath);
     if (!info.isValid()) return peare::makeUnique<DetectedModule>(std::move(info));
+    if (info.format == ModuleFormat::RAR4) return Rar4Module::open(filePath, password);
+    if (info.format == ModuleFormat::RAR5) return Rar5Module::open(filePath, password);
     if (usesPositionedArchiveReader(info.format)) {
         auto source = std::make_shared<fs::QFileByteStore>(filePath);
         if (!source->validate()) {
@@ -198,6 +202,7 @@ ModulePtr ModuleFactory::openWithPassword(const QString& filePath, const QString
     if (info.format == ModuleFormat::LHA) return LhaModule::open(filePath);
     if (info.format == ModuleFormat::SEVEN_ZIP) return SevenZipModule::open(filePath, password);
     if (info.format == ModuleFormat::RAR4) return Rar4Module::open(filePath, password);
+    if (info.format == ModuleFormat::RAR5) return Rar5Module::open(filePath, password);
     if (info.format == ModuleFormat::RESX) return ResxModule::open(filePath);
     if (info.format == ModuleFormat::CUE_BIN) return CueBinModule::open(filePath);
     if (info.format == ModuleFormat::CAB) return CabModule::open(filePath);
@@ -273,6 +278,8 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
         return Ps3PupModule::open(physicalPath);
     if (detected.format == ModuleFormat::RAR4)
         return Rar4Module::open(physicalPath, password);
+    if (detected.format == ModuleFormat::RAR5)
+        return Rar5Module::open(physicalPath, password);
     if (detected.format == ModuleFormat::XAP && isPlayReadyXapFile(physicalPath))
         return PlayReadyXapModule::open(physicalPath);
 
@@ -397,7 +404,8 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
         const QByteArray sfxHeader(reinterpret_cast<const char*>(sfxHead.data()),
                                    static_cast<int>(sfxHead.size()));
         const ModuleFormatInfo sfxDetected = ModuleFormatDetector::detectBuffer(sfxHeader);
-        if (sfxDetected.format == ModuleFormat::RAR4)
+        if (sfxDetected.format == ModuleFormat::RAR4 ||
+            sfxDetected.format == ModuleFormat::RAR5)
             detected = sfxDetected;
     }
 
@@ -490,6 +498,8 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
     if (detected.format == ModuleFormat::ISO9660) return IsoModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::RAR4)
         return Rar4Module::open(disc, sourceName, password);
+    if (detected.format == ModuleFormat::RAR5)
+        return Rar5Module::open(disc, sourceName, password);
     if (detected.format == ModuleFormat::WIM) return WimModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::FAT) return FatModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::UDF) return UdfModule::open(disc, sourceName, subPath);
@@ -593,10 +603,14 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
     }
 
     const QByteArray rarProbe = data.left(qMin<qsizetype>(data.size(), 1024 * 1024 + 7));
-    if (ModuleFormatDetector::detectNestedBuffer(rarProbe).format == ModuleFormat::RAR4) {
+    const ModuleFormat rarProbeFormat =
+        ModuleFormatDetector::detectNestedBuffer(rarProbe).format;
+    if (rarProbeFormat == ModuleFormat::RAR4 || rarProbeFormat == ModuleFormat::RAR5) {
         const fs::ByteStorePtr source = std::make_shared<fs::MemoryStore>(
             reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size()));
-        return Rar4Module::open(source, logicalName, password);
+        return rarProbeFormat == ModuleFormat::RAR4
+            ? Rar4Module::open(source, logicalName, password)
+            : Rar5Module::open(source, logicalName, password);
     }
 
     // Strong signatures can be dispatched directly from memory. This is the
@@ -611,6 +625,11 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
         const fs::ByteStorePtr source = std::make_shared<fs::MemoryStore>(
             reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size()));
         return Rar4Module::open(source, logicalName, password);
+    }
+    if (direct.format == ModuleFormat::RAR5) {
+        const fs::ByteStorePtr source = std::make_shared<fs::MemoryStore>(
+            reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size()));
+        return Rar5Module::open(source, logicalName, password);
     }
     if (direct.format == ModuleFormat::FFU)
         return FfuModule::open(std::make_shared<fs::MemoryStore>(

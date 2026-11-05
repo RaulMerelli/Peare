@@ -83,6 +83,7 @@ peare_container_format toCFormat(peare::ModuleFormat f)
     case peare::ModuleFormat::LHA: return PEARE_CONTAINER_LHA;
     case peare::ModuleFormat::SEVEN_ZIP: return PEARE_CONTAINER_SEVEN_ZIP;
     case peare::ModuleFormat::RAR4: return PEARE_CONTAINER_RAR4;
+    case peare::ModuleFormat::RAR5: return PEARE_CONTAINER_RAR5;
     case peare::ModuleFormat::SIEMENS_FWF: return PEARE_CONTAINER_SIEMENS_FWF;
     case peare::ModuleFormat::SIEMENS_FSF: return PEARE_CONTAINER_SIEMENS_FSF;
     case peare::ModuleFormat::ISO9660: return PEARE_CONTAINER_ISO9660;

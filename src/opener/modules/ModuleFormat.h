@@ -87,7 +87,8 @@ enum class ModuleFormat {
     UUE,
     LHA,
     SEVEN_ZIP,
-    RAR4
+    RAR4,
+    RAR5
 };
 
 struct ModuleFormatInfo {

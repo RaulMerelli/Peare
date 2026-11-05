@@ -1,12 +1,16 @@
 #include "Rar4Module.h"
 #include "Rar4LzDecoder.h"
 #include "Compat.h"
+#include "../compression/peare/Rar4Crypto.h"
 #include "../fs/QFileByteStore.h"
 
 #include <QFile>
+#include <QDir>
+#include <QFileInfo>
 #include <QStringList>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -45,6 +49,90 @@ std::uint32_t crc32Update(std::uint32_t crc, const std::uint8_t* data, std::size
 std::uint32_t crc32(const std::uint8_t* data, std::size_t size)
 {
     return crc32Update(0xffffffffU, data, size) ^ 0xffffffffU;
+}
+
+class Rar4JoinedStore final : public fs::IByteStore {
+public:
+    explicit Rar4JoinedStore(const QStringList& paths)
+    {
+        for (const QString& path : paths) {
+            auto store = std::make_shared<fs::QFileByteStore>(path);
+            if (!store->validate() || store->capacity() < 0 ||
+                store->capacity() > std::numeric_limits<std::int64_t>::max() - size_) {
+                stores_.clear();
+                starts_.clear();
+                size_ = 0;
+                return;
+            }
+            starts_.push_back(size_);
+            size_ += store->capacity();
+            stores_.push_back(std::move(store));
+        }
+    }
+
+    std::int64_t capacity() const override { return size_; }
+    bool cheapRandomAccess() const override { return false; }
+    bool validate() const override { return !stores_.empty(); }
+
+    int read(std::int64_t pos, std::uint8_t* dst, int count) const override
+    {
+        if (!dst || count <= 0 || pos < 0 || pos >= size_) return 0;
+        const int wanted = int(std::min<std::int64_t>(count, size_ - pos));
+        int done = 0;
+        while (done < wanted) {
+            const std::int64_t absolute = pos + done;
+            const auto it = std::upper_bound(starts_.begin(), starts_.end(), absolute);
+            const std::size_t index = std::size_t(it - starts_.begin() - 1);
+            const std::int64_t local = absolute - starts_[index];
+            const std::int64_t end = index + 1 < starts_.size()
+                ? starts_[index + 1] : size_;
+            const int amount = int(std::min<std::int64_t>(wanted - done, end - absolute));
+            const int got = stores_[index]->read(local, dst + done, amount);
+            if (got <= 0 || got > amount) break;
+            done += got;
+        }
+        return done;
+    }
+
+private:
+    std::vector<fs::ByteStorePtr> stores_;
+    std::vector<std::int64_t> starts_;
+    std::int64_t size_ = 0;
+};
+
+QStringList rar4VolumePaths(const QString& filePath)
+{
+    QStringList paths{filePath};
+    const QFileInfo info(filePath);
+    const QString name = info.fileName();
+    const int partMarker = name.lastIndexOf(QStringLiteral(".part"), -1, Qt::CaseInsensitive);
+    if (partMarker >= 0 && name.endsWith(QStringLiteral(".rar"), Qt::CaseInsensitive)) {
+        const int digitsStart = partMarker + 5;
+        const int digitsEnd = name.indexOf(QLatin1Char('.'), digitsStart);
+        bool ok = false;
+        const int first = name.mid(digitsStart, digitsEnd - digitsStart).toInt(&ok);
+        if (!ok || first < 1) return paths;
+        const QString prefix = name.left(partMarker + 5);
+        const QString suffix = name.mid(digitsEnd);
+        for (int part = first + 1; part <= 10000; ++part) {
+            const QString next = info.dir().filePath(prefix + QString::number(part) + suffix);
+            if (!QFileInfo::exists(next)) break;
+            paths.push_back(next);
+        }
+        return paths;
+    }
+    if (name.endsWith(QStringLiteral(".rar"), Qt::CaseInsensitive)) {
+        const QString stem = filePath.left(filePath.size() - 4);
+        for (int part = 0; part < 10000; ++part) {
+            const QChar letter = QLatin1Char(part < 100 ? 'r' : 's');
+            const QString extension = QStringLiteral(".%1%2")
+                .arg(letter).arg(part % 100, 2, 10, QLatin1Char('0'));
+            const QString next = stem + extension;
+            if (!QFileInfo::exists(next)) break;
+            paths.push_back(next);
+        }
+    }
+    return paths;
 }
 
 bool readExact(const fs::IByteStore& store, std::int64_t offset,
@@ -119,8 +207,13 @@ QString safeMemberName(const QByteArray& raw, bool unicodeFlag)
 }
 
 struct Rar4MemberRecord {
+    struct DataPart {
+        std::int64_t offset = 0;
+        std::uint64_t packed = 0;
+    };
     std::int64_t offset = 0;
     std::uint64_t packed = 0;
+    std::vector<DataPart> parts;
     std::uint64_t unpacked = 0;
     std::uint32_t crc = 0;
     std::uint8_t method = 0;
@@ -128,18 +221,37 @@ struct Rar4MemberRecord {
     bool solid = false;
     bool split = false;
     bool encrypted = false;
+    std::array<std::uint8_t, 8> salt = {};
+    bool hasSalt = false;
     bool valid = false;
     std::vector<std::uint8_t> decoded;
 };
 
 class Rar4ArchiveDecode final {
 public:
-    explicit Rar4ArchiveDecode(fs::ByteStorePtr source) : source_(std::move(source)) {}
+    Rar4ArchiveDecode(fs::ByteStorePtr source, QString password)
+        : source_(std::move(source)), password_(std::move(password)) {}
 
     std::size_t add(Rar4MemberRecord record)
     {
         records_.push_back(std::move(record));
         return records_.size() - 1;
+    }
+
+    bool appendPart(std::size_t index, std::int64_t offset, std::uint64_t packed,
+                    std::uint32_t crc, bool finalPart)
+    {
+        if (index >= records_.size() || offset < 0 ||
+            packed > std::numeric_limits<std::uint64_t>::max() - records_[index].packed)
+            return false;
+        Rar4MemberRecord& record = records_[index];
+        record.parts.push_back({offset, packed});
+        record.packed += packed;
+        if (finalPart) {
+            record.crc = crc;
+            record.split = false;
+        }
+        return true;
     }
 
     bool validate(std::size_t index) const
@@ -168,7 +280,7 @@ public:
         const Rar4MemberRecord& record = records_[index];
         if (std::uint64_t(pos) >= record.unpacked) return 0;
         const int n = int(std::min<std::uint64_t>(count, record.unpacked - std::uint64_t(pos)));
-        if (record.method == 0x30)
+        if (record.method == 0x30 && record.parts.empty() && !record.encrypted)
             return source_->read(record.offset + pos, dst, n);
         if (std::size_t(pos) > record.decoded.size() ||
             std::size_t(n) > record.decoded.size() - std::size_t(pos))
@@ -188,16 +300,25 @@ private:
         } else if (!chainUsable_) {
             return false;
         }
-        if (record.split || record.encrypted || record.offset < 0 ||
+        if (record.split || (record.encrypted && (!record.hasSalt || password_.isNull())) ||
+            record.offset < 0 ||
             record.packed > std::numeric_limits<std::size_t>::max() ||
             record.unpacked > std::numeric_limits<std::size_t>::max())
             return false;
         const std::int64_t sourceSize = source_->capacity();
-        if (sourceSize < 0 || record.packed > std::uint64_t(sourceSize) ||
-            std::uint64_t(record.offset) > std::uint64_t(sourceSize) - record.packed)
-            return false;
+        if (sourceSize < 0) return false;
+        const auto partInBounds = [&](std::int64_t offset, std::uint64_t packed) {
+            return offset >= 0 && packed <= std::uint64_t(sourceSize) &&
+                std::uint64_t(offset) <= std::uint64_t(sourceSize) - packed;
+        };
+        if (record.parts.empty()) {
+            if (!partInBounds(record.offset, record.packed)) return false;
+        } else {
+            for (const Rar4MemberRecord::DataPart& part : record.parts)
+                if (!partInBounds(part.offset, part.packed)) return false;
+        }
 
-        if (record.method == 0x30) {
+        if (record.method == 0x30 && !record.encrypted && record.parts.empty()) {
             if (record.packed != record.unpacked) return false;
             std::uint8_t buffer[64 * 1024];
             std::uint64_t done = 0;
@@ -213,19 +334,48 @@ private:
             record.valid = (crc ^ 0xffffffffU) == record.crc;
             return record.valid;
         }
-        if (record.method < 0x31 || record.method > 0x35 ||
+        if ((record.method != 0x30 &&
+             (record.method < 0x31 || record.method > 0x35)) ||
             record.packed > std::numeric_limits<std::size_t>::max() ||
             record.unpacked > std::numeric_limits<std::size_t>::max())
             return false;
 
         std::vector<std::uint8_t> packed(static_cast<std::size_t>(record.packed));
         std::uint64_t done = 0;
-        while (done < record.packed) {
-            const int amount = int(std::min<std::uint64_t>(64 * 1024, record.packed - done));
-            if (!readExact(*source_, record.offset + std::int64_t(done),
-                           packed.data() + std::size_t(done), amount))
+        const auto readPart = [&](std::int64_t offset, std::uint64_t length) {
+            std::uint64_t partDone = 0;
+            while (partDone < length) {
+                const int amount = int(std::min<std::uint64_t>(64 * 1024, length - partDone));
+                if (!readExact(*source_, offset + std::int64_t(partDone),
+                        packed.data() + std::size_t(done + partDone), amount)) return false;
+                partDone += std::uint64_t(amount);
+            }
+            done += length;
+            return true;
+        };
+        if (record.parts.empty()) {
+            if (!readPart(record.offset, record.packed)) return false;
+        } else {
+            for (const Rar4MemberRecord::DataPart& part : record.parts)
+                if (!readPart(part.offset, part.packed)) return false;
+        }
+        if (record.encrypted) {
+            std::vector<std::uint8_t> decrypted;
+            if (!compression::decryptRar4Data(password_, record.salt.data(),
+                    packed.data(), packed.size(), &decrypted))
                 return false;
-            done += std::uint64_t(amount);
+            packed.swap(decrypted);
+        }
+        if (record.method == 0x30) {
+            if (record.unpacked > packed.size()) return false;
+            record.decoded.assign(packed.begin(), packed.begin() +
+                std::size_t(record.unpacked));
+            if (crc32(record.decoded.data(), record.decoded.size()) != record.crc) {
+                record.decoded.clear();
+                return false;
+            }
+            record.valid = true;
+            return true;
         }
         if (!rar4::decodeLz(packed.data(), packed.size(), std::size_t(record.unpacked),
                             record.solid, record.dictionarySize, &lzState_, &record.decoded))
@@ -239,6 +389,7 @@ private:
     }
 
     fs::ByteStorePtr source_;
+    QString password_;
     mutable std::mutex mutex_;
     mutable std::vector<Rar4MemberRecord> records_;
     mutable std::size_t next_ = 0;
@@ -283,13 +434,27 @@ private:
 
 ModulePtr Rar4Module::open(const QString& filePath, const QString& password)
 {
+    const QStringList volumePaths = rar4VolumePaths(filePath);
+    if (volumePaths.size() > 1) {
+        auto source = std::make_shared<Rar4JoinedStore>(volumePaths);
+        if (!source->validate()) {
+            auto module = peare::makeUnique<Rar4Module>();
+            module->info_.filePath = filePath;
+            module->info_.format = ModuleFormat::RAR4;
+            module->info_.description = QStringLiteral(
+                "RAR4 archive; stored, Huffman/LZ, PPMd, and filter methods");
+            module->info_.error = QStringLiteral("One or more RAR4 volumes are unavailable");
+            return module;
+        }
+        return open(source, filePath, password);
+    }
     auto holder = std::make_shared<QFile>(filePath);
     if (!holder->open(QIODevice::ReadOnly)) {
         auto module = peare::makeUnique<Rar4Module>();
         module->info_.filePath = filePath;
         module->info_.format = ModuleFormat::RAR4;
         module->info_.description = QStringLiteral(
-            "RAR4 archive; stored and Huffman/LZ members; PPMd and filters unsupported");
+            "RAR4 archive; stored, Huffman/LZ, PPMd, and filter methods");
         module->info_.error = holder->errorString();
         return module;
     }
@@ -307,7 +472,7 @@ ModulePtr Rar4Module::open(const QString& filePath, const QString& password)
         module->info_.filePath = filePath;
         module->info_.format = ModuleFormat::RAR4;
         module->info_.description = QStringLiteral(
-            "RAR4 archive; stored and Huffman/LZ members; PPMd and filters unsupported");
+            "RAR4 archive; stored, Huffman/LZ, PPMd, and filter methods");
         module->info_.error = QStringLiteral("RAR4 source became unavailable");
         return module;
     }
@@ -321,7 +486,7 @@ ModulePtr Rar4Module::open(const fs::ByteStorePtr& source, const QString& source
     module->info_.filePath = sourceName;
     module->info_.format = ModuleFormat::RAR4;
     module->info_.description = QStringLiteral(
-        "RAR4 archive; stored and Huffman/LZ members; PPMd and filters unsupported");
+        "RAR4 archive; stored, Huffman/LZ, PPMd, and filter methods");
     if (!source) {
         module->info_.error = QStringLiteral("Null RAR4 source");
         return module;
@@ -340,29 +505,83 @@ ModulePtr Rar4Module::open(const fs::ByteStorePtr& source, const QString& source
     std::uint64_t entryCount = 0;
     bool sawMain = false;
     bool sawEnd = false;
+    bool encryptedHeaders = false;
     bool encryptedMembers = false;
     bool archiveSolid = false;
     bool hasPriorFileMember = false;
-    auto archiveDecode = std::make_shared<Rar4ArchiveDecode>(source);
+    std::size_t pendingSplitRecord = std::numeric_limits<std::size_t>::max();
+    QString pendingSplitName;
+    auto archiveDecode = std::make_shared<Rar4ArchiveDecode>(source, password);
 
     while (pos >= 0 && pos <= source->capacity() - 7) {
         std::uint8_t prefix[11] = {};
         if (!readExact(*source, pos, prefix, 7)) break;
-        const std::uint8_t type = prefix[2];
-        const std::uint16_t flags = le16(prefix + 3);
-        const std::uint16_t headerSize = le16(prefix + 5);
-        if (headerSize < 7 || std::uint64_t(pos) + headerSize >
-                std::uint64_t(source->capacity())) {
-            module->info_.error = QStringLiteral("Invalid or truncated RAR4 block header");
-            return module;
+        if (!encryptedHeaders && std::memcmp(prefix, kMarker, sizeof(kMarker)) == 0) {
+            pos += std::int64_t(sizeof(kMarker));
+            continue;
         }
-        QByteArray header(int(headerSize), Qt::Uninitialized);
-        if (!readExact(*source, pos, reinterpret_cast<std::uint8_t*>(header.data()), header.size())) {
-            module->info_.error = QStringLiteral("Truncated RAR4 block header");
-            return module;
+        QByteArray header;
+        std::uint64_t physicalHeaderSize = 0;
+        std::uint16_t headerSize = 0;
+        if (encryptedHeaders) {
+            std::uint8_t salt[8];
+            std::uint8_t firstCipherBlock[16];
+            if (!readExact(*source, pos, salt, sizeof(salt)) ||
+                !readExact(*source, pos + 8, firstCipherBlock, sizeof(firstCipherBlock))) {
+                module->info_.error = QStringLiteral("Truncated encrypted RAR4 header");
+                return module;
+            }
+            std::vector<std::uint8_t> firstPlain;
+            if (!compression::decryptRar4Data(password, salt, firstCipherBlock,
+                    sizeof(firstCipherBlock), &firstPlain)) {
+                module->info_.error = QStringLiteral("RAR4 header decryption failed");
+                return module;
+            }
+            headerSize = le16(firstPlain.data() + 5);
+            if (headerSize < 7 || headerSize > 1024 * 1024) {
+                module->info_.openError = ModuleOpenError::PasswordInvalidOrCorrupt;
+                module->info_.error = QStringLiteral("Invalid decrypted RAR4 header size");
+                return module;
+            }
+            const std::size_t cipherSize =
+                (std::size_t(headerSize) + 15U) & ~std::size_t(15U);
+            if (std::uint64_t(pos) + 8 + cipherSize > std::uint64_t(source->capacity())) {
+                module->info_.error = QStringLiteral("Truncated encrypted RAR4 header body");
+                return module;
+            }
+            std::vector<std::uint8_t> ciphertext(cipherSize);
+            if (!readExact(*source, pos + 8, ciphertext.data(), int(ciphertext.size()))) {
+                module->info_.error = QStringLiteral("Truncated encrypted RAR4 header body");
+                return module;
+            }
+            std::vector<std::uint8_t> plaintext;
+            if (!compression::decryptRar4Data(password, salt, ciphertext.data(),
+                    ciphertext.size(), &plaintext)) {
+                module->info_.error = QStringLiteral("RAR4 header decryption failed");
+                return module;
+            }
+            header = QByteArray(reinterpret_cast<const char*>(plaintext.data()), headerSize);
+            physicalHeaderSize = 8 + cipherSize;
+        } else {
+            headerSize = le16(prefix + 5);
+            if (headerSize < 7 || std::uint64_t(pos) + headerSize >
+                    std::uint64_t(source->capacity())) {
+                module->info_.error = QStringLiteral("Invalid or truncated RAR4 block header");
+                return module;
+            }
+            header.resize(headerSize);
+            if (!readExact(*source, pos, reinterpret_cast<std::uint8_t*>(header.data()), header.size())) {
+                module->info_.error = QStringLiteral("Truncated RAR4 block header");
+                return module;
+            }
+            physicalHeaderSize = headerSize;
         }
         const auto* h = reinterpret_cast<const std::uint8_t*>(header.constData());
+        const std::uint8_t type = h[2];
+        const std::uint16_t flags = le16(h + 3);
         if (std::uint16_t(crc32(h + 2, header.size() - 2)) != le16(h)) {
+            if (encryptedHeaders)
+                module->info_.openError = ModuleOpenError::PasswordInvalidOrCorrupt;
             module->info_.error = QStringLiteral("RAR4 block header CRC mismatch");
             return module;
         }
@@ -384,14 +603,12 @@ ModulePtr Rar4Module::open(const fs::ByteStorePtr& source, const QString& source
             const std::uint16_t mainFlags = le16(h + 3);
             archiveSolid = (mainFlags & 0x0008) != 0;
             if (mainFlags & 0x0080) {
+                encryptedHeaders = true;
                 if (password.isNull()) {
                     module->info_.openError = ModuleOpenError::PasswordRequired;
                     module->info_.error = QStringLiteral("RAR4 encrypted headers require a password");
-                } else {
-                    module->info_.error = QStringLiteral(
-                        "RAR4 encrypted-header key derivation and block decryption are not implemented");
+                    return module;
                 }
-                return module;
             }
         }
 
@@ -424,7 +641,8 @@ ModulePtr Rar4Module::open(const fs::ByteStorePtr& source, const QString& source
             if (addSize != packedLow ||
                 unpacked > std::uint64_t(std::numeric_limits<std::int64_t>::max()) ||
                 packed > std::uint64_t(source->capacity()) ||
-                std::uint64_t(pos) + headerSize > std::uint64_t(source->capacity()) - packed) {
+                std::uint64_t(pos) + physicalHeaderSize >
+                    std::uint64_t(source->capacity()) - packed) {
                 module->info_.error = QStringLiteral("RAR4 member payload exceeds the source bounds");
                 return module;
             }
@@ -439,7 +657,15 @@ ModulePtr Rar4Module::open(const fs::ByteStorePtr& source, const QString& source
             const std::size_t dictionarySize =
                 std::size_t(64 * 1024) << std::min(dictionaryCode, 6U);
             const bool split = (flags & 0x0003) != 0;
+            const bool splitBefore = (flags & 0x0001) != 0;
+            const bool splitAfter = (flags & 0x0002) != 0;
             const bool encrypted = (flags & 0x0004) != 0;
+            const bool hasSalt = (flags & 0x0400) != 0;
+            const std::size_t saltOffset = nameOffset + nameLength;
+            if (hasSalt && saltOffset + 8 > std::size_t(headerSize)) {
+                module->info_.error = QStringLiteral("Truncated RAR4 encryption salt");
+                return module;
+            }
             const bool solid = (flags & 0x0010) != 0 ||
                 (archiveSolid && hasPriorFileMember);
             encryptedMembers = encryptedMembers || encrypted;
@@ -453,52 +679,91 @@ ModulePtr Rar4Module::open(const fs::ByteStorePtr& source, const QString& source
             entry.name = parts.last();
             entry.hierarchyPath = parts;
             entry.hierarchyPath.removeLast();
-            entry.dataOffset = std::uint64_t(pos) + headerSize;
+            entry.dataOffset = std::uint64_t(pos) + physicalHeaderSize;
             entry.dataSize = unpacked;
             entry.isOs2 = h[15] == 1;
             entry.isEmbeddedFile = !directory;
             if (!directory) {
+                if (splitBefore) {
+                    if (pendingSplitRecord == std::numeric_limits<std::size_t>::max() ||
+                        pendingSplitName != normalized ||
+                        !archiveDecode->appendPart(pendingSplitRecord,
+                            pos + headerSize, packed, expectedCrc, !splitAfter)) {
+                        module->info_.error = QStringLiteral(
+                            "RAR4 split member has a missing or mismatched volume part");
+                        return module;
+                    }
+                    if (!splitAfter) {
+                        pendingSplitRecord = std::numeric_limits<std::size_t>::max();
+                        pendingSplitName.clear();
+                    }
+                    pos += std::int64_t(headerSize) + std::int64_t(packed);
+                    continue;
+                }
+                if (pendingSplitRecord != std::numeric_limits<std::size_t>::max()) {
+                    module->info_.error = QStringLiteral(
+                        "RAR4 split member continuation is missing");
+                    return module;
+                }
                 Rar4MemberRecord record;
-                record.offset = pos + headerSize;
+                record.offset = pos + std::int64_t(physicalHeaderSize);
                 record.packed = packed;
                 record.unpacked = unpacked;
                 record.crc = expectedCrc;
                 record.method = method;
                 record.dictionarySize = dictionarySize;
                 record.solid = solid;
-                record.split = split;
+                record.split = splitAfter;
                 record.encrypted = encrypted;
+                record.hasSalt = hasSalt;
+                if (hasSalt)
+                    std::copy(h + saltOffset, h + saltOffset + 8, record.salt.begin());
+                if (splitAfter) record.packed = 0;
                 const std::size_t memberIndex = archiveDecode->add(std::move(record));
+                if (splitAfter) {
+                    if (!archiveDecode->appendPart(memberIndex,
+                                                   pos + std::int64_t(physicalHeaderSize), packed,
+                                                   expectedCrc, false)) {
+                        module->info_.error = QStringLiteral("Invalid first RAR4 split part");
+                        return module;
+                    }
+                    pendingSplitRecord = memberIndex;
+                    pendingSplitName = normalized;
+                }
                 entry.content = std::make_shared<Rar4MemberStore>(archiveDecode,
                     memberIndex, unpacked, method == 0x30 && !solid && !split && !encrypted);
                 hasPriorFileMember = true;
             }
             module->resources_.push_back(std::move(entry));
-            pos += std::int64_t(headerSize) + std::int64_t(packed);
+            pos += std::int64_t(physicalHeaderSize) + std::int64_t(packed);
             continue;
         }
         if (type == 0x7b) {
+            if (flags & 0x0001) {
+                pos += std::int64_t(physicalHeaderSize);
+                continue;
+            }
             sawEnd = true;
             break;
         }
         if (addSize > std::uint64_t(source->capacity()) ||
-            std::uint64_t(pos) + headerSize > std::uint64_t(source->capacity()) - addSize) {
+            std::uint64_t(pos) + physicalHeaderSize >
+                std::uint64_t(source->capacity()) - addSize) {
             module->info_.error = QStringLiteral("RAR4 ancillary block exceeds the source bounds");
             return module;
         }
-        pos += std::int64_t(headerSize) + std::int64_t(addSize);
+        pos += std::int64_t(physicalHeaderSize) + std::int64_t(addSize);
     }
 
     if (!sawMain) module->info_.error = QStringLiteral("RAR4 main header not found");
+    else if (pendingSplitRecord != std::numeric_limits<std::size_t>::max())
+        module->info_.error = QStringLiteral("RAR4 split member is missing a later volume");
     else if (!sawEnd && pos < source->capacity() && source->capacity() - pos < 7)
         module->info_.error = QStringLiteral("Truncated RAR4 block header at end of source");
     if (module->info_.error.isEmpty() && encryptedMembers) {
         if (password.isNull()) {
             module->info_.openError = ModuleOpenError::PasswordRequired;
             module->info_.error = QStringLiteral("RAR4 encrypted members require a password");
-        } else {
-            module->info_.error = QStringLiteral(
-                "RAR4 encrypted-member key derivation and data decryption are not implemented");
         }
     }
     return module;

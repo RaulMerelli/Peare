@@ -444,6 +444,7 @@ void OpenerSession::rebuildFolders()
             entry.type == QStringLiteral("UUE_FILE") ||
             entry.type == QStringLiteral("LHA_FILE") ||
             entry.type == QStringLiteral("RAR4_FILE") ||
+            entry.type == QStringLiteral("RAR5_FILE") ||
             entry.type == QStringLiteral("LHA_DIR") ||
             entry.type == QStringLiteral("LHA_SYMLINK") ||
             entry.type == QStringLiteral("SZDD_FILE") ||

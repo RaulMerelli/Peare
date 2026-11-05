@@ -25,15 +25,18 @@ for method names and IDs.
 
 ## RAR
 
-Peare supports RAR4 only. It returns data for stored members and LZ methods m1
-through m5. It also decodes solid LZ members.
+Peare reads RAR4 stored members, LZ methods m1 through m5, PPMd data, and
+filter records. It also reads solid LZ members.
 
-Peare can list members that use PPMd or filter methods. It cannot return their
-decoded data. Peare does not join split members or decrypt encrypted headers or
-data. A supplied password does not change these limits.
+Peare joins split members in both `.partN.rar` and `.rar`/`.rNN` volume sets.
+It decrypts encrypted headers and member data when the caller supplies the
+correct password.
 
 RAR4 can store a Unicode name as a token stream. Peare uses the legacy filename
-when it cannot decode that stream. Peare does not support RAR5.
+when it cannot decode that stream.
+
+Peare reads stored members and non-solid RAR5 LZ members at methods 1 to 5 when
+they do not use filters. It does not read encrypted, solid, or split RAR5 members.
 
 ## UUencode
 

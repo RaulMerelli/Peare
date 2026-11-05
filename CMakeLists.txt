@@ -175,6 +175,12 @@ target_include_directories(PeareMtxDecoder PRIVATE
 add_library(PeareOpener SHARED
     src/opener/compression/peare/Bzip2Decoder.h
     src/opener/compression/peare/Bzip2Decoder.cpp
+    src/opener/compression/peare/Rar4PpmdDecoder.h
+    src/opener/compression/peare/Rar4PpmdDecoder.cpp
+    src/opener/compression/peare/Rar4Crypto.h
+    src/opener/compression/peare/Rar4Crypto.cpp
+    src/opener/modules/Rar4Vm.h
+    src/opener/modules/Rar4Vm.cpp
     src/opener/compression/Bcj2Decoder.h
     src/opener/compression/Bcj2Decoder.cpp
     src/opener/compression/SevenZipAesDecoder.h
@@ -274,6 +280,8 @@ add_library(PeareOpener SHARED
     src/opener/modules/SevenZipModule.cpp
     src/opener/modules/Rar4Module.h
     src/opener/modules/Rar4Module.cpp
+    src/opener/modules/Rar5Module.h
+    src/opener/modules/Rar5Module.cpp
     src/opener/modules/Rar4LzDecoder.h
     src/opener/modules/Rar4LzDecoder.cpp
     src/opener/modules/UuencodeModule.h

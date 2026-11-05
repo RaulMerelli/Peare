@@ -71,8 +71,8 @@ Add reader support first. Plan writer support after real-sample reader coverage.
 - Nintendo Switch NUP containers (`.nup`) for unencrypted package dumps. The
   version 1.0 draft stores base, update, and add-on packages with ExeFS and
   RomFS trees. It supports raw and Zstandard file extents.
-- Add RAR4 support for PPMd, filters, encryption, and split volumes.
-- RAR5 reader support after RAR4 is complete.
+- Complete RAR5 reading, including encrypted members, solid streams, filters,
+  split volumes, and all valid compressed block layouts.
 - ARJ, XAR, and ZIPX compression methods.
 - Lzip (`.lz`), XZ, LZMA, LZMA2, and Zstandard (`.zst`).
 - TAR with XZ compression (`.txz`).

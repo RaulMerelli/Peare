@@ -127,6 +127,7 @@ QString containerName(peare_container_format format)
     case PEARE_CONTAINER_UUE: return QStringLiteral("UUencode");
     case PEARE_CONTAINER_LHA: return QStringLiteral("LHA / LZH");
     case PEARE_CONTAINER_RAR4: return QStringLiteral("RAR4");
+    case PEARE_CONTAINER_RAR5: return QStringLiteral("RAR5");
     default: return QStringLiteral("Unknown");
     }
 }
