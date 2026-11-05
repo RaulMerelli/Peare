@@ -33,8 +33,7 @@ def test_startup_icons_load_in_background(peare_gui_path, tmp_path):
     environment["QT_QPA_PLATFORM"] = "offscreen"
     environment["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(plugin_dir)
     result = subprocess.run(
-        [str(peare_gui_path), "--startup-icons-test", str(settings_file),
-         str(icon_source)],
+        [str(peare_gui_path), "--startup-icons-test", str(settings_file)],
         capture_output=True,
         text=True,
         env=environment,

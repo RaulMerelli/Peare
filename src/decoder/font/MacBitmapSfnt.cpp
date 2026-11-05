@@ -1,5 +1,6 @@
 #include "BitmapFont.h"
 
+#include <limits>
 #include <QHash>
 #include <QtEndian>
 

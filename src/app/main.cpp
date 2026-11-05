@@ -206,14 +206,13 @@ int main(int argc, char* argv[])
         std::printf("GUI writer scenario passed.\n");
         return 0;
     }
-    if (startupIconTestMode && argc != 4) {
+    if (startupIconTestMode && argc != 3) {
         std::fprintf(stderr,
-                     "Usage: Peare.exe --startup-icons-test <settings.ini> <source-file>\n");
+                     "Usage: Peare.exe --startup-icons-test <settings.ini>\n");
         return 2;
     }
     if (startupIconTestMode) {
         window.show();
-        window.openFilePath(app.arguments().at(3));
         const QString settingsPath = app.arguments().at(2);
         QTimer::singleShot(100, &window, [&window, &app, settingsPath] {
             window.startBackgroundIconLoading(settingsPath, [&app](size_t loadedCount) {

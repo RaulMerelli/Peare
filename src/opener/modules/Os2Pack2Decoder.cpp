@@ -1,3 +1,5 @@
+#include <limits>
+
 #include "Os2Pack2Decoder.h"
 #include "Os2Pack2Tables.h"
 

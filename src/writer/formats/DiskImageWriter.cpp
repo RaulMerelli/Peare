@@ -10,6 +10,7 @@
 #include "third_party/fatfs/ff.h"
 #include "third_party/fatfs/diskio.h"
 
+#include <limits>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDataStream>

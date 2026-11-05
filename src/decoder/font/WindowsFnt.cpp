@@ -1,5 +1,6 @@
 #include "WindowsFnt.h"
 
+#include <limits>
 #include <QtEndian>
 
 namespace peare {

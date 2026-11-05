@@ -1,6 +1,7 @@
 #include "SfntFont.h"
 #include "EotFont.h"
 
+#include <limits>
 #include <QHash>
 #include <QTextCodec>
 #include <QtEndian>

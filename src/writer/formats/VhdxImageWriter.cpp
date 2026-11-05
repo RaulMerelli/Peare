@@ -1,5 +1,6 @@
 #include "VhdxImageWriter.h"
 
+#include <limits>
 #include <QDebug>
 #include <QUuid>
 #include <QtEndian>
