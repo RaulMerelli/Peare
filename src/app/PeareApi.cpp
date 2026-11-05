@@ -13,6 +13,8 @@ namespace {
 struct ResourceResolverContext {
     const Session* session = nullptr;
     std::map<QString, QByteArray> payloads;
+
+    explicit ResourceResolverContext(const Session* source) : session(source) {}
 };
 
 peare_status resolveResource(void* userData, const char* typeUtf8, size_t typeLength,
@@ -373,7 +375,7 @@ Preview decode(const Resource& resource, const Session* session)
     peare_blob_array pngs{};
     peare_status imageStatus;
     if (session) {
-        ResourceResolverContext resolver{session, {}};
+        ResourceResolverContext resolver(session);
         imageStatus = peare_decode_images_with_resolver(
             reinterpret_cast<const uint8_t*>(payload.constData()), size_t(payload.size()),
             platformArg, type.constData(), resolveResource, &resolver, &pngs);

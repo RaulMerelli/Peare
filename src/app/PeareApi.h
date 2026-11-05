@@ -31,6 +31,17 @@ struct ResourceContext {
     quint64 dataOffset = 0;
     quint64 dataSize = 0;
     bool isContainer = false;
+
+    ResourceContext() = default;
+    ResourceContext(peare_container_format format, peare_platform resourcePlatform,
+                    const QString& resourceSource, const QString& resourceType,
+                    const QString& resourceIdentifier, const QString& resourceLanguage,
+                    quint32 resourceCodepage, quint64 offset, quint64 size,
+                    bool container)
+        : containerFormat(format), platform(resourcePlatform), sourceName(resourceSource),
+          type(resourceType), identifier(resourceIdentifier), language(resourceLanguage),
+          codepage(resourceCodepage), dataOffset(offset), dataSize(size),
+          isContainer(container) {}
 };
 
 class Resource final {

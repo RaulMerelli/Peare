@@ -1458,7 +1458,8 @@ void MainWindow::addFilesToNewContainer() {
         outputSelector->setText(QDir(directory).filePath(
             QStringLiteral("Archive.") + extension));
     };
-    connect(formatSelector, qOverload<int>(&QComboBox::currentIndexChanged), &dialog,
+    connect(formatSelector,
+            static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), &dialog,
             [&](int) { updateVariants(); updateSuggestedPath(); });
     connect(browseButton, &QPushButton::clicked, &dialog, [&]() {
         const int index = formatSelector->currentIndex();
