@@ -70,7 +70,7 @@ package-specific limits on ZIP-based files.
 | Format | Description | Read | Write |
 |---|---|---:|---:|
 | Microsoft Tape Format | MTF and NTBackup BKF | Yes | No |
-| Microsoft WIM | Windows Imaging Format | Yes | No |
+| Microsoft WIM | WIM images and split WIM sets (`.swm`) | Yes | No |
 | Microsoft FFU | Windows Phone and desktop FFU, versions 1 and 2 | Yes | No |
 | Microsoft SDI | System Deployment Image sections | Yes | No |
 

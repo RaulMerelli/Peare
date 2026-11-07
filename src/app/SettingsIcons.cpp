@@ -23,7 +23,6 @@ struct DefaultSection {
 const DefaultSection kDefaults[] = {
     {"RT_FOLDER_OPEN",  "C:\\Windows\\System32\\shell32.dll",  "4",     "folder_open"},
     {"RT_FOLDER_CLOSE", "C:\\Windows\\System32\\shell32.dll",  "5",     "folder_close"},
-    {"RT_DEFAULT",      "C:\\Windows\\System32\\shell32.dll",  "1",     "default_unknown_icon"},
     {"RT_FONT",         "C:\\Windows\\System32\\shell32.dll",  "155",   "fon"},
     {"RT_FONTDIR",      "C:\\Windows\\System32\\shell32.dll",  "155",   "fon"},
     {"RT_VERSION",      "C:\\Windows\\System32\\shell32.dll",  "151",   "ini"},
@@ -264,7 +263,7 @@ QString SettingsIcons::defaultExtensionForType(const QString& type)
         {QStringLiteral("RT_GROUP_CURSOR"), QStringLiteral("cur")},
         {QStringLiteral("RT_MANIFEST"), QStringLiteral("xml")}
     };
-    return defaults.value(type, QStringLiteral("bin"));
+    return defaults.value(type);
 }
 
 QIcon SettingsIcons::iconFor(const QString& section) const
@@ -280,9 +279,9 @@ QIcon SettingsIcons::iconForFileName(const QString& fileName) const
     const auto cached = resourceIconCache_.constFind(key);
     if (cached != resourceIconCache_.constEnd())
         return cached.value();
-    QIcon icon = ext.isEmpty() ? defaultIcon() : IconFromExt::get(ext);
+    QIcon icon = IconFromExt::get(ext);
     if (icon.isNull())
-        icon = defaultIcon();
+        icon = IconFromExt::get(QString());
     resourceIconCache_.insert(key, icon);
     return icon;
 }
@@ -375,7 +374,7 @@ QIcon SettingsIcons::resourceIcon(const QString& type) const
     const QString extension = extensions_.value(type, defaultExtensionForType(type));
     icon = IconFromExt::get(extension);
     if (icon.isNull())
-        icon = defaultIcon();
+        icon = IconFromExt::get(QString());
     resourceIconCache_.insert(type, icon);
     return icon;
 }
@@ -390,10 +389,4 @@ QIcon SettingsIcons::folderCloseIcon() const
 {
     const QIcon icon = icons_.value(QStringLiteral("RT_FOLDER_CLOSE"));
     return icon.isNull() ? IconFromExt::getFolder() : icon;
-}
-
-QIcon SettingsIcons::defaultIcon() const
-{
-    const QIcon icon = icons_.value(QStringLiteral("RT_DEFAULT"));
-    return icon.isNull() ? IconFromExt::get(QStringLiteral("bin")) : icon;
 }

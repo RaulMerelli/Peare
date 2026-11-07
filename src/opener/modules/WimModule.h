@@ -4,6 +4,8 @@
 
 #include "../fs/DiscFileSystem.h"
 
+#include <vector>
+
 namespace peare {
 
 // Expose files from WIM images through lazy LZX/XPRESS resources.
@@ -15,6 +17,8 @@ public:
     // are decoded.
     static ModulePtr open(const fs::ByteStorePtr& disc, const QString& sourceName,
                           const QString& subPath = QString());
+    static ModulePtr open(const std::vector<fs::ByteStorePtr>& parts,
+                          const QString& sourceName);
 
     const ModuleInfo& info() const noexcept override { return info_; }
     const QVector<ResourceEntry>& resources() const noexcept override { return resources_; }

@@ -138,7 +138,16 @@ private:
 
 }  // namespace
 
-WimReader::WimReader(ByteStorePtr disc) : disc_(std::move(disc)) {
+WimReader::WimReader(ByteStorePtr disc) : parts_{std::move(disc)} {
+    try {
+        parse();
+    } catch (...) {
+        valid_ = false;
+        if (error_.empty()) error_ = "WIM parse error";
+    }
+}
+
+WimReader::WimReader(std::vector<ByteStorePtr> parts) : parts_(std::move(parts)) {
     try {
         parse();
     } catch (...) {
@@ -158,15 +167,16 @@ WimReader::ResHeader WimReader::readResHeader(const std::vector<std::uint8_t>& b
 }
 
 ByteStorePtr WimReader::makeResourceStore(const ResHeader& hdr) const {
+    const ByteStorePtr& source = hdr.source ? hdr.source : parts_.front();
     if ((hdr.flags & kResCompressed) == 0)
-        return std::make_shared<SubStore>(disc_, hdr.fileOffset, hdr.compressedSize);
+        return std::make_shared<SubStore>(source, hdr.fileOffset, hdr.compressedSize);
 
     BlockDecompressorPtr decomp;
     if (fileFlags_ & kFlagLzx)
         decomp = std::make_shared<LzxWimDecompressor>(std::size_t(chunkSize_));
     else if (fileFlags_ & kFlagXpress)
         decomp = std::make_shared<XpressHuffmanDecompressor>();
-    return std::make_shared<WimChunkStore>(disc_, hdr.fileOffset, hdr.compressedSize,
+    return std::make_shared<WimChunkStore>(source, hdr.fileOffset, hdr.compressedSize,
                                            hdr.originalSize, chunkSize_, true, decomp);
 }
 
@@ -175,29 +185,67 @@ std::vector<std::uint8_t> WimReader::materialize(const ResHeader& hdr) const {
 }
 
 void WimReader::parse() {
-    const std::vector<std::uint8_t> header = disc_->readRange(0, 512);
-    if (header.size() < 148 ||
-        std::memcmp(header.data(), "MSWIM\0\0\0", 8) != 0) {
-        error_ = "Not a valid WIM file";
+    if (parts_.empty() || !parts_.front()) {
+        error_ = "No WIM parts were provided";
         return;
     }
-    fileFlags_ = le32(header, 16);
-    chunkSize_ = std::int32_t(le32(header, 20));
-    if (chunkSize_ <= 0) chunkSize_ = 32768;
-    offsetTable_ = readResHeader(header, 48);
-
-    // Lookup table: SHA1 -> resource; capture the first metadata resource.
-    const std::vector<std::uint8_t> table = materialize(offsetTable_);
     const std::size_t kResInfo = 24 + 26;  // ShortResourceHeader + 26
+    std::uint16_t expectedParts = 0;
+    std::uint32_t expectedChunkSize = 0;
+    std::vector<std::uint8_t> guid;
     bool haveMeta = false;
-    for (std::size_t off = 0; off + kResInfo <= table.size(); off += kResInfo) {
-        const ResHeader rh = readResHeader(table, off);
-        std::vector<std::uint8_t> hash(table.begin() + off + 24 + 6,
-                                       table.begin() + off + 24 + 6 + 20);
-        if ((rh.flags & kResMetaData) != 0) {
-            if (!haveMeta) { metadata_ = rh; haveMeta = true; }
-        } else {
-            resources_[hash] = rh;
+    for (std::size_t partIndex = 0; partIndex < parts_.size(); ++partIndex) {
+        if (!parts_[partIndex]) {
+            error_ = "A WIM part has no readable byte source";
+            return;
+        }
+        const std::vector<std::uint8_t> header = parts_[partIndex]->readRange(0, 512);
+        if (header.size() < 148 ||
+            std::memcmp(header.data(), "MSWIM\0\0\0", 8) != 0) {
+            error_ = "Not a valid WIM file";
+            return;
+        }
+        const std::uint16_t partNumber = le16(header, 40);
+        const std::uint16_t totalParts = le16(header, 42);
+        if (totalParts == 0 || partNumber != partIndex + 1) {
+            error_ = "WIM parts are missing, duplicated, or out of order";
+            return;
+        }
+        if (partIndex == 0) {
+            expectedParts = totalParts;
+            guid.assign(header.begin() + 24, header.begin() + 40);
+            if (expectedParts != parts_.size()) {
+                error_ = "The split WIM is incomplete";
+                return;
+            }
+            fileFlags_ = le32(header, 16);
+            expectedChunkSize = le32(header, 20);
+            chunkSize_ = std::int32_t(expectedChunkSize);
+            if (chunkSize_ <= 0) chunkSize_ = 32768;
+        } else if (totalParts != expectedParts ||
+                   !std::equal(guid.begin(), guid.end(), header.begin() + 24) ||
+                   le32(header, 16) != fileFlags_ ||
+                   le32(header, 20) != expectedChunkSize) {
+            error_ = "WIM parts do not belong to the same split image";
+            return;
+        }
+
+        ResHeader lookup = readResHeader(header, 48);
+        lookup.source = parts_[partIndex];
+        const std::vector<std::uint8_t> table = materialize(lookup);
+        for (std::size_t off = 0; off + kResInfo <= table.size(); off += kResInfo) {
+            ResHeader rh = readResHeader(table, off);
+            rh.source = parts_[partIndex];
+            std::vector<std::uint8_t> hash(table.begin() + off + 24 + 6,
+                                           table.begin() + off + 24 + 6 + 20);
+            if ((rh.flags & kResMetaData) != 0) {
+                if (partIndex == 0 && !haveMeta) {
+                    metadata_ = rh;
+                    haveMeta = true;
+                }
+            } else {
+                resources_.emplace(std::move(hash), std::move(rh));
+            }
         }
     }
     if (!haveMeta) { error_ = "WIM has no image metadata"; return; }

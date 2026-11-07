@@ -1,0 +1,7 @@
+[
+  {
+    "name": "7z-explicit-root-directories",
+    "source": "tests/formats/7z/fixtures/explicit-directories.7z",
+    "tree_path": "nested/settings.ini"
+  }
+]

@@ -16,6 +16,7 @@ namespace fs {
 class WimReader final : public IDiscFileSystem {
 public:
     explicit WimReader(ByteStorePtr disc);
+    explicit WimReader(std::vector<ByteStorePtr> parts);
 
     std::string friendlyName() const override { return friendly_; }
     bool valid() const override { return valid_; }
@@ -30,6 +31,7 @@ private:
         std::int64_t compressedSize = 0;
         std::int64_t fileOffset = 0;
         std::int64_t originalSize = 0;
+        ByteStorePtr source;
     };
 
     // A parsed directory entry (subset needed for read-only navigation).
@@ -50,14 +52,13 @@ private:
     const std::vector<DirEntry>& directoryAt(std::int64_t offset) const;
     const DirEntry* entryForPath(const std::string& path) const;
 
-    ByteStorePtr disc_;
+    std::vector<ByteStorePtr> parts_;
     bool valid_ = false;
     std::string error_;
     std::string friendly_ = "Microsoft WIM";
 
     std::uint32_t fileFlags_ = 0;
     std::int32_t chunkSize_ = 0;
-    ResHeader offsetTable_;
     ResHeader metadata_;
 
     // SHA1 hash -> resource header (the lookup table).

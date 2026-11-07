@@ -80,6 +80,7 @@ enum ItemRole {
     ResourceIndexRole,
     SessionRole, // pearegui::Session* that owns this item's folder/resource index
     PendingRole, // true: a lazy container whose children are not populated yet
+    PlaceholderRole,
     EmbeddedIconQueuedRole,
     LocalPathRole,
     ChildSessionRole,
@@ -2336,6 +2337,10 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
             if (!resource.isValid()) continue;
             const pearegui::ResourceContext context = resource.context();
             QString label = context.identifier;
+            if (context.type == QStringLiteral("PE_HEADERS"))
+                label = QStringLiteral("PE headers");
+            else if (context.type == QStringLiteral("PE_SECTION"))
+                label = QStringLiteral("PE section %1").arg(context.identifier);
             QStringList hierarchyPath = folderType.split(QChar(0x1f), Qt::SkipEmptyParts);
             const bool resourceAtPathLeaf = !hierarchyPath.isEmpty() &&
                 hierarchyPath.last() == context.language;
@@ -2346,17 +2351,24 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
             QTreeWidgetItem* child = nullptr;
             if (resourceAtPathLeaf && !typeItem->data(0, TypeRole).isValid())
                 child = typeItem;
-            else if (directoryLike && typeItem) {
-                for (int i = 0; i < typeItem->childCount(); ++i) {
-                    QTreeWidgetItem* candidate = typeItem->child(i);
+            else if (directoryLike) {
+                QTreeWidgetItem* directoryParent = typeItem ? typeItem : parentBase;
+                const int siblingCount = directoryParent
+                    ? directoryParent->childCount() : treeView_->topLevelItemCount();
+                for (int i = 0; i < siblingCount; ++i) {
+                    QTreeWidgetItem* candidate = directoryParent
+                        ? directoryParent->child(i) : treeView_->topLevelItem(i);
                     if (!candidate->data(0, TypeRole).isValid() &&
                         candidate->data(0, NameRole).toString() == context.identifier) {
                         child = candidate;
                         break;
                     }
                 }
-                if (!child)
-                    child = new QTreeWidgetItem(typeItem, QStringList(label));
+                if (!child) {
+                    child = directoryParent
+                        ? new QTreeWidgetItem(directoryParent, QStringList(label))
+                        : new QTreeWidgetItem(treeView_, QStringList(label));
+                }
             }
             else if (typeItem)
                 child = new QTreeWidgetItem(typeItem, QStringList(label));
@@ -2384,7 +2396,8 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
                 child->setData(0, PendingRole, true);
                 if (!fileLike && !namedWithExtension)
                     child->setIcon(0, settingsIcons_.folderCloseIcon());
-                new QTreeWidgetItem(child, QStringList(QStringLiteral("...")));
+                auto* placeholder = new QTreeWidgetItem(child, QStringList(QStringLiteral("...")));
+                placeholder->setData(0, PlaceholderRole, true);
             }
             if (hasEmbeddedExecutableIcon(context.identifier) &&
                 !child->data(0, EmbeddedIconQueuedRole).toBool()) {
@@ -2397,6 +2410,17 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
 
 void MainWindow::expandContainerItem(QTreeWidgetItem* item) {
     if (!item || !item->data(0, PendingRole).toBool()) return;
+    if (itemIsDirectoryLike(item)) {
+        for (int i = 0; i < item->childCount(); ++i) {
+            if (item->child(i)->data(0, PlaceholderRole).toBool()) continue;
+            item->setData(0, PendingRole, false);
+            for (int childIndex = item->childCount() - 1; childIndex >= 0; --childIndex) {
+                if (item->child(childIndex)->data(0, PlaceholderRole).toBool())
+                    delete item->takeChild(childIndex);
+            }
+            return;
+        }
+    }
     item->setData(0, PendingRole, false); // handled (also prevents recursion)
     qDeleteAll(item->takeChildren());     // drop the placeholder
 

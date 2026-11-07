@@ -3,5 +3,10 @@
     "name": "rar4-unicode-token-name",
     "source": "tests/formats/rar4/rar4-unicode-token.rar",
     "tree_path": "café-über-資料.txt"
+  },
+  {
+    "name": "rar4-explicit-root-directories",
+    "source": "tests/formats/rar4/fixtures/rar4-explicit-directories.rar",
+    "tree_path": "nested/settings.ini"
   }
 ]

@@ -1,0 +1,47 @@
+{
+  "container_format": "RAR5",
+  "tree": [
+    {
+      "path": "empty",
+      "size": 0,
+      "is_container": false,
+      "format": "UNKNOWN",
+      "sha256": ""
+    },
+    {
+      "path": "nested",
+      "size": 0,
+      "is_container": false,
+      "format": "UNKNOWN",
+      "sha256": ""
+    },
+    {
+      "path": "nested/deep",
+      "size": 0,
+      "is_container": false,
+      "format": "UNKNOWN",
+      "sha256": ""
+    },
+    {
+      "path": "nested/deep/license.txt",
+      "size": 35164,
+      "is_container": false,
+      "format": "UNKNOWN",
+      "sha256": "2b4c42737f1ccc403f97328c597e0abd272aad5e413a22539b3ba5c31ea943c2"
+    },
+    {
+      "path": "nested/settings.ini",
+      "size": 1193,
+      "is_container": false,
+      "format": "UNKNOWN",
+      "sha256": "6a26f9b09f8614b865c066e504db2b104bca45e7bcc43f502dfabda1d0d84632"
+    },
+    {
+      "path": "root-readme.txt",
+      "size": 3011,
+      "is_container": false,
+      "format": "UNKNOWN",
+      "sha256": "0ff3c89d460d256b54ba6d4a08376e50fa46d72a441983c7c1c153c543e1a09a"
+    }
+  ]
+}

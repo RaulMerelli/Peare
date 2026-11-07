@@ -1,0 +1,7 @@
+[
+  {
+    "name": "pe-group-icon-resource",
+    "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "tree_path": ".rsrc/RT_GROUP_ICON/#32512/#0"
+  }
+]

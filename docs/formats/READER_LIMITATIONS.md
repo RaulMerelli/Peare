@@ -3,6 +3,13 @@
 This document describes archive features that Peare does not support. The
 format matrix lists the supported formats.
 
+## Microsoft WIM
+
+Peare reads split WIM sets when all parts are in one directory. The files must
+use the standard names `base.swm`, `base2.swm`, `base3.swm`, and so on. Open any
+part in the set. Peare checks the part numbers, total count, and shared GUID.
+Tests cover a two-part set made by wimlib 1.14.5.
+
 ## Compiled HTML Help
 
 Peare reads ITSF version 2 and 3 CHM files that use the Microsoft LZX transform.

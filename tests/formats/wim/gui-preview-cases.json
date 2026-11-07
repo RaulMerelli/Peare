@@ -1,0 +1,12 @@
+[
+  {
+    "name": "wim-swm-first-part",
+    "source": "tests/formats/wim/fixtures/test.swm",
+    "tree_path": "payload-3.bin"
+  },
+  {
+    "name": "wim-swm-numbered-part",
+    "source": "tests/formats/wim/fixtures/test2.swm",
+    "tree_path": "payload-4.bin"
+  }
+]

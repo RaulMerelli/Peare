@@ -1,0 +1,47 @@
+{
+  "container_format": "SEVEN_ZIP",
+  "tree": [
+    {
+      "path": "empty",
+      "size": 0,
+      "is_container": false,
+      "format": "SEVEN_ZIP",
+      "sha256": ""
+    },
+    {
+      "path": "nested",
+      "size": 0,
+      "is_container": false,
+      "format": "SEVEN_ZIP",
+      "sha256": ""
+    },
+    {
+      "path": "nested/deep",
+      "size": 0,
+      "is_container": false,
+      "format": "SEVEN_ZIP",
+      "sha256": ""
+    },
+    {
+      "path": "nested/deep/copyright.txt",
+      "size": 2253,
+      "is_container": false,
+      "format": "SEVEN_ZIP",
+      "sha256": "069dec1a74194be896249c2be6a8d077fdb19c9a3369ce7919ceb383de026fac"
+    },
+    {
+      "path": "nested/settings.ini",
+      "size": 1193,
+      "is_container": false,
+      "format": "SEVEN_ZIP",
+      "sha256": "6a26f9b09f8614b865c066e504db2b104bca45e7bcc43f502dfabda1d0d84632"
+    },
+    {
+      "path": "root-readme.txt",
+      "size": 3011,
+      "is_container": false,
+      "format": "SEVEN_ZIP",
+      "sha256": "0ff3c89d460d256b54ba6d4a08376e50fa46d72a441983c7c1c153c543e1a09a"
+    }
+  ]
+}

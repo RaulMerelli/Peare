@@ -1,0 +1,33 @@
+{
+  "container_format": "WIM",
+  "tree": [
+    {
+      "path": "payload-1.bin",
+      "size": 409600,
+      "is_container": false,
+      "format": "WIM",
+      "sha256": "654d2fba08fcb04660c46daa1323024545ebace16913533dd37b705726f6fcdc"
+    },
+    {
+      "path": "payload-2.bin",
+      "size": 409600,
+      "is_container": false,
+      "format": "WIM",
+      "sha256": "69ef50559afeeb2b48695075ef95119373b49f3497caa26b0b34269e1177f1ba"
+    },
+    {
+      "path": "payload-3.bin",
+      "size": 409600,
+      "is_container": false,
+      "format": "WIM",
+      "sha256": "e2a11780fc95d24db4867636e676048f69b8094b85db89a2d58e3b9d83aedfb4"
+    },
+    {
+      "path": "payload-4.bin",
+      "size": 409600,
+      "is_container": false,
+      "format": "WIM",
+      "sha256": "a4ba7b8c701671de76fad7f13ca46560c1484e47c1c2e090b288d772e87848ac"
+    }
+  ]
+}

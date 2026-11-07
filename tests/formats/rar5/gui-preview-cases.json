@@ -1,0 +1,7 @@
+[
+  {
+    "name": "rar5-explicit-root-directories",
+    "source": "tests/formats/rar5/fixtures/rar5-explicit-directories.rar",
+    "tree_path": "nested/settings.ini"
+  }
+]

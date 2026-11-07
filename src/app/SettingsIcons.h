@@ -28,7 +28,6 @@ public:
                               size_t folder, size_t resource) const;
     QIcon folderOpenIcon() const;
     QIcon folderCloseIcon() const;
-    QIcon defaultIcon() const;
 
 private:
     struct IconSetting {
