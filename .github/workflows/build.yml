@@ -216,15 +216,23 @@ jobs:
           --android-platform android-34
           --jdk "$JAVA_HOME"
 
+      - name: Set up Python for package validation
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test runner
+        run: python -m pip install --upgrade pytest
+
       - name: Verify APK libraries
         run: python3 tests/run_tests.py -q tests/test_android_package.py
         env:
-          PEARE_ANDROID_APK: build-android/android-build/Peare.apk
+          PEARE_ANDROID_APK: build-android/android-build/build/outputs/apk/debug/android-build-debug.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: peare-android-arm64
-          path: build-android/android-build/Peare.apk
+          path: build-android/android-build/build/outputs/apk/debug/android-build-debug.apk
           if-no-files-found: error
 
   release:
