@@ -25,7 +25,7 @@ bool readByte(PeareRar4PpmdDecoder *decoder, uint8_t *value)
     return true;
 }
 
-bool normalize(PeareRar4PpmdDecoder *decoder, CPpmd7 *model)
+bool normalize(PeareRar4PpmdDecoder *decoder)
 {
     for (;;) {
         const uint32_t upper = decoder->low + decoder->range;
@@ -42,9 +42,6 @@ bool normalize(PeareRar4PpmdDecoder *decoder, CPpmd7 *model)
         decoder->range <<= 8;
         decoder->low <<= 8;
     }
-    model->rc.dec.Low = decoder->low;
-    model->rc.dec.Range = decoder->range;
-    model->rc.dec.Code = decoder->code;
     return true;
 }
 
@@ -108,7 +105,6 @@ void updateBinarySuccess(CPpmd7 *model)
 int decodeSymbolImpl(PeareRar4PpmdDecoder *decoder, CPpmd7 *model)
 {
     uint8_t masked[256];
-    std::memset(masked, 1, sizeof(masked));
 
     if (!model->MinContext || !model->FoundState || !model->Base ||
         !model->MinContext->NumStats) {
@@ -127,7 +123,7 @@ int decodeSymbolImpl(PeareRar4PpmdDecoder *decoder, CPpmd7 *model)
         uint32_t cumulative = states[0].Freq;
         if (count < cumulative) {
             if (!updateInterval(decoder, 0, states[0].Freq, unit) ||
-                !normalize(decoder, model))
+                !normalize(decoder))
                 return PEARE_RAR4_PPMD_ERROR;
             model->FoundState = &states[0];
             const int symbol = states[0].Symbol;
@@ -142,7 +138,7 @@ int decodeSymbolImpl(PeareRar4PpmdDecoder *decoder, CPpmd7 *model)
             if (count < cumulative) {
                 if (!updateInterval(decoder, cumulative - states[i].Freq,
                                     states[i].Freq, unit) ||
-                    !normalize(decoder, model))
+                    !normalize(decoder))
                     return PEARE_RAR4_PPMD_ERROR;
                 model->FoundState = &states[i];
                 const int symbol = states[i].Symbol;
@@ -156,18 +152,25 @@ int decodeSymbolImpl(PeareRar4PpmdDecoder *decoder, CPpmd7 *model)
                             context->Union2.SummFreq - cumulative, unit))
             return PEARE_RAR4_PPMD_ERROR;
         model->HiBitsFlag = PPMD7_HiBitsFlag_3(model->FoundState->Symbol);
+        std::memset(masked, 1, sizeof(masked));
         maskContextSymbols(masked, states, context->NumStats);
     } else {
         CPpmd_State *state = Ppmd7Context_OneState(context);
         UInt16 *probability = Ppmd7_GetBinSumm(model);
-        uint32_t unit, count;
-        if (!threshold(decoder, kBinaryScale, &unit, &count))
+        if (decoder->range < kBinaryScale) {
+            decoder->status = kModelError;
             return PEARE_RAR4_PPMD_ERROR;
+        }
 
+        const uint32_t unit = decoder->range >> 14;
         const uint32_t split = *probability;
-        if (count < split) {
+        if (unit == 0) {
+            decoder->status = kModelError;
+            return PEARE_RAR4_PPMD_ERROR;
+        }
+        if (decoder->code - decoder->low < split * unit) {
             if (!updateInterval(decoder, 0, split, unit) ||
-                !normalize(decoder, model))
+                !normalize(decoder))
                 return PEARE_RAR4_PPMD_ERROR;
             *probability = (UInt16)PPMD_UPDATE_PROB_0(*probability);
             model->FoundState = state;
@@ -180,12 +183,13 @@ int decodeSymbolImpl(PeareRar4PpmdDecoder *decoder, CPpmd7 *model)
             return PEARE_RAR4_PPMD_ERROR;
         *probability = (UInt16)PPMD_UPDATE_PROB_1(*probability);
         model->InitEsc = model->ExpEscape[*probability >> 10];
+        std::memset(masked, 1, sizeof(masked));
         maskContextSymbols(masked, state, 1);
         model->PrevSuccess = 0;
     }
 
     for (;;) {
-        if (!normalize(decoder, model))
+        if (!normalize(decoder))
             return PEARE_RAR4_PPMD_ERROR;
 
         const unsigned maskedCount = context->NumStats;
@@ -237,7 +241,7 @@ int decodeSymbolImpl(PeareRar4PpmdDecoder *decoder, CPpmd7 *model)
                     if (!updateInterval(decoder,
                                         cumulative - states[i].Freq,
                                         states[i].Freq, unit) ||
-                        !normalize(decoder, model))
+                        !normalize(decoder))
                         return PEARE_RAR4_PPMD_ERROR;
                     if (see->Shift < PPMD_PERIOD_BITS && --see->Count == 0) {
                         see->Summ = (UInt16)(see->Summ << 1);

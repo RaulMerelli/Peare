@@ -44,6 +44,8 @@ struct ResourceContext {
           isContainer(container) {}
 };
 
+class Session;
+
 class Resource final {
 public:
     Resource() = default;
@@ -59,8 +61,8 @@ public:
     peare_resource_handle handle() const { return handle_; }
     QByteArray payload() const;
     ResourceContext context() const;
-    QStringList convertedExtensions() const;
-    QVector<QByteArray> convert(const QString& extension) const;
+    QStringList convertedExtensions(const Session* session = nullptr) const;
+    QVector<QByteArray> convert(const QString& extension, const Session* session = nullptr) const;
 
 private:
     peare_resource_handle handle_ = nullptr;

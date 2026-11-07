@@ -47,6 +47,7 @@ peare_lzx_status peare_lzx_cab_decompress(peare_lzx_cab_decoder *decoder,
                                           size_t uncompressed_size);
 void peare_lzx_cab_destroy(peare_lzx_cab_decoder *decoder);
 
+
 #ifdef __cplusplus
 }
 #endif

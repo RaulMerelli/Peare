@@ -1,0 +1,77 @@
+[
+  {
+    "name": "zipx-bzip2",
+    "source": "tests/formats/zipx/fixtures/README-BZip2.zipx",
+    "tree_path": "README.md"
+  },
+  {
+    "name": "zipx-deflate64",
+    "source": "tests/formats/zipx/fixtures/README-Deflate64.zipx",
+    "tree_path": "README.md"
+  },
+  {
+    "name": "zipx-deflate64-large",
+    "source": "tests/formats/zipx/fixtures/ZipModule-Deflate64.zipx",
+    "tree_path": "src/opener/modules/ZipModule.cpp"
+  },
+  {
+    "name": "zipx-lzma",
+    "source": "tests/formats/zipx/fixtures/README-LZMA.zipx",
+    "tree_path": "README.md"
+  },
+  {
+    "name": "zipx-ppmd-restart",
+    "source": "tests/formats/zipx/fixtures/README-PPMd.zipx",
+    "tree_path": "README.md"
+  },
+  {
+    "name": "zipx-ppmd-cutoff",
+    "source": "tests/formats/zipx/fixtures/README-PPMd-cutoff.zipx",
+    "tree_path": "README.md"
+  },
+  {
+    "name": "zipx-ppmd-freeze",
+    "source": "tests/formats/zipx/fixtures/README-PPMd-freeze.zipx",
+    "tree_path": "README.md"
+  },
+  {
+    "name": "zipx-xz",
+    "source": "tests/formats/zipx/fixtures/README-XZ.zipx",
+    "tree_path": "README.md"
+  },
+  {
+    "name": "zipx-zstandard",
+    "source": "tests/formats/zipx/fixtures/README-Zstandard.zipx",
+    "tree_path": "README.md"
+  },
+  {
+    "name": "zipx-dcl-ascii-1024",
+    "source": "tests/formats/zipx/fixtures/README-DCL-ascii-1024.zip",
+    "tree_path": "README.md"
+  },
+  {
+    "name": "zipx-dcl-ascii-2048",
+    "source": "tests/formats/zipx/fixtures/README-DCL-ascii-2048.zip",
+    "tree_path": "README.md"
+  },
+  {
+    "name": "zipx-dcl-ascii-4096",
+    "source": "tests/formats/zipx/fixtures/README-DCL-ascii-4096.zip",
+    "tree_path": "README.md"
+  },
+  {
+    "name": "zipx-dcl-binary-1024",
+    "source": "tests/formats/zipx/fixtures/README-DCL-binary-1024.zip",
+    "tree_path": "README.md"
+  },
+  {
+    "name": "zipx-dcl-binary-2048",
+    "source": "tests/formats/zipx/fixtures/README-DCL-binary-2048.zip",
+    "tree_path": "README.md"
+  },
+  {
+    "name": "zipx-dcl-binary-4096",
+    "source": "tests/formats/zipx/fixtures/README-DCL-binary-4096.zip",
+    "tree_path": "README.md"
+  }
+]

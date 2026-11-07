@@ -29,7 +29,7 @@ FORMATS = TESTS / "formats"
 #  - sidecar files of a multi-file fixture (e.g. a VMDK descriptor's -flat extent),
 #  - documentation (README / licence notes).
 # Add a fixture only when its origin is recorded in the fixture documentation.
-_SKIP_NAMES = ("-flat.vmdk",)
+_SKIP_NAMES = ("-flat.vmdk", "store.bin")
 _SKIP_SUFFIXES = {".md", ".txt"}
 
 
@@ -53,6 +53,13 @@ def _discover():
     return cases
 
 
+def _expected_path(fixture):
+    same_stem = [item for item in fixture.parent.iterdir()
+                 if _is_fixture(item) and item.stem == fixture.stem]
+    name = fixture.stem if len(same_stem) == 1 else fixture.name
+    return fixture.parent.parent / "expected" / (name + ".json")
+
+
 @pytest.mark.parametrize("fixture", _discover())
 def test_fixture_matches_golden(peare_lib, fixture):
     opener = peare_lib.open_file(str(fixture))
@@ -62,7 +69,7 @@ def test_fixture_matches_golden(peare_lib, fixture):
     finally:
         opener.close()
 
-    expected_path = fixture.parent.parent / "expected" / (fixture.stem + ".json")
+    expected_path = _expected_path(fixture)
 
     if os.environ.get("PEARE_UPDATE_EXPECTED") == "1":
         expected_path.parent.mkdir(parents=True, exist_ok=True)

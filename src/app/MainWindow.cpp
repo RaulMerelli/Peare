@@ -1153,13 +1153,17 @@ void MainWindow::openFile() {
 }
 
 void MainWindow::openFilePath(const QString& path) {
+    openFilePath(path, QString());
+}
+
+void MainWindow::openFilePath(const QString& path, const QString& password) {
     const QFileInfo info(path);
     if (info.isDir()) {
         openFolderPath(info.absoluteFilePath());
         return;
     }
     currentFilePath_ = info.absoluteFilePath();
-    showModuleSummary(currentFilePath_);
+    showModuleSummary(currentFilePath_, password);
 }
 
 void MainWindow::showWriterError(const QString& title, const QString& message) {
@@ -1873,7 +1877,8 @@ void MainWindow::showLocalFile(const QString& path) {
     exportConvertedAction_->setEnabled(false);
 }
 
-void MainWindow::showModuleSummary(const QString& filePath) {
+void MainWindow::showModuleSummary(const QString& filePath,
+                                   const QString& initialPassword) {
     folderMode_ = false;
     directResourcePayloads_.clear();
     directResourceType_.clear();
@@ -1907,7 +1912,7 @@ void MainWindow::showModuleSummary(const QString& filePath) {
     exportConvertedAction_->setEnabled(false);
     exportAllAction_->setEnabled(false);
 
-    QString password;
+    QString password = initialPassword;
     for (;;) {
         if (currentSession_.openFile(filePath, &error, password)) break;
         const peare_status status = currentSession_.lastStatus();
@@ -2303,7 +2308,8 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
                                                        : treeView_->topLevelItem(i);
                     if (sibling->text(0) == segment &&
                         sibling->data(0, NameRole).toString() == segment &&
-                        sibling->data(0, TypeRole).isValid()) {
+                        (!sibling->data(0, TypeRole).isValid() ||
+                         isDirectoryEntryType(sibling->data(0, TypeRole).toString()))) {
                         existing = sibling;
                         break;
                     }
@@ -2312,6 +2318,7 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
                     existing = parent ? new QTreeWidgetItem(parent, QStringList(segment))
                                       : new QTreeWidgetItem(treeView_, QStringList(segment));
                     existing->setIcon(0, settingsIcons_.folderCloseIcon());
+                    existing->setData(0, NameRole, segment);
                     existing->setData(0, SessionRole, QVariant::fromValue<qulonglong>(sid));
                 }
                 hierarchyItems.insert(key, existing);
@@ -2335,15 +2342,27 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
             if (!resourceAtPathLeaf && hasVisibleLanguage(context.language))
                 label += QStringLiteral(" [%1]").arg(context.language);
             auto* typeItem = ensurePath(hierarchyPath);
+            const bool directoryLike = isDirectoryEntryType(context.type);
             QTreeWidgetItem* child = nullptr;
             if (resourceAtPathLeaf && !typeItem->data(0, TypeRole).isValid())
                 child = typeItem;
+            else if (directoryLike && typeItem) {
+                for (int i = 0; i < typeItem->childCount(); ++i) {
+                    QTreeWidgetItem* candidate = typeItem->child(i);
+                    if (!candidate->data(0, TypeRole).isValid() &&
+                        candidate->data(0, NameRole).toString() == context.identifier) {
+                        child = candidate;
+                        break;
+                    }
+                }
+                if (!child)
+                    child = new QTreeWidgetItem(typeItem, QStringList(label));
+            }
             else if (typeItem)
                 child = new QTreeWidgetItem(typeItem, QStringList(label));
             else
                 child = new QTreeWidgetItem(treeView_, QStringList(label));
             const bool namedWithExtension = hasFileExtension(context.identifier);
-            const bool directoryLike = isDirectoryEntryType(context.type);
             const bool fileLike = isFileEntryType(context.type);
             if (directoryLike || (context.isContainer && !fileLike && !namedWithExtension))
                 child->setIcon(0, settingsIcons_.folderCloseIcon());
@@ -2934,7 +2953,7 @@ void MainWindow::showItemContextMenu(QWidget* view, const QPoint& position,
         QAction* original = menu.addAction(QStringLiteral("Export original (%1)").arg(ext));
         connect(original, &QAction::triggered, this, [this] { exportSelectedOriginal(); });
         const QStringList extensions = context.dataSize <= kMaxDecodePreviewBytes
-            ? resource.convertedExtensions() : QStringList();
+            ? resource.convertedExtensions(owner) : QStringList();
         if (!extensions.isEmpty()) {
             QMenu* converted = menu.addMenu(QStringLiteral("Export converted"));
             for (const QString& extension : extensions) {
@@ -3358,7 +3377,7 @@ void MainWindow::showSelectedResource() {
     }
     exportConvertedMenu_->clear();
     directConvertedExtension_.clear();
-    QStringList extensions = valid ? resource.convertedExtensions() : QStringList();
+    QStringList extensions = valid ? resource.convertedExtensions(itemSession) : QStringList();
     if (!preview.pngs.isEmpty()) extensions << QStringLiteral(".png");
     if (!preview.texts.isEmpty()) extensions << QStringLiteral(".txt");
     extensions.removeDuplicates();
@@ -3433,7 +3452,8 @@ void MainWindow::exportSelectedConverted(const QString& extension) {
                  index = items.first()->data(0, ResourceIndexRole).toULongLong();
     pearegui::Resource resource = sessionOf(items.first())->openResource(folder, index);
     QVector<QByteArray> files =
-        resource.isValid() ? resource.convert(extension) : QVector<QByteArray>();
+        resource.isValid() ? resource.convert(extension, sessionOf(items.first()))
+                           : QVector<QByteArray>();
     if (files.isEmpty())
         files = extension == QStringLiteral(".png") ? currentPreview_.pngs : currentPreview_.texts;
     if (files.isEmpty()) return;

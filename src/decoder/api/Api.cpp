@@ -1,6 +1,8 @@
 #include "peare/peare_decoder.h"
 #include "decoder/ResourceDecoder.h"
 #include "decoder/DecoderRoute.h"
+#include "decoder/ResourceExport.h"
+#include "decoder/resources/ResourceResolver.h"
 #include "decoder/resources/RT_FONT/RT_FONT.h"
 #include "decoder/resources/RT_FONT/OS2_RT_FONT.h"
 #include "decoder/resources/WAD/WadImageDecoder.h"
@@ -26,6 +28,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <map>
 namespace {
 peare_status copyBytes(const char* data, size_t length, peare_blob* out) {
     if (!out) return PEARE_STATUS_INVALID_ARGUMENT;
@@ -117,6 +120,10 @@ peare_container_format toCFormat(peare::ModuleFormat f) {
         return PEARE_CONTAINER_SIEMENS_FWF;
     case peare::ModuleFormat::SIEMENS_FSF:
         return PEARE_CONTAINER_SIEMENS_FSF;
+    case peare::ModuleFormat::RPM:
+        return PEARE_CONTAINER_RPM;
+    case peare::ModuleFormat::CHM:
+        return PEARE_CONTAINER_CHM;
     default:
         return PEARE_CONTAINER_UNKNOWN;
     }
@@ -678,6 +685,59 @@ peare_status allocateBlobArray(size_t count, peare_blob_array* out) {
     return PEARE_STATUS_OK;
 }
 
+class AbiResourceResolver final : public peare::resources::IResourceResolver {
+public:
+    AbiResourceResolver(peare_resource_resolver_fn callback, void* userData)
+        : callback_(callback), userData_(userData) {}
+
+    const peare::ResourceEntry* find(const QString& type, const QString& name,
+                                     const QString& preferredLanguage) const override {
+        const QByteArray typeUtf8 = type.toUtf8();
+        const QByteArray nameUtf8 = name.toUtf8();
+        const uint8_t* bytes = nullptr;
+        size_t length = 0;
+        if (!callback_ || callback_(userData_, typeUtf8.constData(), size_t(typeUtf8.size()),
+                                    nameUtf8.constData(), size_t(nameUtf8.size()),
+                                    &bytes, &length) != PEARE_STATUS_OK ||
+            (!bytes && length) || length > size_t(INT_MAX))
+            return nullptr;
+
+        const auto key = qMakePair(type.toUpper(), name.toUpper());
+        auto inserted = entries_.emplace(key, peare::ResourceEntry{});
+        peare::ResourceEntry& entry = inserted.first->second;
+        entry.type = type;
+        entry.name = name;
+        entry.language = preferredLanguage;
+        entry.data = QByteArray(reinterpret_cast<const char*>(bytes), int(length));
+        entry.dataSize = quint64(length);
+        return &entry;
+    }
+
+private:
+    peare_resource_resolver_fn callback_ = nullptr;
+    void* userData_ = nullptr;
+    mutable std::map<QPair<QString, QString>, peare::ResourceEntry> entries_;
+};
+
+peare_status conversionPreview(const uint8_t* payload, size_t payloadLength,
+                               const char* platformUtf8, const char* typeUtf8,
+                               peare_resource_resolver_fn resolver, void* resolverUserData,
+                               peare::ResourcePreview* preview) {
+    if (!preview || (!payload && payloadLength) || payloadLength > size_t(INT_MAX))
+        return PEARE_STATUS_INVALID_ARGUMENT;
+    peare::OpenedResource resource;
+    const peare_status status = loadResource(payload, payloadLength, platformUtf8, typeUtf8, &resource);
+    if (status != PEARE_STATUS_OK) return status;
+    if (resolver) {
+        const AbiResourceResolver adapter(resolver, resolverUserData);
+        *preview = peare::ResourceDecoder::preview(resource, adapter);
+    } else {
+        *preview = peare::ResourceDecoder::preview(resource);
+    }
+    return preview->embeddedExports.isEmpty() && preview->images.isEmpty() && preview->text.isNull()
+        ? PEARE_STATUS_NOT_APPLICABLE : PEARE_STATUS_OK;
+}
+
 bool prepareFontResource(peare::OpenedResource* resource) {
     if (!resource) return false;
     QVector<peare::font::SfntFont> sfntFaces;
@@ -827,6 +887,73 @@ peare_status peare_decode_images_with_resolver(const uint8_t* payload, size_t pa
         return PEARE_STATUS_ALLOCATION_FAILED;
     } catch (...) {
         peare_blob_array_free(out_pngs);
+        return PEARE_STATUS_DECODE_FAILED;
+    }
+}
+
+peare_status peare_decoder_get_converted_extensions(
+    const uint8_t* payload, size_t payload_length, const char* platform_utf8,
+    const char* resource_type_utf8, peare_resource_resolver_fn resolver,
+    void* resolver_user_data, peare_blob_array* out_extensions_utf8) {
+    if (!out_extensions_utf8) return PEARE_STATUS_INVALID_ARGUMENT;
+    clearBlobArray(out_extensions_utf8);
+    try {
+        peare::ResourcePreview preview;
+        const peare_status status = conversionPreview(payload, payload_length, platform_utf8,
+            resource_type_utf8, resolver, resolver_user_data, &preview);
+        if (status != PEARE_STATUS_OK) return status;
+        const QStringList extensions = peare::ResourceConversion::availableExtensions(preview);
+        if (extensions.isEmpty()) return PEARE_STATUS_NOT_APPLICABLE;
+        const peare_status allocation = allocateBlobArray(size_t(extensions.size()), out_extensions_utf8);
+        if (allocation != PEARE_STATUS_OK) return allocation;
+        for (int i = 0; i < extensions.size(); ++i) {
+            const QByteArray value = extensions.at(i).toUtf8();
+            const peare_status copyStatus = copyByteArray(value, &out_extensions_utf8->items[size_t(i)]);
+            if (copyStatus != PEARE_STATUS_OK) {
+                peare_blob_array_free(out_extensions_utf8);
+                return copyStatus;
+            }
+        }
+        return PEARE_STATUS_OK;
+    } catch (const std::bad_alloc&) {
+        peare_blob_array_free(out_extensions_utf8);
+        return PEARE_STATUS_ALLOCATION_FAILED;
+    } catch (...) {
+        peare_blob_array_free(out_extensions_utf8);
+        return PEARE_STATUS_DECODE_FAILED;
+    }
+}
+
+peare_status peare_decoder_convert_resource(
+    const uint8_t* payload, size_t payload_length, const char* platform_utf8,
+    const char* resource_type_utf8, const char* extension_utf8,
+    peare_resource_resolver_fn resolver, void* resolver_user_data,
+    peare_blob_array* out_files) {
+    if (!out_files || !extension_utf8) return PEARE_STATUS_INVALID_ARGUMENT;
+    clearBlobArray(out_files);
+    try {
+        peare::ResourcePreview preview;
+        const peare_status status = conversionPreview(payload, payload_length, platform_utf8,
+            resource_type_utf8, resolver, resolver_user_data, &preview);
+        if (status != PEARE_STATUS_OK) return status;
+        const QVector<peare::ConvertedResourceFile> files = peare::ResourceConversion::convert(
+            preview, QString::fromUtf8(extension_utf8), QStringLiteral("resource"));
+        if (files.isEmpty()) return PEARE_STATUS_NOT_APPLICABLE;
+        const peare_status allocation = allocateBlobArray(size_t(files.size()), out_files);
+        if (allocation != PEARE_STATUS_OK) return allocation;
+        for (int i = 0; i < files.size(); ++i) {
+            const peare_status copyStatus = copyByteArray(files.at(i).data, &out_files->items[size_t(i)]);
+            if (copyStatus != PEARE_STATUS_OK) {
+                peare_blob_array_free(out_files);
+                return copyStatus;
+            }
+        }
+        return PEARE_STATUS_OK;
+    } catch (const std::bad_alloc&) {
+        peare_blob_array_free(out_files);
+        return PEARE_STATUS_ALLOCATION_FAILED;
+    } catch (...) {
+        peare_blob_array_free(out_files);
         return PEARE_STATUS_DECODE_FAILED;
     }
 }

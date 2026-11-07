@@ -1,0 +1,12 @@
+[
+  {
+    "name": "cab-mszip",
+    "source": "tests/formats/cab/fixtures/readme.cab",
+    "tree_path": "README.md"
+  },
+  {
+    "name": "cab-lzx21",
+    "source": "tests/formats/cab/fixtures/readme-lzx21.cab",
+    "tree_path": "README.md"
+  }
+]

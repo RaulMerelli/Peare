@@ -107,6 +107,7 @@ QString containerName(peare_container_format format)
     case PEARE_CONTAINER_HPFS: return QStringLiteral("HPFS");
     case PEARE_CONTAINER_FFU: return QStringLiteral("FFU");
     case PEARE_CONTAINER_SQUASHFS: return QStringLiteral("SquashFS");
+    case PEARE_CONTAINER_CRAMFS: return QStringLiteral("CramFS");
     case PEARE_CONTAINER_HFSPLUS: return QStringLiteral("HFS+");
     case PEARE_CONTAINER_DMG: return QStringLiteral("DMG");
     case PEARE_CONTAINER_BTRFS: return QStringLiteral("Btrfs");
@@ -126,6 +127,11 @@ QString containerName(peare_container_format format)
     case PEARE_CONTAINER_AR: return QStringLiteral("ar");
     case PEARE_CONTAINER_CPIO: return QStringLiteral("cpio");
     case PEARE_CONTAINER_UNIX_COMPRESS: return QStringLiteral("compress (.Z)");
+      case PEARE_CONTAINER_LZIP: return QStringLiteral("Lzip");
+    case PEARE_CONTAINER_ZSTD: return QStringLiteral("Zstandard");
+    case PEARE_CONTAINER_ARJ: return QStringLiteral("ARJ");
+    case PEARE_CONTAINER_XAR: return QStringLiteral("XAR");
+    case PEARE_CONTAINER_LZMA: return QStringLiteral("LZMA");
     case PEARE_CONTAINER_UUE: return QStringLiteral("UUencode");
     case PEARE_CONTAINER_LHA: return QStringLiteral("LHA / LZH");
     case PEARE_CONTAINER_RAR4: return QStringLiteral("RAR4");
@@ -222,17 +228,54 @@ QByteArray Resource::payload() const
     return result;
 }
 
-QStringList Resource::convertedExtensions() const
+QStringList Resource::convertedExtensions(const Session* session) const
 {
-    QStringList result; peare_blob_array array{};
+    QStringList result;
+    const QByteArray bytes = payload();
+    const ResourceContext resourceContext = context();
+    const QByteArray platform = platformContextUtf8(resourceContext.platform);
+    const QByteArray type = resourceContext.type.toUtf8();
+    ResourceResolverContext resolver(session);
+    peare_blob_array array{};
+    const peare_status decoderStatus = peare_decoder_get_converted_extensions(
+        reinterpret_cast<const uint8_t*>(bytes.constData()), size_t(bytes.size()),
+        platform.isEmpty() ? nullptr : platform.constData(), type.constData(),
+        session ? resolveResource : nullptr, session ? &resolver : nullptr, &array);
+    if (decoderStatus == PEARE_STATUS_OK) {
+        for (size_t i = 0; i < array.count; ++i) result.push_back(blobToString(array.items[i]));
+        peare_blob_array_free(&array);
+        return result;
+    }
+    peare_blob_array_free(&array);
+    array = {};
     if (!handle_ || peare_resource_get_converted_extensions(handle_, &array) != PEARE_STATUS_OK) return result;
     for (size_t i=0;i<array.count;++i) result.push_back(blobToString(array.items[i]));
     peare_resource_conversion_array_free(&array); return result;
 }
 
-QVector<QByteArray> Resource::convert(const QString& extension) const
+QVector<QByteArray> Resource::convert(const QString& extension, const Session* session) const
 {
-    QVector<QByteArray> result; peare_blob_array array{}; const QByteArray ext=extension.toUtf8();
+    QVector<QByteArray> result;
+    const QByteArray bytes = payload();
+    const ResourceContext resourceContext = context();
+    const QByteArray platform = platformContextUtf8(resourceContext.platform);
+    const QByteArray type = resourceContext.type.toUtf8();
+    const QByteArray ext = extension.toUtf8();
+    ResourceResolverContext resolver(session);
+    peare_blob_array array{};
+    const peare_status decoderStatus = peare_decoder_convert_resource(
+        reinterpret_cast<const uint8_t*>(bytes.constData()), size_t(bytes.size()),
+        platform.isEmpty() ? nullptr : platform.constData(), type.constData(), ext.constData(),
+        session ? resolveResource : nullptr, session ? &resolver : nullptr, &array);
+    if (decoderStatus == PEARE_STATUS_OK) {
+        for (size_t i = 0; i < array.count; ++i)
+            result.push_back(QByteArray(reinterpret_cast<const char*>(array.items[i].bytes),
+                                        int(array.items[i].length)));
+        peare_blob_array_free(&array);
+        return result;
+    }
+    peare_blob_array_free(&array);
+    array = {};
     if (!handle_ || peare_resource_convert(handle_, ext.constData(), &array) != PEARE_STATUS_OK) return result;
     for (size_t i=0;i<array.count;++i) result.push_back(QByteArray(reinterpret_cast<const char*>(array.items[i].bytes), int(array.items[i].length)));
     peare_resource_conversion_array_free(&array); return result;

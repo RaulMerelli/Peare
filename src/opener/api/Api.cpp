@@ -72,14 +72,27 @@ peare_container_format toCFormat(peare::ModuleFormat f)
     case peare::ModuleFormat::CON: return PEARE_CONTAINER_CON;
     case peare::ModuleFormat::OS2_PACK: return PEARE_CONTAINER_OS2_PACK;
     case peare::ModuleFormat::SZDD: return PEARE_CONTAINER_SZDD;
+    case peare::ModuleFormat::KWAJ: return PEARE_CONTAINER_KWAJ;
+    case peare::ModuleFormat::XBCOMPRESS: return PEARE_CONTAINER_XBCOMPRESS;
+    case peare::ModuleFormat::NSIS: return PEARE_CONTAINER_NSIS;
     case peare::ModuleFormat::SIEMENS_IMG: return PEARE_CONTAINER_SIEMENS_IMG;
     case peare::ModuleFormat::SIEMENS_ADONIS: return PEARE_CONTAINER_SIEMENS_ADONIS;
     case peare::ModuleFormat::GZIP: return PEARE_CONTAINER_GZIP;
+    case peare::ModuleFormat::XZ: return PEARE_CONTAINER_XZ;
+    case peare::ModuleFormat::LZIP: return PEARE_CONTAINER_LZIP;
+    case peare::ModuleFormat::ZSTD: return PEARE_CONTAINER_ZSTD;
+    case peare::ModuleFormat::ARJ: return PEARE_CONTAINER_ARJ;
+    case peare::ModuleFormat::XAR: return PEARE_CONTAINER_XAR;
+    case peare::ModuleFormat::LZMA: return PEARE_CONTAINER_LZMA;
     case peare::ModuleFormat::BZIP2: return PEARE_CONTAINER_BZIP2;
     case peare::ModuleFormat::AR: return PEARE_CONTAINER_AR;
     case peare::ModuleFormat::CPIO: return PEARE_CONTAINER_CPIO;
     case peare::ModuleFormat::UNIX_COMPRESS: return PEARE_CONTAINER_UNIX_COMPRESS;
     case peare::ModuleFormat::UUE: return PEARE_CONTAINER_UUE;
+    case peare::ModuleFormat::INTEL_HEX: return PEARE_CONTAINER_INTEL_HEX;
+    case peare::ModuleFormat::DEB: return PEARE_CONTAINER_DEB;
+    case peare::ModuleFormat::RPM: return PEARE_CONTAINER_RPM;
+    case peare::ModuleFormat::CHM: return PEARE_CONTAINER_CHM;
     case peare::ModuleFormat::LHA: return PEARE_CONTAINER_LHA;
     case peare::ModuleFormat::SEVEN_ZIP: return PEARE_CONTAINER_SEVEN_ZIP;
     case peare::ModuleFormat::RAR4: return PEARE_CONTAINER_RAR4;
@@ -107,6 +120,7 @@ peare_container_format toCFormat(peare::ModuleFormat f)
     case peare::ModuleFormat::JFS: return PEARE_CONTAINER_JFS;
     case peare::ModuleFormat::HPFS: return PEARE_CONTAINER_HPFS;
     case peare::ModuleFormat::SQUASHFS: return PEARE_CONTAINER_SQUASHFS;
+    case peare::ModuleFormat::CRAMFS: return PEARE_CONTAINER_CRAMFS;
     case peare::ModuleFormat::HFSPLUS: return PEARE_CONTAINER_HFSPLUS;
     case peare::ModuleFormat::DMG: return PEARE_CONTAINER_DMG;
     case peare::ModuleFormat::BTRFS: return PEARE_CONTAINER_BTRFS;
@@ -542,6 +556,39 @@ peare_status peare_resource_get_payload(peare_resource_handle resource, peare_bl
     }
     return copyBytes(reinterpret_cast<const char*>(resource->primary.payload.bytes),
                      resource->primary.payload.length, out_payload);
+}
+
+peare_status peare_resource_read(peare_resource_handle resource, std::uint64_t offset,
+                                 std::uint8_t* buffer, std::size_t capacity,
+                                 std::size_t* out_read)
+{
+    if (!out_read || (capacity && !buffer)) return PEARE_STATUS_INVALID_ARGUMENT;
+    *out_read = 0;
+    if (!peare_resource_snapshot_valid(resource)) return PEARE_STATUS_INVALID_HANDLE;
+    if (resource->primary.is_directory) return PEARE_STATUS_NOT_APPLICABLE;
+    const std::size_t amount = std::min<std::size_t>(capacity, INT_MAX);
+    if (resource->primary.lazy_content) {
+        auto* store = static_cast<peare::fs::ByteStorePtr*>(resource->primary.lazy_content);
+        if (!store || !*store) return PEARE_STATUS_INTERNAL_ERROR;
+        const std::int64_t size = (*store)->capacity();
+        if (size < 0) return PEARE_STATUS_DECODE_FAILED;
+        if (offset > std::uint64_t(size)) return PEARE_STATUS_OUT_OF_RANGE;
+        if (offset == std::uint64_t(size)) return PEARE_STATUS_OK;
+        if (!amount) return PEARE_STATUS_OK;
+        const int read = (*store)->read(std::int64_t(offset), buffer, int(amount));
+        if (read < 0) return PEARE_STATUS_DECODE_FAILED;
+        if (!read) return PEARE_STATUS_INTEGRITY_FAILED;
+        *out_read = std::size_t(read);
+        return PEARE_STATUS_OK;
+    }
+    const std::size_t size = resource->primary.payload.length;
+    if (offset > size) return PEARE_STATUS_OUT_OF_RANGE;
+    if (offset == size) return PEARE_STATUS_OK;
+    if (!amount) return PEARE_STATUS_OK;
+    const std::size_t read = std::min(amount, size - std::size_t(offset));
+    std::memcpy(buffer, resource->primary.payload.bytes + std::size_t(offset), read);
+    *out_read = read;
+    return PEARE_STATUS_OK;
 }
 
 peare_status peare_resource_get_converted_extensions(peare_resource_handle resource, peare_blob_array* out_extensions_utf8)

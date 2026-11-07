@@ -1,0 +1,33 @@
+{
+  "container_format": "XAR",
+  "tree": [
+    {
+      "path": "nested",
+      "size": 0,
+      "is_container": true,
+      "format": "XAR",
+      "sha256": ""
+    },
+    {
+      "path": "nested/deep",
+      "size": 0,
+      "is_container": true,
+      "format": "XAR",
+      "sha256": ""
+    },
+    {
+      "path": "nested/deep/file.txt",
+      "size": 20,
+      "is_container": false,
+      "format": "XAR",
+      "sha256": "5d0e5bc93dbc8febbb6b3cea0503bfd7460284e544c2f689538fd55da59accb2"
+    },
+    {
+      "path": "plain.txt",
+      "size": 10,
+      "is_container": false,
+      "format": "XAR",
+      "sha256": "1ddc234bae1b3930239b3d8625224117828d8a576bb8951087cbe6097387fb1e"
+    }
+  ]
+}

@@ -1,8 +1,7 @@
 name: Build
 
-# Builds Peare (GUI app + PeareOpener/PeareDecoder shared libraries) on Linux and
-# Windows with Qt 5.15.2, uploads the binaries as build artifacts, and — when a
-# tag like v1.2.3 is pushed — publishes them as a GitHub Release.
+# Builds Windows and Linux with Qt 5 and Android ARM64 with Qt 6.
+# Publishes CI downloads on main and versioned releases for tags.
 
 on:
   push:
@@ -43,6 +42,7 @@ jobs:
           mkdir -p dist
           find build -type f \( -name 'Peare' -o -name 'libPeare*.so' \) -exec cp -v {} dist/ \;
           cp README.md dist/ 2>/dev/null || true
+          cp LICENSE COPYRIGHT.md THIRDPARTY.md dist/
           ls -la dist
 
       - name: Run Opener tests
@@ -86,11 +86,26 @@ jobs:
         shell: cmd
         run: |
           mkdir dist
-          for /r build %%f in (Peare.exe PeareOpener.dll PeareDecoder.dll) do copy "%%f" dist\ >nul 2>&1
-          "%QT_ROOT_DIR%\bin\windeployqt.exe" --release --no-translations dist\Peare.exe
-          mkdir dist\platforms
-          copy "%QT_ROOT_DIR%\plugins\platforms\qoffscreen.dll" dist\platforms\ >nul
+          for %%F in (Peare.exe PeareOpener.dll PeareDecoder.dll PeareWriter.dll) do (
+            if not exist "build\Release\%%F" (echo Missing build output: build\Release\%%F & exit /b 1)
+            copy /y "build\Release\%%F" dist\ >nul
+            if errorlevel 1 exit /b 1
+          )
+          "%QT_ROOT_DIR%\bin\windeployqt.exe" --release --no-compiler-runtime --no-angle --no-opengl-sw --no-system-d3d-compiler --no-translations dist\Peare.exe
+          if errorlevel 1 exit /b 1
+          mkdir build\test-plugins\platforms
+          copy "%QT_ROOT_DIR%\plugins\platforms\qoffscreen.dll" build\test-plugins\platforms\ >nul
+          if errorlevel 1 exit /b 1
+          if not exist dist\PeareWriter.dll (echo PeareWriter.dll is missing from the package & exit /b 1)
+          if not exist build\test-plugins\platforms\qoffscreen.dll (echo qoffscreen.dll is missing from the test runtime & exit /b 1)
+          if exist dist\platforms\qoffscreen.dll (echo qoffscreen.dll must stay in the test runtime & exit /b 1)
+          for %%F in (libEGL.dll libGLESv2.dll opengl32sw.dll d3dcompiler_47.dll qoffscreen.dll) do (
+            if exist dist\%%F (echo Unneeded runtime DLL in package: %%F & exit /b 1)
+          )
           copy README.md dist\ >nul 2>&1
+          copy LICENSE dist\ >nul
+          copy COPYRIGHT.md dist\ >nul
+          copy THIRDPARTY.md dist\ >nul
           dir dist
 
       - name: Run Opener tests
@@ -100,7 +115,33 @@ jobs:
           python tests/run_tests.py -q
         env:
           PEARE_OPENER_LIB: dist\PeareOpener.dll
-          QT_QPA_PLATFORM_PLUGIN_PATH: dist\platforms
+          PEARE_WRITER_LIB: dist\PeareWriter.dll
+          PEARE_GUI_EXE: dist\Peare.exe
+          QT_QPA_PLATFORM_PLUGIN_PATH: build\test-plugins\platforms
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          choco install innosetup --version=6.7.1 --yes --no-progress
+          $version = "1.0.0"
+          if ($env:GITHUB_REF_NAME.StartsWith("v")) { $version = $env:GITHUB_REF_NAME.Substring(1) }
+          $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path -LiteralPath $compiler)) { throw "Inno Setup compiler was not installed." }
+          New-Item -ItemType Directory -Path installer-output -Force | Out-Null
+          $sourceDir = Join-Path $PWD "dist"
+          $outputDir = Join-Path $PWD "installer-output"
+          Push-Location packaging\windows
+          & $compiler "/DAppVersion=$version" "/DSourceDir=$sourceDir" "/DOutputDir=$outputDir" Peare.iss
+          $compileExitCode = $LASTEXITCODE
+          Pop-Location
+          if ($compileExitCode -ne 0) { exit $compileExitCode }
+          Get-ChildItem installer-output
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: peare-windows-installer
+          path: installer-output/*.exe
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
@@ -108,10 +149,80 @@ jobs:
           path: dist/**
           if-no-files-found: error
 
+  android:
+    name: Android ARM64 (Qt 6.7.3)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager --install \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;26.1.10909125"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
+
+      - name: Install Qt 6.7.3 for Android
+        id: qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.7.3"
+          host: all_os
+          target: android
+          arch: android_arm64_v8a
+          modules: qt5compat
+
+      - name: Configure Android build
+        run: >
+          "$QT_ROOT_DIR/bin/qt-cmake" -S . -B build-android -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DQT_HOST_PATH="${{ steps.qt.outputs.qt-host-path }}"
+          -DANDROID_SDK_ROOT="$ANDROID_HOME"
+          -DANDROID_NDK_ROOT="$ANDROID_NDK_ROOT"
+          -DCMAKE_ANDROID_NDK="$ANDROID_NDK_ROOT"
+          -DQT_CHAINLOAD_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake"
+          -DANDROID_ABI=arm64-v8a
+          -DPEARE_QT_MAJOR=6
+          -DPEARE_CXX_STANDARD=AUTO
+
+      - name: Build Android libraries
+        run: cmake --build build-android --target Peare --parallel 2
+
+      - name: Package debug-signed APK
+        run: >
+          "$QT_HOST_PATH/bin/androiddeployqt"
+          --input build-android/android-Peare-deployment-settings.json
+          --output build-android/android-build
+          --apk build-android/android-build/Peare.apk
+          --builddir build-android
+          --android-platform android-34
+          --jdk "$JAVA_HOME"
+
+      - name: Verify APK libraries
+        run: python3 tests/run_tests.py -q tests/test_android_package.py
+        env:
+          PEARE_ANDROID_APK: build-android/android-build/Peare.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: peare-android-arm64
+          path: build-android/android-build/Peare.apk
+          if-no-files-found: error
+
   release:
     name: Publish release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, windows]
+    needs: [linux, windows, android]
     runs-on: ubuntu-22.04
     steps:
       - name: Download artifacts
@@ -125,6 +236,12 @@ jobs:
           mkdir -p release
           ( cd artifacts/peare-linux-x64   && tar czf "$GITHUB_WORKSPACE/release/peare-${GITHUB_REF_NAME}-linux-x64.tar.gz" . )
           ( cd artifacts/peare-windows-x64 && zip -r  "$GITHUB_WORKSPACE/release/peare-${GITHUB_REF_NAME}-windows-x64.zip" . )
+          cp artifacts/peare-android-arm64/Peare.apk "$GITHUB_WORKSPACE/release/peare-${GITHUB_REF_NAME}-android-arm64.apk"
+          cp artifacts/peare-windows-installer/Peare-Setup-*.exe "$GITHUB_WORKSPACE/release/peare-${GITHUB_REF_NAME}-windows-setup.exe"
+          cp "release/peare-${GITHUB_REF_NAME}-linux-x64.tar.gz" release/peare-linux-x64.tar.gz
+          cp "release/peare-${GITHUB_REF_NAME}-windows-x64.zip" release/peare-windows-x64.zip
+          cp "release/peare-${GITHUB_REF_NAME}-android-arm64.apk" release/peare-android-arm64.apk
+          cp "release/peare-${GITHUB_REF_NAME}-windows-setup.exe" release/peare-windows-setup.exe
           ls -la release
 
       - name: Create GitHub Release
@@ -132,3 +249,39 @@ jobs:
         with:
           files: release/*
           generate_release_notes: true
+
+  latest_ci:
+    name: Publish latest CI downloads
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [linux, windows, android]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package downloads
+        run: |
+          set -e
+          mkdir -p release
+          ( cd artifacts/peare-linux-x64 && tar czf "$GITHUB_WORKSPACE/release/peare-linux-x64.tar.gz" . )
+          ( cd artifacts/peare-windows-x64 && zip -r "$GITHUB_WORKSPACE/release/peare-windows-x64.zip" . )
+          cp artifacts/peare-android-arm64/Peare.apk release/peare-android-arm64.apk
+          cp artifacts/peare-windows-installer/Peare-Setup-*.exe release/peare-windows-setup.exe
+
+      - name: Update latest CI release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git tag --force ci-latest "$GITHUB_SHA"
+          git push --force origin refs/tags/ci-latest
+          if gh release view ci-latest >/dev/null 2>&1; then
+            gh release edit ci-latest --title "Latest CI build" --notes "Build from commit $GITHUB_SHA."
+          else
+            gh release create ci-latest --title "Latest CI build" --notes "Build from commit $GITHUB_SHA." --prerelease
+          fi
+          gh release upload ci-latest release/* --clobber

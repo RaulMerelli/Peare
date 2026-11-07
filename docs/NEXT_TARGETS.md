@@ -29,14 +29,12 @@ Add reader support first. Plan writer support after real-sample reader coverage.
 - JFFS2 and UBIFS images, including their flash and UBI layer requirements. Treat EROFS as a read-only target unless its format defines a safe write workflow.
 - Early NTFS v1.x volumes from Windows NT 3.1 and 3.5.
 - Cisco ASDM `.img` files.
-- Compressed floppy images: IMZ.
 - Amiga floppy images: ADF and ADZ.
 - Apple floppy images: DC42 and DART.
 - DMS Amiga disk images.
 - VDI and Parallels HDD variants, including differencing and snapshot layouts.
 - QCOW and QCOW2 writing, including backing files and external data files.
 - VHD and VHDX differencing chains and snapshot layouts.
-- More VMDK descriptor, sparse, flat, and stream-optimized variants.
 - Android sparse images and dynamic-partition `super` images.
 - LUKS1 and LUKS2 block-encryption containers. Define key handling before adding unlock or write support. Never infer the inner file system from encrypted data.
 - Additional file-system write support beyond FAT and Ext.
@@ -53,7 +51,6 @@ Add reader support first. Plan writer support after real-sample reader coverage.
 
 ### Firmware and executable images
 
-- Intel HEX (`IHEX`) firmware files.
 - Qualcomm SBL1 images with the 80-byte SBL header and image ID `0x15`.
 - ELF firmware images: ELF32 little-endian `EM_ARM`, ELF64 little-endian `EM_AARCH64`, and the observed ELF64 little-endian `e_machine=40` variant.
 - UEFI firmware volumes, including the volume embedded in the Lumia UEFI ELF image.
@@ -71,18 +68,9 @@ Add reader support first. Plan writer support after real-sample reader coverage.
 - Nintendo Switch NUP containers (`.nup`) for unencrypted package dumps. The
   version 1.0 draft stores base, update, and add-on packages with ExeFS and
   RomFS trees. It supports raw and Zstandard file extents.
-- Complete RAR5 reading, including encrypted members, solid streams, filters,
-  split volumes, and all valid compressed block layouts.
-- ARJ, XAR, and ZIPX compression methods.
-- Lzip (`.lz`), XZ, LZMA, LZMA2, and Zstandard (`.zst`).
-- TAR with XZ compression (`.txz`).
-- UUencode `begin-base64` blocks and messages with leading mail text.
-- Verify nested TAR variants `.tgz`, `.tbz`, `.tbz2`, and `.taz` with real samples.
+- Reduce memory use and decode time for very large archive members.
 - 7z archive files and decoded members larger than the Qt 5 `QByteArray` limit.
 - Identify the `.tpz` extension shown by 7-Zip from a real sample before planning support.
-- NSIS installers, RPM packages for Fedora, RHEL, and similar systems, Debian
-  DEB packages, CHM help files, and CramFS.
-- SZDD variant B and KWAJ.
 
 ### Executables, games, and graphics
 

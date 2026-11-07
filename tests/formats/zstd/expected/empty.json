@@ -1,0 +1,12 @@
+{
+  "container_format": "ZSTD",
+  "tree": [
+    {
+      "path": "empty",
+      "size": 0,
+      "is_container": false,
+      "format": "ZSTD",
+      "sha256": ""
+    }
+  ]
+}

@@ -39,6 +39,7 @@ public:
         const QString& settingsPath = QString(),
         std::function<void(size_t)> completion = {});
     void openFilePath(const QString& path);
+    void openFilePath(const QString& path, const QString& password);
     bool navigateToResource(const QString& path);
     bool navigateToFirstLeafResource();
     bool runOffscreenWriterScenario(const QString& imagePath,
@@ -85,7 +86,8 @@ private:
     void addFilesToContainer(const QStringList& sources = QStringList(),
                              const QString& destination = QString());
     void showAbout();
-    void showModuleSummary(const QString& filePath);
+    void showModuleSummary(const QString& filePath,
+                           const QString& initialPassword = QString());
     void showSelectedResource();
     void populateFromSession(pearegui::Session* session, QTreeWidgetItem* parentBase);
     void expandContainerItem(QTreeWidgetItem* item);

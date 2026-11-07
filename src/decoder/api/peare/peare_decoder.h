@@ -113,6 +113,19 @@ PEARE_DECODER_API peare_status peare_decode_images_with_resolver(
     void *resolver_user_data,
     peare_blob_array *out_pngs);
 
+PEARE_DECODER_API peare_status peare_decoder_get_converted_extensions(
+    const uint8_t *payload, size_t payload_length,
+    const char *platform_utf8, const char *resource_type_utf8,
+    peare_resource_resolver_fn resolver, void *resolver_user_data,
+    peare_blob_array *out_extensions_utf8);
+
+PEARE_DECODER_API peare_status peare_decoder_convert_resource(
+    const uint8_t *payload, size_t payload_length,
+    const char *platform_utf8, const char *resource_type_utf8,
+    const char *extension_utf8,
+    peare_resource_resolver_fn resolver, void *resolver_user_data,
+    peare_blob_array *out_files);
+
 PEARE_DECODER_API peare_status peare_decode_texts(
     const uint8_t *payload,
     size_t payload_length,

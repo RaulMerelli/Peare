@@ -1,0 +1,12 @@
+{
+  "container_format": "ZSTD",
+  "tree": [
+    {
+      "path": "multi-frame",
+      "size": 53262,
+      "is_container": false,
+      "format": "ZSTD",
+      "sha256": "d7c6a1ba1285349ae35cf5c19d0b8397ad4183e8969798f46e80e882188d0331"
+    }
+  ]
+}

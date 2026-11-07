@@ -1,6 +1,16 @@
 #include "ZipModule.h"
 #include "Compat.h"
 #include "DeflateDecoder.h"
+#include "WavPackDecoder.h"
+#include "XzModule.h"
+#include "ZstdModule.h"
+#include "../compression/WinZipJpegDecoder.h"
+#include "../compression/PackMp3Decoder.h"
+#include "../compression/third_party/blast/blast.h"
+#undef local
+#include "../compression/LzmaDecoder.h"
+#include "../compression/Crc32.h"
+#include "../compression/peare/Bzip2Decoder.h"
 #include "../fs/QFileByteStore.h"
 
 #include <QFile>
@@ -23,6 +33,72 @@ const quint32 kZipLocalHeader = 0x04034b50u;
 const quint32 kZipCentralHeader = 0x02014b50u;
 const quint32 kZipEndCentralDirectory = 0x06054b50u;
 const std::int64_t kMaxZipVariableField = std::int64_t(16) * 1024 * 1024;
+
+struct DclInput {
+    const std::uint8_t* data;
+    std::size_t size;
+    std::size_t offset;
+};
+
+struct DclOutput {
+    std::vector<std::uint8_t>* data;
+    std::size_t limit;
+};
+
+std::mutex& dclDecoderMutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
+unsigned readDclInput(void* context, unsigned char** buffer)
+{
+    DclInput* input = static_cast<DclInput*>(context);
+    if (input->offset == input->size) return 0;
+    const std::size_t count = std::min<std::size_t>(4096, input->size - input->offset);
+    *buffer = const_cast<unsigned char*>(input->data + input->offset);
+    input->offset += count;
+    return static_cast<unsigned>(count);
+}
+
+int writeDclOutput(void* context, unsigned char* buffer, unsigned size)
+{
+    DclOutput* output = static_cast<DclOutput*>(context);
+    if (size > output->limit - output->data->size()) return 1;
+    try {
+        output->data->insert(output->data->end(), buffer, buffer + size);
+    } catch (...) {
+        return 1;
+    }
+    return 0;
+}
+
+bool decodeDclZip(const std::vector<std::uint8_t>& packed, std::size_t unpackedSize,
+                  std::vector<std::uint8_t>* output)
+{
+    if (!output || packed.empty() || packed.size() > std::numeric_limits<unsigned>::max())
+        return false;
+    std::vector<std::uint8_t> decoded;
+    try {
+        decoded.reserve(unpackedSize);
+    } catch (...) {
+        return false;
+    }
+    DclInput input = {packed.data(), packed.size(), 0};
+    DclOutput result = {&decoded, unpackedSize};
+    unsigned remaining = 0;
+    unsigned char* unused = nullptr;
+    int status;
+    {
+        std::lock_guard<std::mutex> lock(dclDecoderMutex());
+        status = blast(readDclInput, &input, writeDclOutput, &result, &remaining, &unused);
+    }
+    if (status != 0 || decoded.size() != unpackedSize || remaining != 0 ||
+        input.offset != packed.size())
+        return false;
+    output->swap(decoded);
+    return true;
+}
 
 quint16 le16(const std::uint8_t* p) {
     return quint16(p[0]) | (quint16(p[1]) << 8);
@@ -402,6 +478,107 @@ private:
     std::int64_t uncompressed_;
     mutable std::mutex mutex_;
     mutable std::vector<std::uint8_t> prefix_;
+    mutable bool failed_ = false;
+};
+
+class ZipAdvancedStore final : public fs::IByteStore {
+public:
+    ZipAdvancedStore(fs::ByteStorePtr source, std::int64_t offset,
+                     std::int64_t compressed, std::int64_t uncompressed,
+                     quint16 method, quint16 flags, quint32 expectedCrc)
+        : source_(std::move(source)), offset_(offset), compressed_(compressed),
+          uncompressed_(uncompressed), method_(method), flags_(flags),
+          expectedCrc_(expectedCrc) {}
+
+    std::int64_t capacity() const override { return uncompressed_; }
+    bool cheapRandomAccess() const override { return false; }
+
+    int read(std::int64_t pos, std::uint8_t* dst, int count) const override {
+        if (!source_ || pos < 0 || count <= 0 || pos >= uncompressed_) return 0;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!ensureDecoded()) return 0;
+        const int size = int(std::min<std::int64_t>(count, uncompressed_ - pos));
+        std::copy(decoded_.begin() + std::ptrdiff_t(pos),
+                  decoded_.begin() + std::ptrdiff_t(pos + size), dst);
+        return size;
+    }
+
+private:
+    bool ensureDecoded() const {
+        if (decodedReady_) return true;
+        if (failed_ || compressed_ < 0 || uncompressed_ < 0 || offset_ < 0 ||
+            std::uint64_t(compressed_) > std::numeric_limits<std::size_t>::max() ||
+            std::uint64_t(uncompressed_) > std::numeric_limits<std::size_t>::max() ||
+            offset_ > source_->capacity() - compressed_) {
+            failed_ = true;
+            return false;
+        }
+        const std::vector<std::uint8_t> packed = source_->readRange(
+            offset_, std::size_t(compressed_));
+        if (packed.size() != std::size_t(compressed_)) {
+            failed_ = true;
+            return false;
+        }
+
+        std::vector<std::uint8_t> output;
+        bool valid = false;
+        if (method_ == 9) {
+            valid = compression::inflateRawDeflate64Exact(packed.data(), packed.size(),
+                std::size_t(uncompressed_), &output);
+        } else if (method_ == 10) {
+            valid = decodeDclZip(packed, std::size_t(uncompressed_), &output);
+        } else if (method_ == 12) {
+            valid = compression::decompressBzip2(packed.data(), packed.size(),
+                std::size_t(uncompressed_), false, &output);
+        } else if (method_ == 14 && packed.size() >= 9) {
+            const std::size_t propertiesSize = le16(packed.data() + 2);
+            if (propertiesSize == 5 && propertiesSize <= packed.size() - 4) {
+                const std::uint8_t* properties = packed.data() + 4;
+                const std::uint8_t* stream = properties + propertiesSize;
+                const std::size_t streamSize = packed.size() - 4 - propertiesSize;
+                valid = (flags_ & 0x0002u)
+                    ? compression::decodeLzmaRawWithEndMarker(stream, streamSize,
+                        properties, propertiesSize, std::size_t(uncompressed_), &output)
+                    : compression::decodeLzmaRaw(stream, streamSize, properties,
+                        propertiesSize, std::size_t(uncompressed_), &output);
+            }
+        } else if (method_ == 95) {
+            valid = XzModule::decodePayload(packed, &output);
+        } else if (method_ == 93) {
+            valid = ZstdModule::decodePayload(packed, &output);
+        } else if (method_ == 98) {
+            valid = compression::decodePpmdZip(packed.data(), packed.size(),
+                std::size_t(uncompressed_), &output);
+        } else if (method_ == 97) {
+            valid = compression::decodeWavPackZip(packed.data(), packed.size(),
+                std::size_t(uncompressed_), &output);
+        } else if (method_ == 94) {
+            valid = compression::decodePackMp3(packed.data(), packed.size(),
+                std::size_t(uncompressed_), &output);
+        } else if (method_ == 96) {
+            valid = compression::decodeWinZipJpeg(packed.data(), packed.size(),
+                std::size_t(uncompressed_), &output);
+        }
+        if (!valid || output.size() != std::size_t(uncompressed_) ||
+            compression::crc32(output.data(), output.size()) != expectedCrc_) {
+            failed_ = true;
+            return false;
+        }
+        decoded_.swap(output);
+        decodedReady_ = true;
+        return true;
+    }
+
+    fs::ByteStorePtr source_;
+    std::int64_t offset_;
+    std::int64_t compressed_;
+    std::int64_t uncompressed_;
+    quint16 method_;
+    quint16 flags_;
+    quint32 expectedCrc_;
+    mutable std::mutex mutex_;
+    mutable std::vector<std::uint8_t> decoded_;
+    mutable bool decodedReady_ = false;
     mutable bool failed_ = false;
 };
 
@@ -976,6 +1153,10 @@ ModulePtr ZipModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
         } else if (method == 6) {
             content = std::make_shared<ZipExplodeStore>(file, dataOffset,
                 compressedSize, uncompressedSize, flags);
+        } else if (method == 9 || method == 10 || method == 12 || method == 14 || method == 93 ||
+                   method == 94 || method == 95 || method == 96 || method == 97 || method == 98) {
+            content = std::make_shared<ZipAdvancedStore>(file, dataOffset,
+                compressedSize, uncompressedSize, method, flags, le32(central + 16));
         } else {
             module->info_.error = QStringLiteral("Unsupported ZIP compression method %1").arg(method);
             return ModulePtr(std::move(module));

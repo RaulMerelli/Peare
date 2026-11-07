@@ -748,6 +748,16 @@ bool inflateRawStream(InflateInput& input, std::size_t maximum,
                   nullptr, 0, 32768, false, false, output, error);
 }
 
+bool inflateRawStream(InflateInput& input, std::size_t maximum,
+                      const std::vector<std::uint8_t>* dictionary,
+                      std::vector<std::uint8_t>* output,
+                      std::string* error) {
+    return runRaw(input, maximum, CompletionPolicy::RequireEndOfStream,
+                  dictionary && !dictionary->empty() ? dictionary->data() : nullptr,
+                  dictionary ? dictionary->size() : 0,
+                  32768, false, false, output, error);
+}
+
 bool inflateZlib(const std::vector<std::uint8_t>& input,
                  std::size_t maximum, std::vector<std::uint8_t>* output,
                  std::string* error) {

@@ -21,7 +21,8 @@ quint32 le32(const QByteArray& data, qsizetype offset)
            (quint32(p[2]) << 16) | (quint32(p[3]) << 24);
 }
 
-bool decompress(const QByteArray& input, quint32 expectedSize, QByteArray* output, QString* error)
+bool decompress(const QByteArray& input, quint32 expectedSize, int initialBacktrack,
+                QByteArray* output, QString* error)
 {
     if (expectedSize > kMaxDecodedSize) {
         *error = QStringLiteral("SZDD declared size exceeds safety limit");
@@ -30,7 +31,7 @@ bool decompress(const QByteArray& input, quint32 expectedSize, QByteArray* outpu
 
     std::array<uchar, 4096> dictionary{};
     dictionary.fill(0x20);
-    int dictionaryPos = 4096 - 16;
+    int dictionaryPos = 4096 - initialBacktrack;
     qsizetype inputPos = kHeaderSize;
     quint16 flags = 0;
 
@@ -103,7 +104,8 @@ std::unique_ptr<SzddModule> SzddModule::open(const QByteArray& data, const QStri
         module->info_.error = QStringLiteral("Invalid SZDD signature or truncated header");
         return module;
     }
-    if (uchar(data.at(8)) != uchar('A')) {
+    const uchar mode = uchar(data.at(8));
+    if (mode != uchar('A') && mode != uchar('B')) {
         module->info_.error = QStringLiteral("Unsupported SZDD compression mode");
         return module;
     }
@@ -111,7 +113,8 @@ std::unique_ptr<SzddModule> SzddModule::open(const QByteArray& data, const QStri
     const quint32 originalSize = le32(data, 10);
     QByteArray decoded;
     QString error;
-    if (!decompress(data, originalSize, &decoded, &error)) {
+    const int initialBacktrack = mode == uchar('B') ? 18 : 16;
+    if (!decompress(data, originalSize, initialBacktrack, &decoded, &error)) {
         module->info_.error = error;
         return module;
     }

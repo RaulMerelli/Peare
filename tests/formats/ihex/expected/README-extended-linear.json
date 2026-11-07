@@ -1,0 +1,19 @@
+{
+  "container_format": "INTEL_HEX",
+  "tree": [
+    {
+      "path": "0x00100000 (linear)",
+      "size": 4,
+      "is_container": false,
+      "format": "INTEL_HEX",
+      "sha256": "2385b2772b668a99005ca6136ff00311e78c8c8a97b302c9548fe08fe808dd3d"
+    },
+    {
+      "path": "0x00100000.bin",
+      "size": 2062,
+      "is_container": false,
+      "format": "INTEL_HEX",
+      "sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
+    }
+  ]
+}

@@ -75,3 +75,18 @@ def test_uue_payload_matches_upstream_pair(peare_lib, encoded_name, decoded_name
             assert child.container_format() == "UNIX_COMPRESS"
     assert name == decoded_name
     assert payload == expected.read_bytes()
+
+
+def test_rfc_begin_base64_block_with_preamble_and_trailer(peare_lib):
+    encoded = os.environ.get("PEARE_UUE_RFC_SAMPLE")
+    expected = os.environ.get("PEARE_UUE_RFC_PAYLOAD")
+    if not encoded or not expected or not Path(encoded).is_file() or not Path(expected).is_file():
+        pytest.skip("Missing external RFC 6873 UUencode sample pair")
+
+    opener = peare_lib.open_file(encoded)
+    assert opener is not None
+    with opener:
+        assert opener.container_format() == "UUE"
+        name, payload = _payload(peare_lib, opener)
+    assert name == "clf_record"
+    assert payload == Path(expected).read_bytes()

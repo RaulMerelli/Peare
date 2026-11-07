@@ -12,6 +12,7 @@
 #include "AsarModule.h"
 #include "ResourceForkModule.h"
 #include "UuencodeModule.h"
+#include "IhexModule.h"
 #include "LhaModule.h"
 
 #include <cstring>
@@ -65,6 +66,31 @@ quint32 readLe32(const QByteArray &data, qsizetype offset)
            (quint32(p[3]) << 24);
 }
 
+bool isNsisSignature(const QByteArray& bytes)
+{
+    if (bytes.size() != 16) return false;
+    const QByteArray magic = bytes.left(4);
+    if (magic != QByteArray::fromHex("efbeadde") &&
+        magic != QByteArray::fromHex("edbeadde")) return false;
+    const QByteArray text = bytes.mid(4);
+    return text == QByteArrayLiteral("NullsoftInst") ||
+           text == QByteArray("nsisinstall\0", 12);
+}
+
+quint32 nsisHeaderOffset(const QByteArray& data)
+{
+    const qsizetype limit = qMin<qsizetype>(data.size() - 28, 64 * 1024 * 1024);
+    for (qsizetype offset = 0; offset <= limit; offset += 512) {
+        if (!isNsisSignature(data.mid(offset + 4, 16))) continue;
+        const quint32 flags = readLe32(data, offset);
+        const quint32 headerSize = readLe32(data, offset + 20);
+        const quint32 archiveSize = readLe32(data, offset + 24);
+        if ((flags & ~0x0fU) == 0 && headerSize >= 68 && archiveSize >= 28 &&
+            archiveSize <= quint64(data.size() - offset)) return quint32(offset);
+    }
+    return std::numeric_limits<quint32>::max();
+}
+
 quint16 readBe16(const QByteArray& data, qsizetype offset)
 {
     if (offset < 0 || offset + 2 > data.size()) return 0;
@@ -78,6 +104,48 @@ quint32 readBe32(const QByteArray& data, qsizetype offset)
     const auto* p = reinterpret_cast<const unsigned char*>(data.constData() + offset);
     return (quint32(p[0]) << 24) | (quint32(p[1]) << 16) |
            (quint32(p[2]) << 8) | quint32(p[3]);
+}
+
+bool hasLzipHeader(const QByteArray& data)
+{
+    if (data.size() < 6 || data[0] != 'L' || data[1] != 'Z' ||
+        data[2] != 'I' || data[3] != 'P' || uchar(data[4]) != 1)
+        return false;
+    const unsigned exponent = uchar(data[5]) & 0x1Fu;
+    return exponent >= 12 && exponent <= 29;
+}
+
+bool hasZstdHeader(const QByteArray& data)
+{
+    if (data.size() < 4) return false;
+    const auto* bytes = reinterpret_cast<const unsigned char*>(data.constData());
+    if (bytes[0] == 0x28 && bytes[1] == 0xB5 && bytes[2] == 0x2F && bytes[3] == 0xFD)
+        return true;
+    return (bytes[0] & 0xF0u) == 0x50u && bytes[1] == 0x2A &&
+        bytes[2] == 0x4D && bytes[3] == 0x18;
+}
+
+bool hasCramFsHeader(const QByteArray& data)
+{
+    const qsizetype offsets[] = {0, 64, 512};
+    for (qsizetype offset : offsets) {
+        if (data.size() < offset + 32) continue;
+        const auto* p = reinterpret_cast<const unsigned char*>(data.constData() + offset);
+        const bool little = p[0] == 0x45 && p[1] == 0x3d && p[2] == 0xcd && p[3] == 0x28;
+        const bool big = p[0] == 0x28 && p[1] == 0xcd && p[2] == 0x3d && p[3] == 0x45;
+        if ((little || big) && std::memcmp(p + 16, "Compressed ROMFS", 16) == 0)
+            return true;
+    }
+    return false;
+}
+
+bool hasArjHeader(const QByteArray& data)
+{
+    if (data.size() < 34 || uchar(data[0]) != 0x60 || uchar(data[1]) != 0xEA)
+        return false;
+    const quint16 blockSize = readLe16(data, 2);
+    return blockSize >= 30 && blockSize <= 2600 &&
+           uchar(data[4]) >= 30 && uchar(data[4]) <= blockSize && uchar(data[10]) == 2;
 }
 
 bool looksLikeAdonisArmVectorWord(quint32 word)
@@ -738,8 +806,39 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
     if (!file.open(QIODevice::ReadOnly)) {
         return {ModuleFormat::Unknown, 0, {}, file.errorString()};
     }
-
+    if (file.size() >= 512 + 28) {
+        const qint64 scanLimit = qMin<qint64>(file.size() - 28, 64 * 1024 * 1024);
+        for (qint64 offset = 0; offset <= scanLimit; offset += 512) {
+            if (!file.seek(offset)) break;
+            const QByteArray prefix = file.read(28);
+            if (prefix.size() != 28 || !isNsisSignature(prefix.mid(4, 16))) continue;
+            const quint32 flags = readLe32(prefix, 0);
+            const quint32 headerSize = readLe32(prefix, 20);
+            const quint32 archiveSize = readLe32(prefix, 24);
+            if ((flags & ~0x0fU) == 0 && headerSize >= 68 &&
+                archiveSize >= 28 && quint64(archiveSize) <= quint64(file.size() - offset))
+                return {ModuleFormat::NSIS, quint32(offset),
+                        QStringLiteral("Nullsoft Scriptable Install System installer"), {}};
+        }
+        file.seek(0);
+    }
+    if (file.read(4) == QByteArrayLiteral("ITSF")) {
+        file.seek(0);
+        return {ModuleFormat::CHM, 0, QStringLiteral("Microsoft Compiled HTML Help (CHM)"), {}};
+    }
+    file.seek(0);
+    if (hasCramFsHeader(file.read(544))) {
+        file.seek(0);
+        return {ModuleFormat::CRAMFS, 0, QStringLiteral("CramFS image"), {}};
+    }
+    file.seek(0);
     const QByteArray rarPrefix = file.read(1024 * 1024 + 8);
+    if (rarPrefix.size() >= 4 && std::memcmp(rarPrefix.constData(), "\xED\xAB\xEE\xDB", 4) == 0)
+        return {ModuleFormat::RPM, 0, QStringLiteral("RPM package"), {}};
+    if (rarPrefix.startsWith("xar!"))
+        return {ModuleFormat::XAR, 0, QStringLiteral("XAR archive"), {}};
+    if (hasArjHeader(rarPrefix))
+        return {ModuleFormat::ARJ, 0, QStringLiteral("ARJ archive"), {}};
     const QByteArray rar5Marker("Rar!\x1a\x07\x01\x00", 8);
     const qsizetype rar5Offset = rarPrefix.indexOf(rar5Marker);
     if (rar5Offset >= 0)
@@ -766,6 +865,16 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         sevenZipHead[4] == '\'' && static_cast<unsigned char>(sevenZipHead[5]) == 0x1C)
         return {ModuleFormat::SEVEN_ZIP, 0, QStringLiteral("7-Zip archive"), {}};
 
+    const QByteArray lzipHead = file.read(6);
+    file.seek(0);
+    if (hasLzipHeader(lzipHead))
+        return {ModuleFormat::LZIP, 0, QStringLiteral("Lzip compressed stream"), {}};
+
+    const QByteArray zstdHead = file.read(4);
+    file.seek(0);
+    if (hasZstdHeader(zstdHead))
+        return {ModuleFormat::ZSTD, 0, QStringLiteral("Zstandard compressed stream"), {}};
+
     const QByteArray gzipHead = file.read(3);
     file.seek(0);
     if (gzipHead.size() == 3 && uchar(gzipHead.at(0)) == 0x1F &&
@@ -777,6 +886,12 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
     if (bzip2Head.size() == 4 && bzip2Head.startsWith("BZh") &&
         bzip2Head.at(3) >= '1' && bzip2Head.at(3) <= '9')
         return {ModuleFormat::BZIP2, 0, QStringLiteral("BZIP2 compressed stream"), {}};
+
+    file.seek(0);
+    const QByteArray xzHead = file.read(6);
+    file.seek(0);
+    if (xzHead.size() == 6 && std::memcmp(xzHead.constData(), "\xFD" "7zXZ\0", 6) == 0)
+        return {ModuleFormat::XZ, 0, QStringLiteral("XZ compressed stream"), {}};
 
     const QByteArray arHead = file.read(8);
     file.seek(0);
@@ -799,6 +914,9 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
     const QByteArray zipHead = file.read(4);
     file.seek(0);
     if (isZipHeader(zipHead)) {
+        if (QFileInfo(filePath).suffix().compare(QStringLiteral("imz"), Qt::CaseInsensitive) == 0)
+            return {ModuleFormat::FLOPPY_IMAGE, 0,
+                    QStringLiteral("WinImage compressed floppy image"), {}};
         const ModuleFormat named = zipPackageFormatForName(filePath);
         if (named == ModuleFormat::APPX || named == ModuleFormat::MSIX ||
             named == ModuleFormat::APPXBUNDLE || named == ModuleFormat::XAP)
@@ -807,8 +925,12 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
     }
 
     file.seek(0);
-    if (UuencodeModule::hasHeader(file.read(4096)))
+    if (UuencodeModule::hasHeader(file.read(64 * 1024)))
         return {ModuleFormat::UUE, 0, QStringLiteral("UUencoded file"), {}};
+
+    file.seek(0);
+    if (IhexModule::hasHeader(file.read(64 * 1024)))
+        return {ModuleFormat::INTEL_HEX, 0, QStringLiteral("Intel HEX firmware"), {}};
 
     file.seek(0);
     if (LhaModule::hasHeader(file.read(256 * 1024 + 512)))
@@ -1459,6 +1581,10 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
     if (data.size() >= 8 && data.left(8) == QByteArray("SZDD\x88\xF0\x27\x33", 8)) {
         return {ModuleFormat::SZDD, 0, QStringLiteral("Microsoft Compress SZDD archive"), {}};
     }
+    if (data.size() >= 8 && data.left(8) == QByteArray("KWAJ\x88\xF0\x27\xD1", 8))
+        return {ModuleFormat::KWAJ, 0, QStringLiteral("Microsoft KWAJ compressed file"), {}};
+    if (data.size() >= 8 && data.left(8) == QByteArray("AFCWGPSM", 8))
+        return {ModuleFormat::XBCOMPRESS, 0, QStringLiteral("Microsoft XBCOMPRESS file"), {}};
 
     if (data.size() >= 4 && std::memcmp(data.constData(), "MSCF", 4) == 0) {
         return {ModuleFormat::CAB, 0, QStringLiteral("Microsoft Cabinet (CAB) archive"), {}};
@@ -1589,6 +1715,22 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
 
 ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
 {
+    if (data.size() >= 28) {
+        const quint32 offset = nsisHeaderOffset(data);
+        if (offset != std::numeric_limits<quint32>::max())
+            return {ModuleFormat::NSIS, offset,
+                    QStringLiteral("Nullsoft Scriptable Install System installer"), {}};
+    }
+    if (data.size() >= 4 && data.startsWith("ITSF"))
+        return {ModuleFormat::CHM, 0, QStringLiteral("Microsoft Compiled HTML Help (CHM)"), {}};
+    if (hasCramFsHeader(data))
+        return {ModuleFormat::CRAMFS, 0, QStringLiteral("CramFS image"), {}};
+    if (data.size() >= 4 && std::memcmp(data.constData(), "\xED\xAB\xEE\xDB", 4) == 0)
+        return {ModuleFormat::RPM, 0, QStringLiteral("RPM package"), {}};
+    if (data.startsWith("xar!"))
+        return {ModuleFormat::XAR, 0, QStringLiteral("XAR archive"), {}};
+    if (hasArjHeader(data))
+        return {ModuleFormat::ARJ, 0, QStringLiteral("ARJ archive"), {}};
     const QByteArray rar5Marker("Rar!\x1a\x07\x01\x00", 8);
     const qsizetype rar5Offset = data.left(qMin<qsizetype>(
         data.size(), qsizetype(1024 * 1024 + 8))).indexOf(rar5Marker);
@@ -1612,6 +1754,12 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
         static_cast<unsigned char>(data[3]) == 0xBE)
         return {ModuleFormat::WPI, 0, QStringLiteral("OS/2 WarpIN package"), {}};
 
+    if (hasLzipHeader(data))
+        return {ModuleFormat::LZIP, 0, QStringLiteral("Lzip compressed stream"), {}};
+
+    if (hasZstdHeader(data))
+        return {ModuleFormat::ZSTD, 0, QStringLiteral("Zstandard compressed stream"), {}};
+
     if (ResourceForkModule::hasHeader(data))
         return {ModuleFormat::MAC_RESOURCE_FORK, 0, QStringLiteral("Apple resource fork"), {}};
 
@@ -1621,6 +1769,9 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
 
     if (data.size() >= 4 && data.startsWith("BZh") && data.at(3) >= '1' && data.at(3) <= '9')
         return {ModuleFormat::BZIP2, 0, QStringLiteral("BZIP2 compressed stream"), {}};
+
+    if (data.size() >= 6 && std::memcmp(data.constData(), "\xFD" "7zXZ\0", 6) == 0)
+        return {ModuleFormat::XZ, 0, QStringLiteral("XZ compressed stream"), {}};
 
     if (data.size() >= 8 && data.startsWith("!<arch>\n"))
         return {ModuleFormat::AR, 0, QStringLiteral("Unix ar archive"), {}};
@@ -1636,6 +1787,9 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
 
     if (UuencodeModule::hasHeader(data))
         return {ModuleFormat::UUE, 0, QStringLiteral("UUencoded file"), {}};
+
+    if (IhexModule::hasHeader(data))
+        return {ModuleFormat::INTEL_HEX, 0, QStringLiteral("Intel HEX firmware"), {}};
 
     if (LhaModule::hasHeader(data))
         return {ModuleFormat::LHA, 0, QStringLiteral("LHA / LZH archive"), {}};
@@ -1695,6 +1849,10 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
 
     if (data.size() >= 8 && data.left(8) == QByteArray("SZDD\x88\xF0\x27\x33", 8))
         return {ModuleFormat::SZDD, 0, QStringLiteral("Microsoft Compress SZDD archive"), {}};
+    if (data.size() >= 8 && data.left(8) == QByteArray("KWAJ\x88\xF0\x27\xD1", 8))
+        return {ModuleFormat::KWAJ, 0, QStringLiteral("Microsoft KWAJ compressed file"), {}};
+    if (data.size() >= 8 && data.left(8) == QByteArray("AFCWGPSM", 8))
+        return {ModuleFormat::XBCOMPRESS, 0, QStringLiteral("Microsoft XBCOMPRESS file"), {}};
 
     if (isZipHeader(data))
         return {ModuleFormat::ZIP, 0, QStringLiteral("ZIP archive"), {}};
@@ -1902,6 +2060,20 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
 
 ModuleFormatInfo ModuleFormatDetector::detectNestedBuffer(const QByteArray& data)
 {
+    if (data.size() >= 28) {
+        const quint32 offset = nsisHeaderOffset(data);
+        if (offset != std::numeric_limits<quint32>::max())
+            return {ModuleFormat::NSIS, offset,
+                    QStringLiteral("Nullsoft Scriptable Install System installer"), {}};
+    }
+    if (data.size() >= 4 && data.startsWith("ITSF"))
+        return {ModuleFormat::CHM, 0, QStringLiteral("Microsoft Compiled HTML Help (CHM)"), {}};
+    if (data.size() >= 4 && std::memcmp(data.constData(), "\xED\xAB\xEE\xDB", 4) == 0)
+        return {ModuleFormat::RPM, 0, QStringLiteral("RPM package"), {}};
+    if (data.startsWith("xar!"))
+        return {ModuleFormat::XAR, 0, QStringLiteral("XAR archive"), {}};
+    if (hasArjHeader(data))
+        return {ModuleFormat::ARJ, 0, QStringLiteral("ARJ archive"), {}};
     const QByteArray rar5Marker("Rar!\x1a\x07\x01\x00", 8);
     const qsizetype rar5Offset = data.left(qMin<qsizetype>(
         data.size(), qsizetype(1024 * 1024 + 8))).indexOf(rar5Marker);
@@ -1925,6 +2097,12 @@ ModuleFormatInfo ModuleFormatDetector::detectNestedBuffer(const QByteArray& data
         static_cast<unsigned char>(data[3]) == 0xBE)
         return {ModuleFormat::WPI, 0, QStringLiteral("OS/2 WarpIN package"), {}};
 
+    if (hasLzipHeader(data))
+        return {ModuleFormat::LZIP, 0, QStringLiteral("Lzip compressed stream"), {}};
+
+    if (hasZstdHeader(data))
+        return {ModuleFormat::ZSTD, 0, QStringLiteral("Zstandard compressed stream"), {}};
+
     if (ResourceForkModule::hasHeader(data))
         return {ModuleFormat::MAC_RESOURCE_FORK, 0, QStringLiteral("Apple resource fork"), {}};
 
@@ -1934,6 +2112,9 @@ ModuleFormatInfo ModuleFormatDetector::detectNestedBuffer(const QByteArray& data
 
     if (data.size() >= 4 && data.startsWith("BZh") && data.at(3) >= '1' && data.at(3) <= '9')
         return {ModuleFormat::BZIP2, 0, QStringLiteral("BZIP2 compressed stream"), {}};
+
+    if (data.size() >= 6 && std::memcmp(data.constData(), "\xFD" "7zXZ\0", 6) == 0)
+        return {ModuleFormat::XZ, 0, QStringLiteral("XZ compressed stream"), {}};
 
     if (data.size() >= 8 && data.startsWith("!<arch>\n"))
         return {ModuleFormat::AR, 0, QStringLiteral("Unix ar archive"), {}};
@@ -1949,6 +2130,9 @@ ModuleFormatInfo ModuleFormatDetector::detectNestedBuffer(const QByteArray& data
 
     if (UuencodeModule::hasHeader(data))
         return {ModuleFormat::UUE, 0, QStringLiteral("UUencoded file"), {}};
+
+    if (IhexModule::hasHeader(data))
+        return {ModuleFormat::INTEL_HEX, 0, QStringLiteral("Intel HEX firmware"), {}};
 
     if (LhaModule::hasHeader(data))
         return {ModuleFormat::LHA, 0, QStringLiteral("LHA / LZH archive"), {}};
@@ -2009,6 +2193,10 @@ ModuleFormatInfo ModuleFormatDetector::detectNestedBuffer(const QByteArray& data
         return {ModuleFormat::CAB, 0, QStringLiteral("Microsoft Cabinet (CAB) archive"), {}};
     if (data.size() >= 8 && data.left(8) == QByteArray("SZDD\x88\xF0\x27\x33", 8))
         return {ModuleFormat::SZDD, 0, QStringLiteral("Microsoft Compress SZDD archive"), {}};
+    if (data.size() >= 8 && data.left(8) == QByteArray("KWAJ\x88\xF0\x27\xD1", 8))
+        return {ModuleFormat::KWAJ, 0, QStringLiteral("Microsoft KWAJ compressed file"), {}};
+    if (data.size() >= 8 && data.left(8) == QByteArray("AFCWGPSM", 8))
+        return {ModuleFormat::XBCOMPRESS, 0, QStringLiteral("Microsoft XBCOMPRESS file"), {}};
     if (data.size() >= 8 && std::memcmp(data.constData(), "MSWIM\0\0\0", 8) == 0)
         return {ModuleFormat::WIM, 0, QStringLiteral("Windows Imaging (WIM) image"), {}};
     if (data.size() >= 4 && std::memcmp(data.constData(), "KDMV", 4) == 0)
@@ -2086,16 +2274,29 @@ QString ModuleFormatDetector::formatName(ModuleFormat format)
     case ModuleFormat::CON: return QStringLiteral("CON");
     case ModuleFormat::OS2_PACK: return QStringLiteral("OS/2 PACK");
     case ModuleFormat::SZDD: return QStringLiteral("SZDD");
+    case ModuleFormat::KWAJ: return QStringLiteral("KWAJ");
+    case ModuleFormat::XBCOMPRESS: return QStringLiteral("XBCOMPRESS");
+    case ModuleFormat::NSIS: return QStringLiteral("NSIS");
     case ModuleFormat::GZIP: return QStringLiteral("GZIP");
+    case ModuleFormat::XZ: return QStringLiteral("XZ");
     case ModuleFormat::BZIP2: return QStringLiteral("BZIP2");
     case ModuleFormat::AR: return QStringLiteral("AR");
     case ModuleFormat::CPIO: return QStringLiteral("CPIO");
     case ModuleFormat::UNIX_COMPRESS: return QStringLiteral("UNIX_COMPRESS");
     case ModuleFormat::UUE: return QStringLiteral("UUE");
+    case ModuleFormat::INTEL_HEX: return QStringLiteral("IHEX");
+    case ModuleFormat::DEB: return QStringLiteral("DEB");
+    case ModuleFormat::RPM: return QStringLiteral("RPM");
+    case ModuleFormat::CHM: return QStringLiteral("CHM");
     case ModuleFormat::LHA: return QStringLiteral("LHA");
     case ModuleFormat::SEVEN_ZIP: return QStringLiteral("7-Zip");
     case ModuleFormat::RAR4: return QStringLiteral("RAR4");
     case ModuleFormat::RAR5: return QStringLiteral("RAR5");
+    case ModuleFormat::LZIP: return QStringLiteral("LZIP");
+    case ModuleFormat::ZSTD: return QStringLiteral("ZSTD");
+    case ModuleFormat::ARJ: return QStringLiteral("ARJ");
+    case ModuleFormat::XAR: return QStringLiteral("XAR");
+    case ModuleFormat::LZMA: return QStringLiteral("LZMA");
     case ModuleFormat::SIEMENS_IMG: return QStringLiteral("Siemens IMG");
     case ModuleFormat::SIEMENS_ADONIS: return QStringLiteral("Siemens ADONIS");
     case ModuleFormat::SIEMENS_FWF: return QStringLiteral("Siemens FWF");
@@ -2121,6 +2322,7 @@ QString ModuleFormatDetector::formatName(ModuleFormat format)
     case ModuleFormat::JFS: return QStringLiteral("JFS");
     case ModuleFormat::HPFS: return QStringLiteral("HPFS");
     case ModuleFormat::SQUASHFS: return QStringLiteral("SquashFS");
+    case ModuleFormat::CRAMFS: return QStringLiteral("CramFS");
     case ModuleFormat::HFSPLUS: return QStringLiteral("HFS+");
     case ModuleFormat::DMG: return QStringLiteral("DMG");
     case ModuleFormat::BTRFS: return QStringLiteral("Btrfs");

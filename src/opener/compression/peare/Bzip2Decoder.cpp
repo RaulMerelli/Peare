@@ -411,7 +411,7 @@ bool decodeBlockSymbols(BitReader& bits, std::uint32_t originalPointer,
 }
 
 bool finishBlock(const BzipBlockSymbols& decoded, std::uint32_t expectedCrc,
-                 std::size_t outputLimit,
+                 std::size_t outputLimit, bool checkCrc,
                  std::vector<std::uint8_t>* output, std::uint32_t* decodedCrc) {
     if (!output || !decodedCrc || output->size() > outputLimit) return false;
     const std::vector<std::uint8_t>& lastColumn = decoded.lastColumn;
@@ -486,10 +486,33 @@ bool finishBlock(const BzipBlockSymbols& decoded, std::uint32_t expectedCrc,
     }
     const std::size_t blockSize = output->size() - blockStart;
     const std::uint32_t crc = blockCrc(output->data() + blockStart, blockSize);
-    if (crc != expectedCrc)
+    if (checkCrc && crc != expectedCrc)
         return false;
     if (decodedCrc) *decodedCrc = crc;
     return true;
+}
+
+bool decodeNsisStream(BitReader& bits, std::size_t outputLimit,
+                      std::vector<std::uint8_t>* output, bool hasRandomizedFlag) {
+    const std::size_t blockLimit = 900000;
+    while (true) {
+        std::uint32_t marker = 0;
+        if (!bits.read(8, &marker)) return false;
+        if (marker == 0x17) {
+            bits.alignByte();
+            return true;
+        }
+        if (marker != 0x31) return false;
+        std::uint32_t randomized = 0;
+        if (hasRandomizedFlag && !bits.read(1, &randomized)) return false;
+        std::uint32_t originalPointer = 0;
+        if (!bits.read(24, &originalPointer)) return false;
+        std::shared_ptr<BzipBlockSymbols> decoded = std::make_shared<BzipBlockSymbols>();
+        if (!decodeBlockSymbols(bits, originalPointer, randomized != 0, blockLimit, decoded.get()))
+            return false;
+        std::uint32_t crc = 0;
+        if (!finishBlock(*decoded, 0, outputLimit, false, output, &crc)) return false;
+    }
 }
 
 bool decodeStream(BitReader& bits, std::size_t outputLimit, std::vector<std::uint8_t>* output) {
@@ -539,13 +562,13 @@ bool decodeStream(BitReader& bits, std::size_t outputLimit, std::vector<std::uin
                 [decoded, storedCrc, outputLimit, output]() {
                     std::uint32_t crc = 0;
                     const bool success = finishBlock(
-                        *decoded, storedCrc, outputLimit, output, &crc);
+                        *decoded, storedCrc, outputLimit, true, output, &crc);
                     return BzipBlockResult{success, crc};
                 });
             hasPending = true;
         } catch (...) {
             std::uint32_t crc = 0;
-            if (!finishBlock(*decoded, storedCrc, outputLimit, output, &crc))
+            if (!finishBlock(*decoded, storedCrc, outputLimit, true, output, &crc))
                 return false;
             includeBlockCrc(crc);
         }
@@ -572,6 +595,44 @@ bool decompressBzip2(const std::uint8_t* input, std::size_t inputSize,
                 output->clear();
                 return false;
             }
+        }
+        return true;
+    } catch (...) {
+        output->clear();
+        return false;
+    }
+}
+
+bool decompressNsisBzip2(const std::uint8_t* input, std::size_t inputSize,
+                         std::size_t outputLimit,
+                         std::vector<std::uint8_t>* output) {
+    if (!output) return false;
+    output->clear();
+    if (!input || inputSize < 2) return false;
+    try {
+        BitReader bits(input, inputSize);
+        if (!decodeNsisStream(bits, outputLimit, output, false)) {
+            output->clear();
+            return false;
+        }
+        return true;
+    } catch (...) {
+        output->clear();
+        return false;
+    }
+}
+
+bool decompressNsisV1Bzip2(const std::uint8_t* input, std::size_t inputSize,
+                           std::size_t outputLimit,
+                           std::vector<std::uint8_t>* output) {
+    if (!output) return false;
+    output->clear();
+    if (!input || inputSize < 2) return false;
+    try {
+        BitReader bits(input, inputSize);
+        if (!decodeNsisStream(bits, outputLimit, output, true)) {
+            output->clear();
+            return false;
         }
         return true;
     } catch (...) {

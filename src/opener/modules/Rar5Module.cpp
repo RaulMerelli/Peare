@@ -2,7 +2,9 @@
 #include "Compat.h"
 
 #include "../fs/QFileByteStore.h"
+#include "../compression/third_party/lzma/Aes.h"
 
+#include <QCryptographicHash>
 #include <QFile>
 #include <QStringList>
 
@@ -44,13 +46,122 @@ std::uint32_t readLe32(const std::uint8_t* p)
 
 std::uint32_t crc32(const std::uint8_t* data, std::size_t size)
 {
+    static const std::array<std::uint32_t, 256> table = [] {
+        std::array<std::uint32_t, 256> values = {};
+        for (std::size_t i = 0; i < values.size(); ++i) {
+            std::uint32_t value = std::uint32_t(i);
+            for (unsigned bit = 0; bit < 8; ++bit)
+                value = (value >> 1) ^ ((value & 1U) ? 0xedb88320U : 0U);
+            values[i] = value;
+        }
+        return values;
+    }();
     std::uint32_t crc = 0xffffffffU;
-    for (std::size_t i = 0; i < size; ++i) {
-        crc ^= data[i];
-        for (int bit = 0; bit < 8; ++bit)
-            crc = (crc >> 1) ^ ((crc & 1) ? 0xedb88320U : 0U);
-    }
+    for (std::size_t i = 0; i < size; ++i)
+        crc = (crc >> 8) ^ table[(crc ^ data[i]) & 0xffU];
     return crc ^ 0xffffffffU;
+}
+
+QByteArray hmacSha256(const QByteArray& key, const QByteArray& data)
+{
+    QByteArray digest;
+    const QByteArray* source = &key;
+    if (key.size() > 64) {
+        digest = QCryptographicHash::hash(key, QCryptographicHash::Sha256);
+        source = &digest;
+    }
+    QByteArray normalized(64, char(0));
+    std::memcpy(normalized.data(), source->constData(),
+                std::size_t(source->size()));
+    QByteArray innerPad(64, char(0x36));
+    QByteArray outerPad(64, char(0x5c));
+    for (int i = 0; i < 64; ++i) {
+        innerPad[i] = char(static_cast<unsigned char>(innerPad[i]) ^
+                           static_cast<unsigned char>(normalized[i]));
+        outerPad[i] = char(static_cast<unsigned char>(outerPad[i]) ^
+                           static_cast<unsigned char>(normalized[i]));
+    }
+    QCryptographicHash inner(QCryptographicHash::Sha256);
+    inner.addData(innerPad);
+    inner.addData(data);
+    QByteArray outer = outerPad;
+    outer.append(inner.result());
+    return QCryptographicHash::hash(outer, QCryptographicHash::Sha256);
+}
+
+bool deriveRar5Keys(const QByteArray& password, const std::uint8_t* salt,
+                    std::uint8_t kdfCount, QByteArray* key, QByteArray* hashKey)
+{
+    if (!salt || !key || !hashKey || kdfCount > 20) return false;
+    const QByteArray saltBytes(reinterpret_cast<const char*>(salt), 16);
+    QByteArray block = saltBytes;
+    block.append(char(0));
+    block.append(char(0));
+    block.append(char(0));
+    block.append(char(1));
+    QByteArray value = hmacSha256(password, block);
+    std::array<unsigned char, 32> result = {};
+    for (int i = 0; i < 32; ++i)
+        result[std::size_t(i)] = static_cast<unsigned char>(value.at(i));
+    const auto accumulate = [&password, &value, &result]() {
+        value = hmacSha256(password, value);
+        for (int i = 0; i < 32; ++i)
+            result[std::size_t(i)] ^= static_cast<unsigned char>(value.at(i));
+    };
+    const std::uint32_t iterations = 1U << kdfCount;
+    for (std::uint32_t i = 1; i < iterations; ++i)
+        accumulate();
+    *key = QByteArray(reinterpret_cast<const char*>(result.data()),
+                      int(result.size()));
+    for (int i = 0; i < 16; ++i)
+        accumulate();
+    *hashKey = QByteArray(reinterpret_cast<const char*>(result.data()),
+                          int(result.size()));
+    return true;
+}
+
+bool decryptAesCbc(const QByteArray& key, const std::uint8_t* iv,
+                   std::vector<std::uint8_t>* data)
+{
+    if (key.size() != 32 || !iv || !data || (data->size() & 15U) != 0)
+        return false;
+    static std::once_flag aesTablesOnce;
+    std::call_once(aesTablesOnce, AesGenTables);
+    alignas(16) UInt32 ivAndSchedule[AES_NUM_IVMRK_WORDS] = {};
+    Aes_SetKey_Dec(ivAndSchedule + 4,
+                   reinterpret_cast<const Byte*>(key.constData()), 32);
+    AesCbc_Init(ivAndSchedule, iv);
+    if (!data->empty()) {
+        if (!g_AesCbc_Decode) return false;
+        g_AesCbc_Decode(ivAndSchedule, data->data(), data->size() / AES_BLOCK_SIZE);
+    }
+    return true;
+}
+
+bool decryptRar5Data(const QByteArray& password, const std::uint8_t* salt,
+                     const std::uint8_t* iv, std::uint8_t kdfCount,
+                     const std::vector<std::uint8_t>& encrypted,
+                     std::vector<std::uint8_t>* decrypted, QByteArray* hashKey)
+{
+    if (!decrypted || !hashKey || (encrypted.size() & 15U) != 0) return false;
+    QByteArray key;
+    if (!deriveRar5Keys(password, salt, kdfCount, &key, hashKey)) return false;
+    *decrypted = encrypted;
+    const bool ok = decryptAesCbc(key, iv, decrypted);
+    std::fill(key.begin(), key.end(), char(0));
+    return ok;
+}
+
+std::uint32_t rar5Checksum(const std::uint8_t* hashKey, std::uint32_t crc)
+{
+    QByteArray key(reinterpret_cast<const char*>(hashKey), 32);
+    QByteArray value(4, char(0));
+    for (unsigned i = 0; i < 4; ++i) value[int(i)] = char(crc >> (i * 8));
+    const QByteArray digest = hmacSha256(key, value);
+    std::uint32_t result = 0;
+    for (int i = 0; i < digest.size(); ++i)
+        result ^= std::uint32_t(static_cast<unsigned char>(digest[i])) << ((i & 3) * 8);
+    return result;
 }
 
 class Cursor final {
@@ -103,9 +214,18 @@ public:
 
     bool read(unsigned count, std::uint32_t* value)
     {
-        if (!value || count > 32 || size_ > std::numeric_limits<std::size_t>::max() / 8 ||
+        if (!value || count > 32) return false;
+        std::uint64_t result = 0;
+        if (!read64(count, &result)) return false;
+        *value = std::uint32_t(result);
+        return true;
+    }
+
+    bool read64(unsigned count, std::uint64_t* value)
+    {
+        if (!value || count > 64 || size_ > std::numeric_limits<std::size_t>::max() / 8 ||
             bit_ > size_ * 8 || count > size_ * 8 - bit_) return false;
-        std::uint32_t result = 0;
+        std::uint64_t result = 0;
         for (unsigned i = 0; i < count; ++i) {
             result = (result << 1) |
                 ((data_[bit_ / 8] >> (7U - unsigned(bit_ & 7U))) & 1U);
@@ -143,7 +263,10 @@ public:
             count_[length] = counts[length];
             offset += counts[length];
         }
-        if (!offset) return false;
+        if (!offset) {
+            symbols_.clear();
+            return true;
+        }
         symbols_.clear();
         symbols_.reserve(offset);
         for (unsigned length = 1; length <= 15; ++length)
@@ -185,7 +308,101 @@ struct Rar5Tables {
     Rar5Huffman repeatedLength;
 };
 
-bool readRar5Tables(Rar5BitReader* bits, Rar5Tables* tables)
+struct Rar5UnpackState {
+    Rar5Tables tables;
+    bool haveTables = false;
+    bool tableExtendedDistances = false;
+    std::array<std::uint64_t, 4> oldDistances{{0, 0, 0, 0}};
+    std::uint64_t lastLength = 0;
+    std::vector<std::uint8_t> history;
+};
+
+struct Rar5Filter {
+    std::size_t offset = 0;
+    std::size_t length = 0;
+    std::uint32_t type = 0;
+    std::uint32_t channels = 0;
+};
+
+bool readRar5FilterData(Rar5BitReader* bits, std::uint32_t* value)
+{
+    std::uint32_t count = 0;
+    if (!bits || !value || !bits->read(2, &count)) return false;
+    ++count;
+    *value = 0;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        std::uint32_t byte = 0;
+        if (!bits->read(8, &byte)) return false;
+        *value |= byte << (i * 8U);
+    }
+    return true;
+}
+
+bool applyRar5Filters(std::vector<std::uint8_t>* output,
+                      const std::vector<Rar5Filter>& filters)
+{
+    if (!output) return false;
+    for (const Rar5Filter& filter : filters) {
+        if (filter.offset > output->size() ||
+            filter.length > output->size() - filter.offset) return false;
+        std::uint8_t* data = output->data() + filter.offset;
+        const std::size_t size = filter.length;
+        if (filter.type == 1 || filter.type == 2) {
+            const std::uint8_t second = filter.type == 2 ? 0xe9U : 0xe8U;
+            for (std::size_t i = 0; i + 4 < size;) {
+                const std::uint8_t opcode = data[i++];
+                if (opcode != 0xe8U && opcode != second) continue;
+                const std::uint32_t offset =
+                    std::uint32_t(filter.offset + i) % 0x01000000U;
+                const std::uint32_t address = readLe32(data + i);
+                if (address & 0x80000000U) {
+                    if (((address + offset) & 0x80000000U) == 0) {
+                        const std::uint32_t adjusted = address + 0x01000000U;
+                        for (unsigned byte = 0; byte < 4; ++byte)
+                            data[i + byte] = std::uint8_t(adjusted >> (byte * 8U));
+                    }
+                } else if (address < 0x01000000U) {
+                    const std::uint32_t adjusted = address - offset;
+                    for (unsigned byte = 0; byte < 4; ++byte)
+                        data[i + byte] = std::uint8_t(adjusted >> (byte * 8U));
+                }
+                i += 4;
+            }
+        } else if (filter.type == 3) {
+            for (std::size_t i = 0; i + 3 < size; i += 4) {
+                if (data[i + 3] != 0xeb) continue;
+                const std::uint32_t address = std::uint32_t(data[i]) |
+                    (std::uint32_t(data[i + 1]) << 8) |
+                    (std::uint32_t(data[i + 2]) << 16);
+                const std::uint32_t adjusted = address -
+                    std::uint32_t((filter.offset + i) / 4);
+                data[i] = std::uint8_t(adjusted);
+                data[i + 1] = std::uint8_t(adjusted >> 8);
+                data[i + 2] = std::uint8_t(adjusted >> 16);
+            }
+        } else if (filter.type == 0) {
+            if (!filter.channels || filter.channels > 32) return false;
+            std::vector<std::uint8_t> restored(size);
+            std::size_t source = 0;
+            for (std::uint32_t channel = 0;
+                 channel < filter.channels && channel < size; ++channel) {
+                std::uint8_t previous = 0;
+                for (std::size_t dest = channel; dest < size;
+                     dest += filter.channels) {
+                    previous = std::uint8_t(previous - data[source++]);
+                    restored[dest] = previous;
+                }
+            }
+            std::copy(restored.begin(), restored.end(), data);
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool readRar5Tables(Rar5BitReader* bits, Rar5Tables* tables,
+                    bool extendedDistances)
 {
     std::vector<std::uint8_t> bitLengths(20);
     for (std::size_t i = 0; i < bitLengths.size(); ++i) {
@@ -204,7 +421,8 @@ bool readRar5Tables(Rar5BitReader* bits, Rar5Tables* tables)
     }
     Rar5Huffman bitLengthTree;
     if (!bitLengthTree.build(bitLengths)) return false;
-    const std::size_t tableSize = 306 + 64 + 16 + 44;
+    const std::size_t distanceCount = extendedDistances ? 80 : 64;
+    const std::size_t tableSize = 306 + distanceCount + 16 + 44;
     std::vector<std::uint8_t> lengths;
     lengths.reserve(tableSize);
     while (lengths.size() < tableSize) {
@@ -230,25 +448,29 @@ bool readRar5Tables(Rar5BitReader* bits, Rar5Tables* tables)
     }
     std::vector<std::uint8_t> part(lengths.begin(), lengths.begin() + 306);
     if (!tables->literalLength.build(part)) return false;
-    part.assign(lengths.begin() + 306, lengths.begin() + 370);
+    part.assign(lengths.begin() + 306,
+                lengths.begin() + 306 + distanceCount);
     if (!tables->distance.build(part)) return false;
-    part.assign(lengths.begin() + 370, lengths.begin() + 386);
+    part.assign(lengths.begin() + 306 + distanceCount,
+                lengths.begin() + 322 + distanceCount);
     if (!tables->lowDistance.build(part)) return false;
-    part.assign(lengths.begin() + 386, lengths.end());
-    return tables->repeatedLength.build(part);
+    part.assign(lengths.begin() + 322 + distanceCount, lengths.end());
+    if (!tables->repeatedLength.build(part)) return false;
+    return true;
 }
 
 bool decodeRar5Member(const std::uint8_t* packed, std::size_t packedSize,
-                      std::uint64_t unpackedSize, std::vector<std::uint8_t>* output)
+                      std::uint64_t unpackedSize, std::uint64_t dictionarySize,
+                      bool extendedDistances, bool allowPadding, bool preserveHistory,
+                      Rar5UnpackState* state,
+                      std::vector<std::uint8_t>* output)
 {
-    if (!packed || !output || unpackedSize > std::uint64_t(output->max_size())) return false;
+    if (!packed || !state || !output ||
+        unpackedSize > std::uint64_t(output->max_size())) return false;
     output->clear();
     output->reserve(std::size_t(unpackedSize));
+    std::vector<Rar5Filter> filters;
     std::size_t position = 0;
-    Rar5Tables tables;
-    bool haveTables = false;
-    std::array<std::uint64_t, 4> oldDistances{{0, 0, 0, 0}};
-    std::uint64_t lastLength = 0;
     while (position < packedSize) {
         if (packedSize - position < 3) return false;
         const std::uint8_t flags = packed[position++];
@@ -265,29 +487,50 @@ bool decodeRar5Member(const std::uint8_t* packed, std::size_t packedSize,
         Rar5BitReader bits(packed + position, blockSize);
         const std::size_t blockEnd = (std::size_t(blockSize) - 1) * 8 + (flags & 7U) + 1;
         if (flags & 0x80U) {
-            if (!readRar5Tables(&bits, &tables)) return false;
-            haveTables = true;
+            if (!readRar5Tables(&bits, &state->tables, extendedDistances)) return false;
+            state->haveTables = true;
+            state->tableExtendedDistances = extendedDistances;
         }
-        if (!haveTables) return false;
+        if (!state->haveTables || state->tableExtendedDistances != extendedDistances)
+            return false;
         while (bits.position() < blockEnd && output->size() < unpackedSize) {
             std::uint32_t symbol = 0;
-            if (!tables.literalLength.decode(&bits, &symbol)) return false;
+            if (!state->tables.literalLength.decode(&bits, &symbol)) return false;
             if (symbol < 256) output->push_back(std::uint8_t(symbol));
             else {
                 std::uint64_t length = 0;
                 std::uint64_t distance = 0;
-                if (symbol == 256) return false;
+                if (symbol == 256) {
+                    std::uint32_t blockStart = 0;
+                    std::uint32_t blockLength = 0;
+                    std::uint32_t type = 0;
+                    if (!readRar5FilterData(&bits, &blockStart) ||
+                        !readRar5FilterData(&bits, &blockLength) ||
+                        !bits.read(3, &type)) return false;
+                    std::uint32_t channels = 0;
+                    if (type == 0) {
+                        if (!bits.read(5, &channels)) return false;
+                        ++channels;
+                    }
+                    if (!blockLength || blockLength > 0x400000U ||
+                        blockStart > unpackedSize - output->size() ||
+                        filters.size() >= 8192) return false;
+                    filters.push_back({output->size() + blockStart, blockLength,
+                                       type, channels});
+                    continue;
+                }
                 if (symbol == 257) {
-                    if (!lastLength) return false;
-                    length = lastLength;
-                    distance = oldDistances[0];
+                    if (!state->lastLength) return false;
+                    length = state->lastLength;
+                    distance = state->oldDistances[0];
                 } else if (symbol < 262) {
                     const unsigned index = symbol - 258;
-                    distance = oldDistances[index];
-                    for (unsigned i = index; i > 0; --i) oldDistances[i] = oldDistances[i - 1];
-                    oldDistances[0] = distance;
+                    distance = state->oldDistances[index];
+                    for (unsigned i = index; i > 0; --i)
+                        state->oldDistances[i] = state->oldDistances[i - 1];
+                    state->oldDistances[0] = distance;
                     std::uint32_t slot = 0;
-                    if (!tables.repeatedLength.decode(&bits, &slot)) return false;
+                    if (!state->tables.repeatedLength.decode(&bits, &slot)) return false;
                     std::uint32_t extra = 0;
                     const unsigned extraBits = slot < 8 ? 0 : slot / 4 - 1;
                     length = slot < 8 ? 2 + slot : 2 + ((4U | (slot & 3U)) << extraBits);
@@ -301,7 +544,7 @@ bool decodeRar5Member(const std::uint8_t* packed, std::size_t packedSize,
                     if (lengthBits && !bits.read(lengthBits, &extraLength)) return false;
                     length += extraLength;
                     std::uint32_t distanceSlot = 0;
-                    if (!tables.distance.decode(&bits, &distanceSlot)) return false;
+                    if (!state->tables.distance.decode(&bits, &distanceSlot)) return false;
                     unsigned distanceBits = 0;
                     distance = 1;
                     if (distanceSlot < 4) distance += distanceSlot;
@@ -309,9 +552,10 @@ bool decodeRar5Member(const std::uint8_t* packed, std::size_t packedSize,
                         distanceBits = distanceSlot / 2 - 1;
                         distance += std::uint64_t(2U | (distanceSlot & 1U)) << distanceBits;
                         if (distanceBits >= 4) {
-                            std::uint32_t high = 0, low = 0;
-                            if (distanceBits > 4 && !bits.read(distanceBits - 4, &high)) return false;
-                            if (!tables.lowDistance.decode(&bits, &low)) return false;
+                            std::uint64_t high = 0;
+                            std::uint32_t low = 0;
+                            if (distanceBits > 4 && !bits.read64(distanceBits - 4, &high)) return false;
+                            if (!state->tables.lowDistance.decode(&bits, &low)) return false;
                             distance += (std::uint64_t(high) << 4) + low;
                         } else if (distanceBits) {
                             std::uint32_t low = 0;
@@ -322,19 +566,67 @@ bool decodeRar5Member(const std::uint8_t* packed, std::size_t packedSize,
                     if (distance > 0x100) ++length;
                     if (distance > 0x2000) ++length;
                     if (distance > 0x40000) ++length;
-                    for (unsigned i = 3; i > 0; --i) oldDistances[i] = oldDistances[i - 1];
-                    oldDistances[0] = distance;
+                    for (unsigned i = 3; i > 0; --i)
+                        state->oldDistances[i] = state->oldDistances[i - 1];
+                    state->oldDistances[0] = distance;
                 }
-                if (!distance || distance > output->size() || length > unpackedSize - output->size())
+                const std::uint64_t available =
+                    std::uint64_t(state->history.size()) + output->size();
+                if (!distance || distance > dictionarySize || distance > available ||
+                    length > unpackedSize - output->size()) {
                     return false;
-                lastLength = length;
-                for (std::uint64_t i = 0; i < length; ++i)
-                    output->push_back((*output)[output->size() - std::size_t(distance)]);
+                }
+                state->lastLength = length;
+                const std::size_t outputStart = output->size();
+                const std::size_t matchLength = std::size_t(length);
+                const std::size_t seedLength = std::size_t(std::min(length, distance));
+                const std::uint64_t source = std::uint64_t(state->history.size()) +
+                    outputStart - distance;
+                output->resize(outputStart + matchLength);
+                std::uint8_t* destination = output->data() + outputStart;
+                std::size_t copied = 0;
+                if (source < state->history.size()) {
+                    const std::size_t historyOffset = std::size_t(source);
+                    copied = std::min(seedLength,
+                        state->history.size() - historyOffset);
+                    std::memcpy(destination, state->history.data() + historyOffset, copied);
+                    if (copied < seedLength) {
+                        const std::size_t outputOffset = historyOffset + copied -
+                            state->history.size();
+                        std::memcpy(destination + copied, output->data() + outputOffset,
+                                    seedLength - copied);
+                    }
+                } else {
+                    const std::size_t outputOffset =
+                        std::size_t(source - state->history.size());
+                    std::memcpy(destination, output->data() + outputOffset, seedLength);
+                    copied = seedLength;
+                }
+                while (copied < matchLength) {
+                    const std::size_t amount =
+                        std::min(copied, matchLength - copied);
+                    std::memcpy(destination + copied, destination, amount);
+                    copied += amount;
+                }
             }
         }
         if (bits.position() > blockEnd) return false;
         position += blockSize;
-        if (flags & 0x40U) return output->size() == unpackedSize && position == packedSize;
+        if (flags & 0x40U) {
+            if (output->size() != unpackedSize || position > packedSize) return false;
+            const std::size_t padding = packedSize - position;
+            if ((!allowPadding && padding) || padding > 15 ||
+                std::any_of(packed + position, packed + packedSize,
+                            [](std::uint8_t value) { return value != 0; })) return false;
+            if (preserveHistory) {
+                state->history.insert(state->history.end(), output->begin(), output->end());
+                if (state->history.size() > dictionarySize) {
+                    const std::size_t keep = std::size_t(dictionarySize);
+                    state->history.erase(state->history.begin(), state->history.end() - keep);
+                }
+            }
+            return applyRar5Filters(output, filters);
+        }
     }
     return false;
 }
@@ -354,115 +646,218 @@ QString safePath(const QByteArray& bytes)
     return parts.join(QLatin1Char('/'));
 }
 
-class Rar5MemberStore final : public fs::IByteStore {
-public:
-    Rar5MemberStore(fs::ByteStorePtr source, std::int64_t offset,
-                    std::uint64_t size, std::uint32_t expectedCrc)
-        : source_(std::move(source)), offset_(offset), size_(size), crc_(expectedCrc) {}
+QString nextPartVolumePath(const QString& path)
+{
+    const int suffix = path.lastIndexOf(QLatin1String(".part"), -1,
+                                        Qt::CaseInsensitive);
+    const int extension = path.lastIndexOf(QLatin1String(".rar"), -1,
+                                           Qt::CaseInsensitive);
+    if (suffix < 0 || extension <= suffix + 5) return QString();
+    const QString number = path.mid(suffix + 5, extension - suffix - 5);
+    bool ok = false;
+    const int current = number.toInt(&ok);
+    if (!ok || current < 1) return QString();
+    return path.left(suffix + 5) + QString::number(current + 1).rightJustified(
+        number.size(), QLatin1Char('0')) + path.mid(extension);
+}
 
-    std::int64_t capacity() const override
-    {
-        return size_ <= std::uint64_t(std::numeric_limits<std::int64_t>::max())
-            ? std::int64_t(size_) : 0;
-    }
-    bool cheapRandomAccess() const override { return source_ && source_->cheapRandomAccess(); }
-    bool validate() const override
-    {
-        if (!source_ || offset_ < 0 ||
-            size_ > std::uint64_t(source_->capacity()) ||
-            std::uint64_t(offset_) > std::uint64_t(source_->capacity()) - size_ ||
-            size_ > std::uint64_t(std::numeric_limits<std::size_t>::max())) return false;
-        std::uint8_t buffer[64 * 1024];
-        std::uint32_t value = 0xffffffffU;
-        std::uint64_t done = 0;
-        while (done < size_) {
-            const int amount = int(std::min<std::uint64_t>(sizeof(buffer), size_ - done));
-            if (!readExact(*source_, offset_ + std::int64_t(done), buffer, amount)) return false;
-            for (int i = 0; i < amount; ++i) {
-                value ^= buffer[i];
-                for (int bit = 0; bit < 8; ++bit)
-                    value = (value >> 1) ^ ((value & 1) ? 0xedb88320U : 0U);
-            }
-            done += std::uint64_t(amount);
-        }
-        return (value ^ 0xffffffffU) == crc_;
-    }
-    int read(std::int64_t position, std::uint8_t* output, int count) const override
-    {
-        if (!source_ || !output || position < 0 || count <= 0 || !validate() ||
-            std::uint64_t(position) >= size_) return 0;
-        const int amount = int(std::min<std::uint64_t>(count, size_ - std::uint64_t(position)));
-        return source_->read(offset_ + position, output, amount);
-    }
-
-private:
-    fs::ByteStorePtr source_;
-    std::int64_t offset_;
-    std::uint64_t size_;
-    std::uint32_t crc_;
+struct Rar5DataChunk {
+    fs::ByteStorePtr source;
+    std::int64_t offset = 0;
+    std::uint64_t size = 0;
 };
 
-class Rar5CompressedStore final : public fs::IByteStore {
-public:
-    Rar5CompressedStore(fs::ByteStorePtr source, std::int64_t offset,
-                        std::uint64_t packedSize, std::uint64_t unpackedSize,
-                        std::uint32_t expectedCrc)
-        : source_(std::move(source)), offset_(offset), packedSize_(packedSize),
-          unpackedSize_(unpackedSize), crc_(expectedCrc) {}
+struct Rar5MemberData {
+    std::vector<Rar5DataChunk> chunks;
+    QString path;
+    std::uint64_t packedSize = 0;
+    std::uint64_t unpackedSize = 0;
+    std::uint64_t dictionarySize = 128 * 1024;
+    std::uint32_t crc = 0;
+    unsigned algorithmVersion = 0;
+    unsigned method = 0;
+    bool extendedDistances = false;
+    bool solid = false;
+    bool encrypted = false;
+    std::uint8_t encryptionFlags = 0;
+    std::uint8_t kdfCount = 0;
+    std::array<std::uint8_t, 16> salt{};
+    std::array<std::uint8_t, 16> iv{};
+};
 
-    std::int64_t capacity() const override
+class Rar5SolidSequence final {
+public:
+    Rar5SolidSequence(std::vector<Rar5MemberData> members, QByteArray password)
+        : members_(std::move(members)),
+          password_(std::move(password)),
+          decoded_(members_.size()), checked_(members_.size(), 0) {}
+
+    std::uint64_t memberSize(std::size_t index) const
     {
-        return unpackedSize_ <= std::uint64_t(std::numeric_limits<std::int64_t>::max())
-            ? std::int64_t(unpackedSize_) : 0;
+        return index < members_.size() ? members_[index].unpackedSize : 0;
     }
-    bool cheapRandomAccess() const override { return false; }
-    bool validate() const override
+
+    bool readMember(std::size_t index, std::int64_t position,
+                    std::uint8_t* output, int count) const
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (checked_) return valid_;
-        checked_ = true;
-        if (!source_ || offset_ < 0 ||
-            packedSize_ > std::uint64_t(source_->capacity()) ||
-            std::uint64_t(offset_) > std::uint64_t(source_->capacity()) - packedSize_ ||
-            packedSize_ > std::uint64_t(std::numeric_limits<std::size_t>::max()) ||
-            unpackedSize_ > std::uint64_t(std::numeric_limits<std::size_t>::max())) return false;
-        try {
-            std::vector<std::uint8_t> packed(static_cast<std::size_t>(packedSize_), std::uint8_t(0));
-            std::uint64_t done = 0;
-            while (done < packedSize_) {
-                const int amount = int(std::min<std::uint64_t>(64 * 1024, packedSize_ - done));
-                if (!readExact(*source_, offset_ + std::int64_t(done),
-                               packed.data() + std::size_t(done), amount)) return false;
-                done += std::uint64_t(amount);
-            }
-            valid_ = decodeRar5Member(packed.data(), packed.size(), unpackedSize_, &decoded_) &&
-                crc32(decoded_.data(), decoded_.size()) == crc_;
-        } catch (...) {
-            decoded_.clear();
-            valid_ = false;
-        }
-        return valid_;
+        if (!decodeThrough(index) || position < 0 || count <= 0 || !output ||
+            std::uint64_t(position) >= decoded_[index].size()) return false;
+        const std::size_t amount = std::min<std::size_t>(
+            std::size_t(count), decoded_[index].size() - std::size_t(position));
+        std::memcpy(output, decoded_[index].data() + std::size_t(position), amount);
+        return amount != 0;
     }
-    int read(std::int64_t position, std::uint8_t* output, int count) const override
+
+    bool validateMember(std::size_t index) const
     {
-        if (!output || position < 0 || count <= 0 || !validate() ||
-            std::uint64_t(position) >= unpackedSize_) return 0;
-        const int amount = int(std::min<std::uint64_t>(
-            count, unpackedSize_ - std::uint64_t(position)));
-        std::memcpy(output, decoded_.data() + std::size_t(position), std::size_t(amount));
-        return amount;
+        std::lock_guard<std::mutex> lock(mutex_);
+        return decodeThrough(index);
     }
 
 private:
-    fs::ByteStorePtr source_;
-    std::int64_t offset_;
-    std::uint64_t packedSize_;
-    std::uint64_t unpackedSize_;
-    std::uint32_t crc_;
-    mutable std::vector<std::uint8_t> decoded_;
+    bool decodeThrough(std::size_t index) const
+    {
+        if (index >= members_.size() || checked_[index] == 2) return false;
+        if (checked_[index] == 1) return true;
+        std::size_t first = index;
+        while (first > 0 && members_[first].solid) --first;
+        Rar5UnpackState state;
+        for (std::size_t current = first; current <= index; ++current) {
+            const Rar5MemberData& member = members_[current];
+            if (!member.solid) state = Rar5UnpackState();
+            if (member.unpackedSize > std::uint64_t(std::numeric_limits<std::size_t>::max()) ||
+                member.packedSize > std::uint64_t(std::numeric_limits<std::size_t>::max())) {
+                checked_[current] = 2;
+                return false;
+            }
+            try {
+                std::vector<std::uint8_t> packed(
+                    static_cast<std::size_t>(member.packedSize));
+                std::uint64_t outputOffset = 0;
+                for (const Rar5DataChunk& chunk : member.chunks) {
+                    if (!chunk.source || chunk.offset < 0 ||
+                        chunk.size > std::uint64_t(chunk.source->capacity()) ||
+                        std::uint64_t(chunk.offset) >
+                            std::uint64_t(chunk.source->capacity()) - chunk.size ||
+                        chunk.size > member.packedSize - outputOffset) {
+                        checked_[current] = 2;
+                        return false;
+                    }
+                    std::uint64_t done = 0;
+                    while (done < chunk.size) {
+                    const int amount = int(std::min<std::uint64_t>(
+                            64 * 1024, chunk.size - done));
+                        if (!readExact(*chunk.source, chunk.offset + std::int64_t(done),
+                                       packed.data() + std::size_t(outputOffset + done),
+                                       amount)) {
+                        checked_[current] = 2;
+                        return false;
+                    }
+                    done += std::uint64_t(amount);
+                    }
+                    outputOffset += chunk.size;
+                }
+                if (outputOffset != member.packedSize) {
+                    checked_[current] = 2;
+                    return false;
+                }
+                QByteArray checksumKey;
+                if (member.encrypted) {
+                    if (password_.isNull()) {
+                        checked_[current] = 2;
+                        return false;
+                    }
+                    std::vector<std::uint8_t> decrypted;
+                    if (!decryptRar5Data(password_, member.salt.data(), member.iv.data(),
+                                         member.kdfCount, packed, &decrypted, &checksumKey)) {
+                        checked_[current] = 2;
+                        return false;
+                    }
+                    packed.swap(decrypted);
+                }
+                std::vector<std::uint8_t> unpacked;
+                if (member.method == 0) {
+                    unpacked.swap(packed);
+                    if (unpacked.size() < member.unpackedSize ||
+                        unpacked.size() - std::size_t(member.unpackedSize) > 15 ||
+                        std::any_of(unpacked.begin() + std::size_t(member.unpackedSize),
+                                    unpacked.end(),
+                                    [](std::uint8_t value) { return value != 0; })) {
+                        checked_[current] = 2;
+                        return false;
+                    }
+                    unpacked.resize(std::size_t(member.unpackedSize));
+                    const bool preserveHistory = current + 1 < members_.size() &&
+                        members_[current + 1].solid;
+                    if (preserveHistory) {
+                        state.history.insert(state.history.end(), unpacked.begin(), unpacked.end());
+                        if (state.history.size() > member.dictionarySize) {
+                            const std::size_t keep = std::size_t(member.dictionarySize);
+                            state.history.erase(state.history.begin(), state.history.end() - keep);
+                        }
+                    }
+                } else if (!decodeRar5Member(packed.data(), packed.size(), member.unpackedSize,
+                                              member.dictionarySize, member.extendedDistances,
+                                              member.encrypted,
+                                              current + 1 < members_.size() &&
+                                                  members_[current + 1].solid,
+                                              &state, &unpacked)) {
+                    checked_[current] = 2;
+                    return false;
+                }
+                std::uint32_t actualCrc = crc32(unpacked.data(), unpacked.size());
+                if (member.encrypted && (member.encryptionFlags & 2U))
+                    actualCrc = rar5Checksum(
+                        reinterpret_cast<const std::uint8_t*>(checksumKey.constData()),
+                        actualCrc);
+                if (unpacked.size() != member.unpackedSize || actualCrc != member.crc) {
+                    checked_[current] = 2;
+                    return false;
+                }
+                if (current == index) {
+                    decoded_[current] = std::move(unpacked);
+                    checked_[current] = 1;
+                }
+            } catch (...) {
+                checked_[current] = 2;
+                return false;
+            }
+        }
+        return true;
+    }
+
+    std::vector<Rar5MemberData> members_;
+    QByteArray password_;
+    mutable std::vector<std::vector<std::uint8_t>> decoded_;
+    mutable std::vector<std::uint8_t> checked_;
     mutable std::mutex mutex_;
-    mutable bool checked_ = false;
-    mutable bool valid_ = false;
+};
+
+class Rar5SequenceMemberStore final : public fs::IByteStore {
+public:
+    Rar5SequenceMemberStore(std::shared_ptr<Rar5SolidSequence> sequence,
+                            std::size_t index)
+        : sequence_(std::move(sequence)), index_(index) {}
+
+    std::int64_t capacity() const override
+    {
+        const std::uint64_t size = sequence_ ? sequence_->memberSize(index_) : 0;
+        return size <= std::uint64_t(std::numeric_limits<std::int64_t>::max())
+            ? std::int64_t(size) : 0;
+    }
+    bool cheapRandomAccess() const override { return false; }
+    bool validate() const override { return sequence_ && sequence_->validateMember(index_); }
+    int read(std::int64_t position, std::uint8_t* output, int count) const override
+    {
+        return sequence_ && sequence_->readMember(index_, position, output, count) ?
+            int(std::min<std::uint64_t>(count, sequence_->memberSize(index_) -
+                std::uint64_t(position))) : 0;
+    }
+
+private:
+    std::shared_ptr<Rar5SolidSequence> sequence_;
+    std::size_t index_;
 };
 
 } // namespace
@@ -481,9 +876,11 @@ ModulePtr Rar5Module::open(const QString& filePath, const QString& password)
     return open(source, filePath, password);
 }
 
-ModulePtr Rar5Module::open(const fs::ByteStorePtr& source, const QString& sourceName,
+ModulePtr Rar5Module::open(const fs::ByteStorePtr& initialSource, const QString& sourceName,
                            const QString& password)
 {
+    fs::ByteStorePtr source = initialSource;
+    QString currentSourcePath = sourceName;
     auto module = peare::makeUnique<Rar5Module>();
     module->info_.filePath = sourceName;
     module->info_.format = ModuleFormat::RAR5;
@@ -512,38 +909,92 @@ ModulePtr Rar5Module::open(const fs::ByteStorePtr& source, const QString& source
     std::uint64_t entryCount = 0;
     bool sawMain = false;
     bool sawEnd = false;
+    bool encryptedHeaders = false;
+    QByteArray headerKey;
+    std::array<std::uint8_t, 16> headerSalt = {};
+    std::uint8_t headerKdfCount = 0;
+    std::vector<Rar5MemberData> members;
+    std::vector<std::size_t> memberResourceIndices;
+    std::size_t pendingMember = std::numeric_limits<std::size_t>::max();
     while (position >= 0 && position < source->capacity()) {
         std::uint8_t crcBytes[4];
-        if (!readExact(*source, position, crcBytes, sizeof(crcBytes))) break;
-        std::uint8_t sizeBytes[10];
+        std::vector<std::uint8_t> crcData;
         std::uint64_t headerSize = 0;
         int sizeLength = 0;
-        for (; sizeLength < int(sizeof(sizeBytes)); ++sizeLength) {
-            if (!readExact(*source, position + 4 + sizeLength, sizeBytes + sizeLength, 1)) {
-                module->info_.error = QStringLiteral("Truncated RAR5 header size");
+        std::uint64_t physicalHeaderSize = 0;
+        if (encryptedHeaders) {
+            std::uint8_t iv[16];
+            std::vector<std::uint8_t> firstBlock(16);
+            if (!readExact(*source, position, iv, sizeof(iv)) ||
+                !readExact(*source, position + 16, firstBlock.data(), 16) ||
+                !decryptAesCbc(headerKey, iv, &firstBlock)) {
+                module->info_.error = QStringLiteral("Invalid encrypted RAR5 header block");
                 return module;
             }
-            Cursor sizeCursor(sizeBytes, std::size_t(sizeLength + 1));
-            if (sizeCursor.readVint(&headerSize)) {
-                ++sizeLength;
-                break;
-            }
-            if (!(sizeBytes[sizeLength] & 0x80)) {
-                module->info_.error = QStringLiteral("Invalid RAR5 header size");
+            Cursor firstSize(firstBlock.data() + 4, firstBlock.size() - 4);
+            if (!firstSize.readVint(&headerSize) || headerSize == 0 ||
+                headerSize > kMaximumHeaderSize) {
+                module->info_.error = QStringLiteral("Invalid encrypted RAR5 header size");
                 return module;
             }
+            sizeLength = int(firstSize.position());
+            const std::uint64_t plainHeaderSize =
+                4 + std::uint64_t(sizeLength) + headerSize;
+            const std::uint64_t encryptedSize = (plainHeaderSize + 15U) & ~15ULL;
+            if (encryptedSize < firstBlock.size() ||
+                encryptedSize > kMaximumHeaderSize + 32ULL ||
+                std::uint64_t(position) + 16 + encryptedSize >
+                    std::uint64_t(source->capacity())) {
+                module->info_.error = QStringLiteral("Truncated encrypted RAR5 header");
+                return module;
+            }
+            std::vector<std::uint8_t> encrypted(
+                static_cast<std::size_t>(encryptedSize), 0);
+            if (!readExact(*source, position + 16, encrypted.data(),
+                           int(encrypted.size())) ||
+                !decryptAesCbc(headerKey, iv, &encrypted)) {
+                module->info_.error = QStringLiteral("Unable to decrypt RAR5 header");
+                return module;
+            }
+            std::copy(encrypted.begin(), encrypted.begin() + 4, crcBytes);
+            crcData.assign(encrypted.begin() + 4,
+                           encrypted.begin() + std::size_t(plainHeaderSize));
+            physicalHeaderSize = 16 + encryptedSize;
+        } else {
+            if (!readExact(*source, position, crcBytes, sizeof(crcBytes))) break;
+            std::uint8_t sizeBytes[10];
+            for (; sizeLength < int(sizeof(sizeBytes)); ++sizeLength) {
+                if (!readExact(*source, position + 4 + sizeLength,
+                               sizeBytes + sizeLength, 1)) {
+                    module->info_.error = QStringLiteral("Truncated RAR5 header size");
+                    return module;
+                }
+                Cursor sizeCursor(sizeBytes, std::size_t(sizeLength + 1));
+                if (sizeCursor.readVint(&headerSize)) {
+                    ++sizeLength;
+                    break;
+                }
+                if (!(sizeBytes[sizeLength] & 0x80)) {
+                    module->info_.error = QStringLiteral("Invalid RAR5 header size");
+                    return module;
+                }
+            }
+            if (sizeLength <= 0 || sizeLength > 10 || headerSize == 0 ||
+                headerSize > kMaximumHeaderSize ||
+                std::uint64_t(position) + 4 + std::uint64_t(sizeLength) + headerSize >
+                    std::uint64_t(source->capacity())) {
+                module->info_.error = QStringLiteral("Invalid or truncated RAR5 header");
+                return module;
+            }
+            crcData.resize(std::size_t(sizeLength) + std::size_t(headerSize));
+            if (!readExact(*source, position + 4, crcData.data(),
+                           int(crcData.size()))) {
+                module->info_.error = QStringLiteral("Truncated RAR5 header");
+                return module;
+            }
+            physicalHeaderSize = 4 + std::uint64_t(sizeLength) + headerSize;
         }
-        if (sizeLength <= 0 || sizeLength > 10 || headerSize == 0 ||
-            headerSize > kMaximumHeaderSize ||
-            std::uint64_t(position) + 4 + std::uint64_t(sizeLength) + headerSize >
-                std::uint64_t(source->capacity())) {
-            module->info_.error = QStringLiteral("Invalid or truncated RAR5 header");
-            return module;
-        }
-        const std::size_t crcLength = std::size_t(sizeLength) + std::size_t(headerSize);
-        std::vector<std::uint8_t> crcData(crcLength);
-        if (!readExact(*source, position + 4, crcData.data(), int(crcData.size())) ||
-            crc32(crcData.data(), crcData.size()) != readLe32(crcBytes)) {
+        if (crc32(crcData.data(), crcData.size()) != readLe32(crcBytes)) {
             module->info_.error = QStringLiteral("RAR5 header CRC mismatch");
             return module;
         }
@@ -558,7 +1009,6 @@ ModulePtr Rar5Module::open(const fs::ByteStorePtr& source, const QString& source
             module->info_.error = QStringLiteral("Malformed RAR5 block header");
             return module;
         }
-        const std::uint64_t physicalHeaderSize = 4 + std::uint64_t(sizeLength) + headerSize;
         const std::uint64_t dataOffset = std::uint64_t(position) + physicalHeaderSize;
         if (dataSize > std::uint64_t(source->capacity()) ||
             dataOffset > std::uint64_t(source->capacity()) - dataSize) {
@@ -567,6 +1017,36 @@ ModulePtr Rar5Module::open(const fs::ByteStorePtr& source, const QString& source
         }
         if (type == 1) {
             sawMain = true;
+        } else if (type == 4) {
+            std::uint64_t version = 0;
+            std::uint64_t encryptionFlags = 0;
+            const std::uint8_t* salt = nullptr;
+            QByteArray ignoredHashKey;
+            if (encryptedHeaders || !cursor.readVint(&version) || version != 0 ||
+                !cursor.readVint(&encryptionFlags) || (encryptionFlags & ~1ULL) ||
+                !cursor.readByte(&headerKdfCount) ||
+                !cursor.readBytes(headerSalt.size(), &salt)) {
+                module->info_.error = QStringLiteral("Unsupported RAR5 header encryption");
+                return module;
+            }
+            if (encryptionFlags & 1U) {
+                const std::uint8_t* passwordCheck = nullptr;
+                if (!cursor.readBytes(12, &passwordCheck)) {
+                    module->info_.error = QStringLiteral("Truncated RAR5 header password check");
+                    return module;
+                }
+            }
+            if (password.isNull()) {
+                module->info_.error = QStringLiteral("RAR5 encrypted headers require a password");
+                return module;
+            }
+            std::copy(salt, salt + headerSalt.size(), headerSalt.begin());
+            if (!deriveRar5Keys(password.toUtf8(), headerSalt.data(), headerKdfCount,
+                                &headerKey, &ignoredHashKey)) {
+                module->info_.error = QStringLiteral("Invalid RAR5 header encryption parameters");
+                return module;
+            }
+            encryptedHeaders = true;
         } else if (type == 2) {
             if (!sawMain || ++entryCount > kMaximumEntries) {
                 module->info_.error = QStringLiteral("Invalid RAR5 file entry sequence");
@@ -606,19 +1086,114 @@ ModulePtr Rar5Module::open(const fs::ByteStorePtr& source, const QString& source
                 module->info_.error = QStringLiteral("Malformed RAR5 file name or compression fields");
                 return module;
             }
+            Rar5MemberData member;
+            member.encrypted = false;
+            if (extraSize) {
+                if (extraSize > std::uint64_t(std::numeric_limits<std::size_t>::max())) {
+                    module->info_.error = QStringLiteral("RAR5 extra area is too large");
+                    return module;
+                }
+                const std::uint8_t* extraBytes = nullptr;
+                if (!cursor.readBytes(std::size_t(extraSize), &extraBytes)) {
+                    module->info_.error = QStringLiteral("Truncated RAR5 extra area");
+                    return module;
+                }
+                Cursor extra(extraBytes, std::size_t(extraSize));
+                while (extra.position() < std::size_t(extraSize)) {
+                    std::uint64_t recordSize = 0;
+                    if (!extra.readVint(&recordSize) || !recordSize ||
+                        recordSize > std::size_t(extraSize) - extra.position()) {
+                        module->info_.error = QStringLiteral("Malformed RAR5 extra record");
+                        return module;
+                    }
+                    const std::size_t recordEnd = extra.position() + std::size_t(recordSize);
+                    std::uint64_t recordType = 0;
+                    if (!extra.readVint(&recordType)) {
+                        module->info_.error = QStringLiteral("Malformed RAR5 extra record type");
+                        return module;
+                    }
+                    if (recordType == 1) {
+                        std::uint64_t version = 0;
+                        std::uint64_t encryptionFlags = 0;
+                        const std::uint8_t* salt = nullptr;
+                        const std::uint8_t* iv = nullptr;
+                        if (member.encrypted || !extra.readVint(&version) || version != 0 ||
+                            !extra.readVint(&encryptionFlags) || (encryptionFlags & ~3ULL) ||
+                            !extra.readByte(&member.kdfCount) ||
+                            !extra.readBytes(member.salt.size(), &salt) ||
+                            !extra.readBytes(member.iv.size(), &iv)) {
+                            module->info_.error = QStringLiteral("Unsupported RAR5 encryption record");
+                            return module;
+                        }
+                        if (encryptionFlags & 1U) {
+                            const std::uint8_t* passwordCheck = nullptr;
+                            if (!extra.readBytes(12, &passwordCheck)) {
+                                module->info_.error = QStringLiteral("Truncated RAR5 password check");
+                                return module;
+                            }
+                        }
+                        member.encryptionFlags = std::uint8_t(encryptionFlags);
+                        std::copy(salt, salt + member.salt.size(), member.salt.begin());
+                        std::copy(iv, iv + member.iv.size(), member.iv.begin());
+                        member.encrypted = true;
+                    }
+                    if (extra.position() > recordEnd) {
+                        module->info_.error = QStringLiteral("Malformed RAR5 extra record size");
+                        return module;
+                    }
+                    const std::size_t remaining = recordEnd - extra.position();
+                    const std::uint8_t* ignored = nullptr;
+                    if (remaining && !extra.readBytes(remaining, &ignored)) {
+                        module->info_.error = QStringLiteral("Truncated RAR5 extra record data");
+                        return module;
+                    }
+                }
+            }
             const unsigned method = unsigned((compressionInfo >> 7) & 7U);
             const unsigned algorithmVersion = unsigned(compressionInfo & 0x3fU);
             const bool solid = (compressionInfo & 0x40U) != 0;
             const bool directory = (fileFlags & 1U) != 0;
-            if (!directory && (algorithmVersion != 0 || solid || method > 5)) {
-                module->info_.error = QStringLiteral("Unsupported RAR5 compression parameters");
+            const bool splitBefore = (flags & 0x08U) != 0;
+            const bool splitAfter = (flags & 0x10U) != 0;
+            const bool split = splitBefore || splitAfter;
+            const bool rar5Compatible = (compressionInfo & 0x100000U) != 0;
+            if (!directory) {
+                const unsigned dictionaryBits = unsigned((compressionInfo >> 10) & 0x1fU);
+                const unsigned dictionaryFraction = unsigned((compressionInfo >> 15) & 0x1fU);
+                if (algorithmVersion > 1 || method > 5 ||
+                    (rar5Compatible && algorithmVersion != 1) ||
+                    (algorithmVersion == 0 &&
+                     (dictionaryBits > 15 || (compressionInfo & 0x1f8000U))) ||
+                    (algorithmVersion == 1 && dictionaryBits > 23)) {
+                    module->info_.error = QStringLiteral("Unsupported RAR5 compression parameters");
+                    return module;
+                }
+                const std::uint64_t baseDictionary = (128ULL * 1024ULL) << dictionaryBits;
+                const std::uint64_t extraDictionary = algorithmVersion == 1
+                    ? (baseDictionary / 32) * dictionaryFraction : 0;
+                const std::uint64_t maximumDictionary = 1ULL << 40;
+                if (baseDictionary > maximumDictionary ||
+                    extraDictionary > maximumDictionary - baseDictionary) {
+                    module->info_.error = QStringLiteral("RAR7 dictionary exceeds 1 TiB");
+                    return module;
+                }
+                member.algorithmVersion = algorithmVersion;
+                member.extendedDistances = algorithmVersion == 1 && !rar5Compatible;
+                member.dictionarySize = baseDictionary + extraDictionary;
+                member.method = method;
+                member.solid = solid;
+            }
+            if (directory && split) {
+                module->info_.error = QStringLiteral("Split RAR5 directory entry");
                 return module;
             }
             if (!directory && (fileFlags & 4U) == 0) {
                 module->info_.error = QStringLiteral("RAR5 file entry has no CRC32");
                 return module;
             }
-            if (!directory && method == 0 && dataSize != unpacked) {
+            if (!directory && method == 0 && !split &&
+                ((!member.encrypted && dataSize != unpacked) ||
+                 (member.encrypted && (dataSize < unpacked || dataSize - unpacked > 15)))) {
                 module->info_.error = QStringLiteral("RAR5 stored member size mismatch");
                 return module;
             }
@@ -629,6 +1204,43 @@ ModulePtr Rar5Module::open(const fs::ByteStorePtr& source, const QString& source
                 return module;
             }
             const QStringList parts = normalized.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+            if (splitBefore) {
+                if (pendingMember == std::numeric_limits<std::size_t>::max() ||
+                    pendingMember >= members.size() ||
+                    members[pendingMember].path != normalized ||
+                    members[pendingMember].method != method ||
+                    members[pendingMember].unpackedSize != unpacked ||
+                    members[pendingMember].algorithmVersion != member.algorithmVersion ||
+                    members[pendingMember].extendedDistances != member.extendedDistances ||
+                    members[pendingMember].dictionarySize != member.dictionarySize ||
+                    dataSize > std::numeric_limits<std::uint64_t>::max() -
+                        members[pendingMember].packedSize) {
+                    module->info_.error = QStringLiteral("Invalid RAR5 split member sequence");
+                    return module;
+                }
+                Rar5MemberData& pending = members[pendingMember];
+                if (member.encrypted && (!pending.encrypted ||
+                    member.kdfCount != pending.kdfCount ||
+                    member.salt != pending.salt || member.iv != pending.iv)) {
+                    module->info_.error = QStringLiteral("Inconsistent RAR5 split encryption parameters");
+                    return module;
+                }
+                if (member.encrypted)
+                    pending.encryptionFlags = member.encryptionFlags;
+                pending.chunks.push_back({source, std::int64_t(dataOffset), dataSize});
+                pending.packedSize += dataSize;
+                pending.crc = expectedCrc;
+                if (!splitAfter) pendingMember = std::numeric_limits<std::size_t>::max();
+                Q_UNUSED(attributes);
+                Q_UNUSED(hostOs);
+                Q_UNUSED(extraSize);
+                position += std::int64_t(physicalHeaderSize + dataSize);
+                continue;
+            }
+            if (pendingMember != std::numeric_limits<std::size_t>::max()) {
+                module->info_.error = QStringLiteral("RAR5 split member has no continuation");
+                return module;
+            }
             ResourceEntry entry;
             entry.type = directory ? QStringLiteral("RAR5_DIR") : QStringLiteral("RAR5_FILE");
             entry.name = parts.last();
@@ -636,24 +1248,76 @@ ModulePtr Rar5Module::open(const fs::ByteStorePtr& source, const QString& source
             entry.hierarchyPath.removeLast();
             entry.dataOffset = dataOffset;
             entry.dataSize = directory ? 0 : unpacked;
+            entry.isDirectory = directory;
             entry.isEmbeddedFile = !directory;
             if (!directory) {
-                if (method == 0)
-                    entry.content = std::make_shared<Rar5MemberStore>(source,
-                        std::int64_t(dataOffset), unpacked, expectedCrc);
-                else
-                    entry.content = std::make_shared<Rar5CompressedStore>(source,
-                        std::int64_t(dataOffset), dataSize, unpacked, expectedCrc);
+                member.path = normalized;
+                member.chunks.push_back({source, std::int64_t(dataOffset), dataSize});
+                member.packedSize = dataSize;
+                member.unpackedSize = unpacked;
+                member.crc = expectedCrc;
+                memberResourceIndices.push_back(module->resources_.size());
+                members.push_back(member);
+                if (splitAfter) pendingMember = members.size() - 1;
             }
             module->resources_.push_back(std::move(entry));
             Q_UNUSED(attributes);
             Q_UNUSED(hostOs);
             Q_UNUSED(extraSize);
         } else if (type == 5) {
+            std::uint64_t endFlags = 0;
+            if (!cursor.readVint(&endFlags)) {
+                module->info_.error = QStringLiteral("Malformed RAR5 end marker");
+                return module;
+            }
+            if (endFlags & 1U) {
+                const QString nextPath = nextPartVolumePath(currentSourcePath);
+                if (nextPath.isEmpty()) {
+                    module->info_.error = QStringLiteral("RAR5 volume set has no next part name");
+                    return module;
+                }
+                auto nextSource = std::make_shared<fs::QFileByteStore>(nextPath);
+                if (!nextSource->validate()) {
+                    module->info_.error = QStringLiteral("RAR5 next volume is unavailable");
+                    return module;
+                }
+                std::int64_t nextMarker = -1;
+                const std::int64_t nextScanEnd = std::min<std::int64_t>(
+                    nextSource->capacity() - std::int64_t(sizeof(kMarker)), 1024 * 1024);
+                for (std::int64_t i = 0; i <= nextScanEnd; ++i) {
+                    if (readExact(*nextSource, i, probe, sizeof(probe)) &&
+                        std::equal(probe, probe + sizeof(probe), kMarker)) {
+                        nextMarker = i;
+                        break;
+                    }
+                }
+                if (nextMarker < 0) {
+                    module->info_.error = QStringLiteral("RAR5 next volume marker not found");
+                    return module;
+                }
+                source = nextSource;
+                currentSourcePath = nextPath;
+                position = nextMarker + std::int64_t(sizeof(kMarker));
+                encryptedHeaders = false;
+                headerKey.fill(char(0));
+                sawEnd = false;
+                continue;
+            }
             sawEnd = true;
             break;
         }
         position += std::int64_t(physicalHeaderSize + dataSize);
+    }
+    if (!members.empty()) {
+        if (pendingMember != std::numeric_limits<std::size_t>::max()) {
+            module->info_.error = QStringLiteral("RAR5 split member is incomplete");
+            return module;
+        }
+        const auto sequence = std::make_shared<Rar5SolidSequence>(
+            std::move(members), password.toUtf8());
+        for (std::size_t index = 0; index < memberResourceIndices.size(); ++index)
+            module->resources_[memberResourceIndices[index]].content =
+                std::make_shared<Rar5SequenceMemberStore>(sequence, index);
     }
     if (!sawMain) module->info_.error = QStringLiteral("RAR5 main header not found");
     else if (!sawEnd) module->info_.error = QStringLiteral("RAR5 end marker not found");

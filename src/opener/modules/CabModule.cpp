@@ -1,6 +1,7 @@
 #include "CabModule.h"
 #include "Compat.h"
 #include "DeflateDecoder.h"
+#include "../compression/QuantumCabDecoder.h"
 
 #include "peare/lzx_frontends.h"
 #include "../fs/QFileByteStore.h"
@@ -165,6 +166,12 @@ bool decodeFolder(const std::vector<std::uint8_t>& cab, const CabFolder& folder,
     std::size_t pos = std::size_t(folder.dataOffset);
     const quint16 type = folder.compression & 0x000f;
     const quint16 lzxWindowBits = (folder.compression >> 8) & 0x001f;
+    const quint8 quantumWindowBits = quint8(folder.compression >> 8);
+    compression::QuantumCabDecoder quantum;
+    if (type == 2 && !quantum.configure(quantumWindowBits)) {
+        *error = QStringLiteral("Invalid CAB Quantum window size");
+        return false;
+    }
     std::vector<IndependentMszipBlock> independentBlocks;
     const bool attemptedIndependent = type == 1 &&
         decodeIndependentMszipBlocks(cab, folder, &independentBlocks, decoded);
@@ -229,6 +236,14 @@ bool decodeFolder(const std::vector<std::uint8_t>& cab, const CabFolder& folder,
                 outputOffset += cbUncomp;
                 continue;
             }
+        } else if (type == 2) {
+            std::vector<std::uint8_t> quantumBlock;
+            if (!quantum.decodeBlock(block, cbData, cbUncomp, i != 0,
+                                     &quantumBlock)) {
+                *error = QStringLiteral("CAB Quantum decompression failed");
+                return false;
+            }
+            decoded->insert(decoded->end(), quantumBlock.begin(), quantumBlock.end());
         } else {
             *error = QStringLiteral("Unsupported CAB compression type %1").arg(type);
             return false;
@@ -258,6 +273,10 @@ bool decodeFolder(const std::vector<std::uint8_t>& cab, const CabFolder& folder,
         *error = QStringLiteral("CAB folder output size mismatch");
         decoded->clear();
         return false;
+    } else if (type == 2 && quint64(decoded->size()) != folder.uncompressedSize) {
+        *error = QStringLiteral("CAB folder output size mismatch");
+        decoded->clear();
+        return false;
     }
     return true;
 }
@@ -266,8 +285,13 @@ bool measureFolder(const std::vector<std::uint8_t>& cab, CabFolder* folder,
                    QString* error) {
     const quint16 type = folder->compression & 0x000f;
     const quint16 lzxWindowBits = (folder->compression >> 8) & 0x001f;
-    if (type != 0 && type != 1 && type != 3) {
+    const quint8 quantumWindowBits = quint8(folder->compression >> 8);
+    if (type != 0 && type != 1 && type != 2 && type != 3) {
         *error = QStringLiteral("Unsupported CAB compression type %1").arg(type);
+        return false;
+    }
+    if (type == 2 && (quantumWindowBits < 10 || quantumWindowBits > 21)) {
+        *error = QStringLiteral("Invalid CAB Quantum window size");
         return false;
     }
     if (type == 3 && (lzxWindowBits < 15 || lzxWindowBits > 21)) {

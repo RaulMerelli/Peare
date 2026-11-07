@@ -14,6 +14,10 @@ bool decompressLz5(const std::uint8_t* input, std::size_t inputSize,
                    std::size_t outputSize, std::vector<std::uint8_t>* output);
 bool decompressLh1(const std::uint8_t* input, std::size_t inputSize,
                    std::size_t outputSize, std::vector<std::uint8_t>* output);
+bool decompressArjLzh(const std::uint8_t* input, std::size_t inputSize,
+                      std::size_t outputSize, std::vector<std::uint8_t>* output);
+bool decompressArjMethod4(const std::uint8_t* input, std::size_t inputSize,
+                          std::size_t outputSize, std::vector<std::uint8_t>* output);
 
 }  // namespace compression
 }  // namespace peare

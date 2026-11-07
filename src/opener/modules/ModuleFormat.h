@@ -19,6 +19,7 @@ enum class ModuleFormat {
     OS2_PACK,
     SZDD,
     GZIP,
+    XZ,
     SIEMENS_IMG,
     SIEMENS_ADONIS,
     SIEMENS_FWF,
@@ -44,6 +45,7 @@ enum class ModuleFormat {
     JFS,
     HPFS,
     SQUASHFS,
+    CRAMFS,
     HFSPLUS,
     DMG,
     BTRFS,
@@ -88,7 +90,19 @@ enum class ModuleFormat {
     LHA,
     SEVEN_ZIP,
     RAR4,
-    RAR5
+    RAR5,
+    LZIP,
+    ZSTD,
+    ARJ,
+    XAR,
+    LZMA,
+    INTEL_HEX,
+    DEB,
+    RPM,
+    CHM,
+    KWAJ,
+    XBCOMPRESS,
+    NSIS
 };
 
 struct ModuleFormatInfo {

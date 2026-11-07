@@ -17,6 +17,7 @@ struct DiscEntry {
         : name(valueName), isDirectory(valueIsDirectory), length(valueLength) {}
 
     std::string name;        // leaf name (no path separators)
+    std::string type;        // optional non-file resource type
     bool isDirectory;
     std::int64_t length;     // content length in bytes (0 for directories)
 };

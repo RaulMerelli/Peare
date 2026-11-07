@@ -35,6 +35,9 @@ inline void buildFsLevel(const fs::IDiscFileSystem& fsys, const fs::ByteStorePtr
             entry.isDirectory = true;
             entry.containerSubPath = QString::fromStdString(full);
             entry.content = disc;  // reopened at containerSubPath on navigation
+        } else if (!e.type.empty()) {
+            entry.type = QString::fromStdString(e.type);
+            entry.dataSize = quint64(e.length);
         } else {
             entry.type = fileType;
             entry.isEmbeddedFile = true;  // a whole file: nested-open candidate

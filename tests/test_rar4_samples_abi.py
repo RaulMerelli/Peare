@@ -1,6 +1,7 @@
 """Check WinRAR-created RAR4 method samples through the public Opener ABI."""
 
 import ctypes as C
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -10,6 +11,7 @@ import pytest
 import peare_opener as po
 
 
+REPO = Path(__file__).resolve().parents[1]
 SAMPLES = tuple(
     (f"rar4-m{method}.rar", "ModuleFormat.cpp", None)
     for method in range(6)
@@ -56,18 +58,21 @@ def _rar_payload(peare_lib, archive, entry_name, password, expected_format="RAR4
                         name = context.identifier_utf8.to_bytes().decode(
                             "utf-8", "replace"
                         )
+                        size = int(context.data_size)
                     finally:
                         peare_lib._lib.peare_resource_context_free(C.byref(context))
                     if name != entry_name:
                         continue
-                    blob = po._Blob()
-                    assert peare_lib._lib.peare_resource_get_payload(
-                        resource, C.byref(blob)
-                    ) == 0
-                    try:
-                        matches.append(blob.to_bytes())
-                    finally:
-                        peare_lib._lib.peare_blob_free(C.byref(blob))
+                    payload = bytearray()
+                    offset = 0
+                    while offset < size:
+                        chunk = peare_lib.read_resource(
+                            resource, offset, min(64 * 1024, size - offset)
+                        )
+                        assert chunk
+                        payload.extend(chunk)
+                        offset += len(chunk)
+                    matches.append(bytes(payload))
                 finally:
                     peare_lib._lib.peare_resource_destroy(resource)
         assert len(matches) == 1
@@ -116,3 +121,13 @@ def test_rar4_encrypted_headers_require_a_valid_password(peare_lib):
         pytest.skip(f"Missing external RAR4 sample: {archive.name}")
     assert peare_lib.open_file(str(archive)) is None
     assert peare_lib.open_file(str(archive), password="incorrect") is None
+
+
+def test_rar4_compressed_unicode_filename_matches_source(peare_lib):
+    archive = REPO / "tests" / "formats" / "rar4" / "rar4-unicode-token.rar"
+    expected_name = "café-über-資料.txt"
+    actual_payload = _rar_payload(peare_lib, archive, expected_name, None)
+    assert len(actual_payload) == 2062
+    assert hashlib.sha256(actual_payload).hexdigest() == (
+        "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
+    )

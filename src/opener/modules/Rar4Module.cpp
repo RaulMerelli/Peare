@@ -24,6 +24,7 @@ namespace {
 const std::uint8_t kMarker[] = {0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x00};
 const std::int64_t kMaxMarkerSearch = 1024 * 1024;
 const std::uint64_t kMaxEntryCount = 1000000;
+const std::size_t kMaxRar4NameUnits = 65535;
 
 std::uint16_t le16(const std::uint8_t* p)
 {
@@ -34,6 +35,13 @@ std::uint32_t le32(const std::uint8_t* p)
 {
     return std::uint32_t(p[0]) | (std::uint32_t(p[1]) << 8) |
            (std::uint32_t(p[2]) << 16) | (std::uint32_t(p[3]) << 24);
+}
+
+bool isRar4Directory(std::uint8_t hostOs, std::uint32_t attributes)
+{
+    if (hostOs == 3)
+        return (attributes & 0xf000U) == 0x4000U;
+    return (attributes & 0x10U) != 0;
 }
 
 std::uint32_t crc32Update(std::uint32_t crc, const std::uint8_t* data, std::size_t size)
@@ -174,6 +182,84 @@ bool findMarker(const fs::IByteStore& source, std::int64_t* offset)
     return false;
 }
 
+bool decodeRar4UnicodeName(const QByteArray& raw, QString* output)
+{
+    if (!output) return false;
+    const int separator = raw.indexOf('\0');
+    if (separator < 0 || separator + 1 >= raw.size()) return false;
+
+    const QByteArray fallback = raw.left(separator);
+    const std::uint8_t highByte = std::uint8_t(raw.at(separator + 1));
+    const std::uint8_t* encoded = reinterpret_cast<const std::uint8_t*>(
+        raw.constData() + separator + 2);
+    const std::size_t encodedSize = std::size_t(raw.size() - separator - 2);
+    std::size_t sourcePosition = 0;
+    std::size_t destinationPosition = 0;
+    std::uint8_t flags = 0;
+    unsigned flagBits = 0;
+    QString decoded;
+    decoded.reserve(fallback.size());
+
+    const auto append = [&decoded](std::uint16_t unit) {
+        if (std::size_t(decoded.size()) >= kMaxRar4NameUnits) return false;
+        decoded.append(QChar(unit));
+        return true;
+    };
+
+    while (sourcePosition < encodedSize) {
+        if (flagBits == 0) {
+            flags = encoded[sourcePosition++];
+            flagBits = 8;
+        }
+        const unsigned mode = flags >> 6;
+        flags = std::uint8_t(flags << 2);
+        flagBits -= 2;
+
+        if (mode < 2) {
+            if (sourcePosition >= encodedSize) return false;
+            const std::uint16_t low = encoded[sourcePosition++];
+            const std::uint16_t high = mode == 0 ? 0 : highByte;
+            if (!append(std::uint16_t((high << 8) | low))) return false;
+            ++destinationPosition;
+        } else if (mode == 2) {
+            if (encodedSize - sourcePosition < 2) return false;
+            const std::uint16_t unit = std::uint16_t(encoded[sourcePosition]) |
+                (std::uint16_t(encoded[sourcePosition + 1]) << 8);
+            sourcePosition += 2;
+            if (!append(unit)) return false;
+            ++destinationPosition;
+        } else {
+            if (sourcePosition >= encodedSize) return false;
+            const std::uint8_t length = encoded[sourcePosition++];
+            const bool corrected = (length & 0x80) != 0;
+            const std::size_t run = std::size_t(length & 0x7f) + 2;
+            std::uint8_t correction = 0;
+            if (corrected) {
+                if (sourcePosition >= encodedSize) return false;
+                correction = encoded[sourcePosition++];
+            }
+            if (destinationPosition > std::size_t(fallback.size()) ||
+                run > std::size_t(fallback.size()) - destinationPosition ||
+                run > kMaxRar4NameUnits - std::size_t(decoded.size()))
+                return false;
+            for (std::size_t index = 0; index < run; ++index) {
+                const std::uint8_t base = std::uint8_t(fallback.at(
+                    int(destinationPosition)));
+                const std::uint16_t high = corrected ? highByte : 0;
+                const std::uint8_t low = corrected
+                    ? std::uint8_t(base + correction) : base;
+                if (!append(std::uint16_t((high << 8) | low))) return false;
+                ++destinationPosition;
+            }
+        }
+    }
+
+    const QByteArray utf8 = decoded.toUtf8();
+    if (QString::fromUtf8(utf8.constData(), utf8.size()) != decoded) return false;
+    *output = decoded;
+    return true;
+}
+
 QString safeMemberName(const QByteArray& raw, bool unicodeFlag)
 {
     QByteArray bytes = raw;
@@ -184,9 +270,8 @@ QString safeMemberName(const QByteArray& raw, bool unicodeFlag)
             name = QString::fromUtf8(bytes.constData(), bytes.size());
             if (name.toUtf8() != bytes) return QString();
         } else {
-            // Keep the legacy spelling when the RAR Unicode token stream is not
-            // decoded; it remains a safe, deterministic path for older viewers.
-            name = QString::fromLocal8Bit(bytes.constData(), separator);
+            if (!decodeRar4UnicodeName(bytes, &name))
+                name = QString::fromLocal8Bit(bytes.constData(), separator);
         }
     } else {
         name = QString::fromLocal8Bit(bytes);
@@ -655,7 +740,7 @@ ModulePtr Rar4Module::open(const fs::ByteStorePtr& source, const QString& source
                 module->info_.error = QStringLiteral("Invalid or unsafe RAR4 filename");
                 return module;
             }
-            const bool directory = (flags & 0x00e0) == 0x00e0;
+            const bool directory = isRar4Directory(h[15], le32(h + 28));
             const unsigned dictionaryCode = (flags >> 5) & 7U;
             const std::size_t dictionarySize =
                 std::size_t(64 * 1024) << std::min(dictionaryCode, 6U);
@@ -685,6 +770,7 @@ ModulePtr Rar4Module::open(const fs::ByteStorePtr& source, const QString& source
             entry.dataOffset = std::uint64_t(pos) + physicalHeaderSize;
             entry.dataSize = unpacked;
             entry.isOs2 = h[15] == 1;
+            entry.isDirectory = directory;
             entry.isEmbeddedFile = !directory;
             if (!directory) {
                 if (splitBefore) {

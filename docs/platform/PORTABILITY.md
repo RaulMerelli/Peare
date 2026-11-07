@@ -10,7 +10,7 @@ works. The table separates build status from runtime status.
 | Linux x64 | Qt 5.15 build profile | Package status is not verified |
 | Linux ARM64 | Qt 5.15 cross-build profile | Not run on an ARM64 device |
 | macOS | No build profile | No app bundle or signing workflow |
-| Android ARM64 | Qt 6 build profile | Device testing remains open |
+| Android ARM64 | Qt 6.7.3 CI build profile | APK and device checks remain open until the first CI run and device test |
 | OS/2 | Source code may be portable | No supported Qt toolchain or build profile |
 
 ## Source portability
@@ -25,8 +25,9 @@ works. The table separates build status from runtime status.
 ## Android profile
 
 `tools/build/build_android.cmd` uses a Qt 6 Android kit, Ninja, and `androiddeployqt`.
-It builds the GUI and all three libraries. By default, it creates a debug-signed
-APK. Device execution and AluminiumOS integration are not verified.
+It builds the GUI and all three libraries. The GitHub Actions workflow uses the
+same Qt version and creates a debug-signed ARM64 APK. Device execution and
+AluminiumOS integration are not verified.
 
 Qt 6 builds need the Qt Core5Compat module for `QTextCodec`.
 Install it for both the host Qt kit and the Android target kit.
@@ -34,7 +35,7 @@ Qt 5 provides `QTextCodec` through QtCore.
 
 ## Work for broader support
 
-1. Add Linux x64, Linux ARM64, and macOS CI builds.
+1. Add Linux ARM64 and macOS CI builds.
 2. Add macOS app metadata, signing, and deployment rules.
 3. Test the Android APK on target devices and refine touch input.
 4. Add an OS/2 toolchain file only after a maintained Qt and compiler toolchain exists.

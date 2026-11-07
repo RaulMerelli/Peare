@@ -5,6 +5,8 @@
 #include <QDebug>
 #include <QStringList>
 #include <QtEndian>
+#include <cstring>
+#include <limits>
 
 namespace peare {
 namespace resources {
@@ -22,6 +24,11 @@ quint32 ReadUInt32(const QByteArray& data, int offset)
     if (offset < 0 || offset + 4 > data.size())
         return 0;
     return qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(data.constData() + offset));
+}
+
+void WriteUInt32(QByteArray& data, int offset, quint32 value)
+{
+    qToLittleEndian<quint32>(value, reinterpret_cast<uchar*>(data.data() + offset));
 }
 
 } // namespace
@@ -50,6 +57,10 @@ ResourcePreview RT_GROUP_ICON::preview(const ResourceEntry& entry, const IResour
     lines.append(QStringLiteral("\tCount: %1").arg(idCount));
 
     int offset = 6;
+    QVector<QByteArray> iconImages;
+    iconImages.reserve(idCount);
+    bool completeIcon = idReserved == 0 && idType == 1 && idCount > 0 &&
+                        entry.data.size() >= 6 + int(idCount) * 14;
 
     for (int i = 0; i < idCount; ++i)
     {
@@ -85,6 +96,12 @@ ResourcePreview RT_GROUP_ICON::preview(const ResourceEntry& entry, const IResour
                 entry.language))
         {
             preview.images += RT_ICON::decode(child->data);
+            iconImages.append(child->data);
+            if (child->data.isEmpty())
+                completeIcon = false;
+        } else {
+            iconImages.append({});
+            completeIcon = false;
         }
 
         offset += 14;
@@ -92,6 +109,34 @@ ResourcePreview RT_GROUP_ICON::preview(const ResourceEntry& entry, const IResour
 
     lines.append(QStringLiteral("}"));
     preview.text = lines.join(QStringLiteral("\r\n"));
+
+    if (completeIcon && iconImages.size() == idCount) {
+        const quint64 directorySize = 6u + quint64(idCount) * 16u;
+        quint64 nextOffset = directorySize;
+        QByteArray ico = entry.data.left(6);
+        ico.resize(int(directorySize));
+        for (int i = 0; i < idCount; ++i) {
+            const int groupOffset = 6 + i * 14;
+            const int icoOffset = 6 + i * 16;
+            const quint64 imageSize = quint64(iconImages[i].size());
+            if (nextOffset > std::numeric_limits<quint32>::max() ||
+                imageSize > std::numeric_limits<quint32>::max() ||
+                nextOffset + imageSize > std::numeric_limits<quint32>::max()) {
+                ico.clear();
+                break;
+            }
+            std::memcpy(ico.data() + icoOffset, entry.data.constData() + groupOffset, 8);
+            WriteUInt32(ico, icoOffset + 8, quint32(imageSize));
+            WriteUInt32(ico, icoOffset + 12, quint32(nextOffset));
+            nextOffset += imageSize;
+        }
+        if (!ico.isEmpty()) {
+            for (const QByteArray& image : iconImages)
+                ico.append(image);
+            preview.embeddedExports.append({entry.name + QStringLiteral(".ico"),
+                                             QStringLiteral(".ico"), ico});
+        }
+    }
     return preview;
 }
 

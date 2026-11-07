@@ -1,0 +1,12 @@
+{
+  "container_format": "ZIP",
+  "tree": [
+    {
+      "path": "src/opener/modules/ZipModule.cpp",
+      "size": 52792,
+      "is_container": false,
+      "format": "ZIP",
+      "sha256": "710682de7e5883fad49bf884bf75d83b13dd954c061669a769a42c2309a00305"
+    }
+  ]
+}

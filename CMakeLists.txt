@@ -173,8 +173,68 @@ target_include_directories(PeareMtxDecoder PRIVATE
 
 # Peare-owned compression decoders used by archive and disk readers.
 add_library(PeareOpener SHARED
+    src/opener/compression/ArjGost40.h
+    src/opener/compression/ArjGost40.cpp
+    src/opener/compression/PackMp3Decoder.h
+    src/opener/compression/PackMp3Decoder.cpp
+    src/opener/compression/third_party/packmp3/packmp3.cpp
+    src/opener/compression/third_party/packmp3/bitops.cpp
+    src/opener/compression/third_party/packmp3/bitops.h
+    src/opener/compression/third_party/packmp3/aricoder.cpp
+    src/opener/compression/third_party/packmp3/aricoder.h
+    src/opener/compression/third_party/packmp3/huffmp3.cpp
+    src/opener/compression/third_party/packmp3/huffmp3.h
+    src/opener/compression/third_party/packmp3/huffmp3tbl.h
+    src/opener/compression/third_party/packmp3/pmp3bitlen.h
+    src/opener/compression/third_party/packmp3/pmp3tbl.h
+    src/opener/compression/third_party/packmp3/packmp3lib.h
+    src/opener/compression/WinZipJpegDecoder.h
+    src/opener/compression/WinZipJpegDecoder.cpp
+    src/opener/compression/third_party/winzipjpeg/ArithmeticDecoder.c
+    src/opener/compression/third_party/winzipjpeg/ArithmeticDecoder.h
+    src/opener/compression/third_party/winzipjpeg/ClangAnalyser.h
+    src/opener/compression/third_party/winzipjpeg/Decompressor.c
+    src/opener/compression/third_party/winzipjpeg/Decompressor.h
+    src/opener/compression/third_party/winzipjpeg/InputStream.h
+    src/opener/compression/third_party/winzipjpeg/JPEG.c
+    src/opener/compression/third_party/winzipjpeg/JPEG.h
+    src/opener/compression/third_party/winzipjpeg/LZMA.h
+    src/opener/compression/WavPackDecoder.h
+    src/opener/compression/WavPackDecoder.cpp
+    src/opener/compression/third_party/wavpack/include/wavpack.h
+    src/opener/compression/third_party/wavpack/src/common_utils.c
+    src/opener/compression/third_party/wavpack/src/decorr_utils.c
+    src/opener/compression/third_party/wavpack/src/entropy_utils.c
+    src/opener/compression/third_party/wavpack/src/extra1.c
+    src/opener/compression/third_party/wavpack/src/extra2.c
+    src/opener/compression/third_party/wavpack/src/open_utils.c
+    src/opener/compression/third_party/wavpack/src/open_filename.c
+    src/opener/compression/third_party/wavpack/src/open_legacy.c
+    src/opener/compression/third_party/wavpack/src/open_raw.c
+    src/opener/compression/third_party/wavpack/src/pack.c
+    src/opener/compression/third_party/wavpack/src/pack_dns.c
+    src/opener/compression/third_party/wavpack/src/pack_floats.c
+    src/opener/compression/third_party/wavpack/src/pack_utils.c
+    src/opener/compression/third_party/wavpack/src/read_words.c
+    src/opener/compression/third_party/wavpack/src/tags.c
+    src/opener/compression/third_party/wavpack/src/tag_utils.c
+    src/opener/compression/third_party/wavpack/src/unpack.c
+    src/opener/compression/third_party/wavpack/src/unpack_floats.c
+    src/opener/compression/third_party/wavpack/src/unpack_seek.c
+    src/opener/compression/third_party/wavpack/src/unpack_utils.c
+    src/opener/compression/third_party/wavpack/src/write_words.c
+    src/opener/compression/third_party/wavpack/src/decorr_tables.h
+    src/opener/compression/third_party/wavpack/src/unpack3.h
+    src/opener/compression/third_party/wavpack/src/wavpack_local.h
+    src/opener/compression/third_party/wavpack/src/wavpack_version.h
     src/opener/compression/peare/Bzip2Decoder.h
     src/opener/compression/peare/Bzip2Decoder.cpp
+    src/opener/compression/LzmsDecoder.h
+    src/opener/compression/LzmsDecoder.cpp
+    src/opener/compression/third_party/wimlib/src/lzms_decompress.c
+    src/opener/compression/third_party/wimlib/src/lzms_common.c
+    src/opener/compression/third_party/wimlib/src/decompress_common.c
+    src/opener/compression/third_party/wimlib/src/compress_common.c
     src/opener/compression/peare/Rar4PpmdDecoder.h
     src/opener/compression/peare/Rar4PpmdDecoder.cpp
     src/opener/compression/peare/Rar4Crypto.h
@@ -187,6 +247,22 @@ add_library(PeareOpener SHARED
     src/opener/compression/SevenZipAesDecoder.cpp
     src/opener/compression/LzmaDecoder.h
     src/opener/compression/LzmaDecoder.cpp
+    src/opener/compression/third_party/blast/blast.h
+    src/opener/compression/third_party/blast/blast.c
+    src/opener/compression/third_party/zstd/zstd.h
+    src/opener/compression/third_party/zstd/zstd_errors.h
+    src/opener/compression/third_party/zstd/common/debug.c
+    src/opener/compression/third_party/zstd/common/entropy_common.c
+    src/opener/compression/third_party/zstd/common/error_private.c
+    src/opener/compression/third_party/zstd/common/fse_decompress.c
+    src/opener/compression/third_party/zstd/common/pool.c
+    src/opener/compression/third_party/zstd/common/threading.c
+    src/opener/compression/third_party/zstd/common/xxhash.c
+    src/opener/compression/third_party/zstd/common/zstd_common.c
+    src/opener/compression/third_party/zstd/decompress/huf_decompress.c
+    src/opener/compression/third_party/zstd/decompress/zstd_ddict.c
+    src/opener/compression/third_party/zstd/decompress/zstd_decompress_block.c
+    src/opener/compression/third_party/zstd/decompress/zstd_decompress.c
     src/opener/compression/third_party/lzma/Compiler.h
     src/opener/compression/third_party/lzma/Precomp.h
     src/opener/compression/third_party/lzma/7zTypes.h
@@ -202,6 +278,9 @@ add_library(PeareOpener SHARED
     src/opener/compression/third_party/lzma/Ppmd7.h
     src/opener/compression/third_party/lzma/Ppmd7.c
     src/opener/compression/third_party/lzma/Ppmd7Dec.c
+    src/opener/compression/third_party/lzma/Ppmd8.h
+    src/opener/compression/third_party/lzma/Ppmd8.c
+    src/opener/compression/third_party/lzma/Ppmd8Dec.c
     src/opener/compression/third_party/lzma/CpuArch.h
     src/opener/compression/third_party/lzma/Bcj2.h
     src/opener/compression/third_party/lzma/Bcj2.c
@@ -217,6 +296,8 @@ add_library(PeareOpener SHARED
     src/opener/compression/peare/LhaLh23Decoder.cpp
     src/opener/compression/peare/LhaLk7Decoder.h
     src/opener/compression/peare/LhaLk7Decoder.cpp
+    src/opener/compression/QuantumCabDecoder.h
+    src/opener/compression/QuantumCabDecoder.cpp
     src/opener/compression/peare/LhaPm1Decoder.h
     src/opener/compression/peare/LhaPm1Decoder.cpp
     src/opener/compression/peare/LhaPm2Decoder.h
@@ -266,14 +347,40 @@ add_library(PeareOpener SHARED
     src/opener/modules/Os2Pack2Tables.h
     src/opener/modules/SzddModule.h
     src/opener/modules/SzddModule.cpp
+    src/opener/modules/KwajModule.h
+    src/opener/modules/KwajModule.cpp
+    src/opener/modules/XbcompressModule.h
+    src/opener/modules/XbcompressModule.cpp
+    src/opener/modules/NsisModule.h
+    src/opener/modules/NsisModule.cpp
     src/opener/modules/GzipModule.h
     src/opener/modules/GzipModule.cpp
+    src/opener/modules/XzModule.h
+    src/opener/modules/XzModule.cpp
+    src/opener/modules/LzipModule.h
+    src/opener/modules/LzipModule.cpp
+    src/opener/modules/LzmaModule.h
+    src/opener/modules/LzmaModule.cpp
+    src/opener/modules/ZstdModule.h
+    src/opener/modules/ZstdModule.cpp
     src/opener/modules/Bzip2Module.h
     src/opener/modules/Bzip2Module.cpp
     src/opener/modules/ArModule.h
     src/opener/modules/ArModule.cpp
+    src/opener/modules/DebModule.h
+    src/opener/modules/DebModule.cpp
+    src/opener/modules/RpmModule.h
+    src/opener/modules/RpmModule.cpp
+    src/opener/modules/ChmModule.h
+    src/opener/modules/ChmModule.cpp
+    src/opener/modules/ArjModule.h
+    src/opener/modules/ArjModule.cpp
+    src/opener/modules/XarModule.h
+    src/opener/modules/XarModule.cpp
     src/opener/modules/CpioModule.cpp
     src/opener/modules/UnixCompressModule.cpp
+    src/opener/modules/IhexModule.h
+    src/opener/modules/IhexModule.cpp
     src/opener/modules/LhaModule.h
     src/opener/modules/LhaModule.cpp
     src/opener/modules/SevenZipModule.h
@@ -363,6 +470,8 @@ add_library(PeareOpener SHARED
     src/opener/fs/HpfsReader.cpp
     src/opener/fs/SquashFsReader.h
     src/opener/fs/SquashFsReader.cpp
+    src/opener/fs/CramFsReader.h
+    src/opener/fs/CramFsReader.cpp
     src/opener/fs/HfsPlusReader.h
     src/opener/fs/HfsPlusReader.cpp
     src/opener/fs/DmgDisk.h
@@ -430,6 +539,8 @@ add_library(PeareOpener SHARED
     src/opener/modules/HpfsModule.cpp
     src/opener/modules/SquashFsModule.h
     src/opener/modules/SquashFsModule.cpp
+    src/opener/modules/CramFsModule.h
+    src/opener/modules/CramFsModule.cpp
     src/opener/modules/HfsPlusModule.h
     src/opener/modules/HfsPlusModule.cpp
     src/opener/modules/DmgModule.h
@@ -446,6 +557,8 @@ add_library(PeareOpener SHARED
     src/opener/modules/RawDiskModule.cpp
     src/opener/modules/FloppyImageModule.h
     src/opener/modules/FloppyImageModule.cpp
+    src/opener/modules/ImzModule.h
+    src/opener/modules/ImzModule.cpp
     src/opener/modules/FfuModule.h
     src/opener/modules/FfuModule.cpp
     src/opener/modules/ZipModule.h
@@ -474,6 +587,10 @@ set_source_files_properties(
     src/opener/compression/third_party/lzma/Sha256.c
     PROPERTIES COMPILE_DEFINITIONS Z7_NO_CPU_FEATURES
 )
+set_source_files_properties(
+    src/opener/compression/third_party/packmp3/packmp3.cpp
+    PROPERTIES COMPILE_DEFINITIONS BUILD_LIB
+)
 target_compile_definitions(PeareOpener PRIVATE PEARE_OPENER_BUILD)
 target_include_directories(PeareOpener
     PUBLIC
@@ -482,6 +599,10 @@ target_include_directories(PeareOpener
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/compression
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/compression/third_party/zstd
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/compression/third_party/wimlib/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/compression/third_party/wavpack/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/compression/third_party/wavpack/src
 )
 target_link_libraries(PeareOpener PRIVATE
     ${PEARE_QT_CORE} ${PEARE_QT_CORE5COMPAT})

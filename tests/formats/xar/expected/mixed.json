@@ -1,0 +1,61 @@
+{
+  "container_format": "XAR",
+  "tree": [
+    {
+      "path": "big.txt",
+      "size": 80000,
+      "is_container": false,
+      "format": "XAR",
+      "sha256": "74df55e3a157d7f060d99596d05007254b4232739f6b771e721ab501d30b9c7a"
+    },
+    {
+      "path": "empty.txt",
+      "size": 0,
+      "is_container": false,
+      "format": "XAR",
+      "sha256": ""
+    },
+    {
+      "path": "nested",
+      "size": 0,
+      "is_container": true,
+      "format": "XAR",
+      "sha256": ""
+    },
+    {
+      "path": "nested/deep",
+      "size": 0,
+      "is_container": true,
+      "format": "XAR",
+      "sha256": ""
+    },
+    {
+      "path": "nested/deep/file.txt",
+      "size": 20,
+      "is_container": false,
+      "format": "XAR",
+      "sha256": "5d0e5bc93dbc8febbb6b3cea0503bfd7460284e544c2f689538fd55da59accb2"
+    },
+    {
+      "path": "plain.txt",
+      "size": 10,
+      "is_container": false,
+      "format": "XAR",
+      "sha256": "1ddc234bae1b3930239b3d8625224117828d8a576bb8951087cbe6097387fb1e"
+    },
+    {
+      "path": "setuid.sh",
+      "size": 7,
+      "is_container": false,
+      "format": "XAR",
+      "sha256": "fcd249947a42433f3ca96fd828ace5d07193ea0d7023210bfffd1453f1860a75"
+    },
+    {
+      "path": "store.bin",
+      "size": 4096,
+      "is_container": false,
+      "format": "XAR",
+      "sha256": "89df9d13a9eb9f62f594c1060bfb70958186b21654e8c67f2ce0aea4a438c4e2"
+    }
+  ]
+}

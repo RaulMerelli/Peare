@@ -99,6 +99,13 @@ peare_status peare_resource_get_payload(
     peare_resource_handle resource,
     peare_blob *out_payload);
 
+peare_status peare_resource_read(
+    peare_resource_handle resource,
+    uint64_t offset,
+    uint8_t *buffer,
+    size_t capacity,
+    size_t *out_read);
+
 peare_status peare_resource_get_context(
     peare_resource_handle resource,
     peare_resource_context *out_context);
@@ -140,7 +147,10 @@ same format detection as a top-level file.
 ## Resource data
 
 `peare_resource_get_payload()` returns a Peare-allocated copy of the payload.
-The Decoder and GUI do not change it.
+Use `peare_resource_read()` to read a file in chunks. It reads up to `capacity`
+bytes and reports the actual count in `out_read`. The resource context reports
+the full file size. A read at the end returns zero bytes; an offset past the end
+returns `PEARE_STATUS_OUT_OF_RANGE`.
 
 `peare_resource_get_context()` returns the container format, platform, type,
 identifier, language, code page, and origin. Release it with

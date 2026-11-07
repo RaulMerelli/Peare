@@ -55,6 +55,11 @@ PEARE_OPENER_API peare_status peare_opener_find_resource(peare_opener_handle ope
                                                   peare_resource_handle *out_resource);
 PEARE_OPENER_API void peare_resource_destroy(peare_resource_handle resource);
 PEARE_OPENER_API peare_status peare_resource_get_payload(peare_resource_handle resource, peare_blob *out_payload);
+PEARE_OPENER_API peare_status peare_resource_read(peare_resource_handle resource,
+                                                  uint64_t offset,
+                                                  uint8_t *buffer,
+                                                  size_t capacity,
+                                                  size_t *out_read);
 PEARE_OPENER_API peare_status peare_resource_get_context(peare_resource_handle resource,
                                                   peare_resource_context *out_context);
 PEARE_OPENER_API peare_status peare_resource_get_converted_extensions(

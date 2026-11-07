@@ -53,11 +53,21 @@ ResourcePlatform platformFor(const ResourceEntry& entry)
     case ModuleFormat::HPFS:
         return ResourcePlatform::Os2;
     case ModuleFormat::SZDD:
+    case ModuleFormat::CHM:
+    case ModuleFormat::KWAJ:
+    case ModuleFormat::XBCOMPRESS:
     case ModuleFormat::GZIP:
+    case ModuleFormat::XZ:
     case ModuleFormat::BZIP2:
     case ModuleFormat::AR:
+    case ModuleFormat::ARJ:
+    case ModuleFormat::XAR:
     case ModuleFormat::CPIO:
     case ModuleFormat::UNIX_COMPRESS:
+    case ModuleFormat::INTEL_HEX:
+    case ModuleFormat::LZIP:
+    case ModuleFormat::LZMA:
+    case ModuleFormat::ZSTD:
     case ModuleFormat::CAB:
     case ModuleFormat::SEVEN_ZIP:
     case ModuleFormat::ZIP:
@@ -89,6 +99,7 @@ ResourcePlatform platformFor(const ResourceEntry& entry)
     case ModuleFormat::XFS:
     case ModuleFormat::JFS:
     case ModuleFormat::SQUASHFS:
+    case ModuleFormat::CRAMFS:
     case ModuleFormat::HFSPLUS:
     case ModuleFormat::DMG:
     case ModuleFormat::BTRFS:
@@ -294,7 +305,7 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
     for (ResourceEntry& entry : resources_) {
         entry.isContainer = false;
         if (entry.isDirectory) {
-            entry.isContainer = true;
+            entry.isContainer = !entry.containerSubPath.isEmpty();
             continue;
         }
 
@@ -302,6 +313,11 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
         // This prevents recursive PE_HEADERS expansion.
         if (!entry.isEmbeddedFile)
             continue;
+        if (entry.content && !entry.content->cheapRandomAccess() &&
+            entry.content->capacity() > 16LL * 1024LL * 1024LL) {
+            entry.isContainer = true;
+            continue;
+        }
 
         const auto readHead = [&](std::int64_t count) -> QByteArray {
             if (entry.content) {
@@ -438,9 +454,13 @@ void OpenerSession::rebuildFolders()
             entry.type == QStringLiteral("WPI_FILE") ||
             entry.type == QStringLiteral("BZIP2_FILE") ||
             entry.type == QStringLiteral("AR_FILE") ||
+            entry.type == QStringLiteral("ARJ_FILE") ||
+            entry.type == QStringLiteral("ARJ_DIR") ||
             entry.type == QStringLiteral("CPIO_FILE") ||
             entry.type == QStringLiteral("CPIO_SPECIAL") ||
             entry.type == QStringLiteral("UNIX_COMPRESS_FILE") ||
+            entry.type == QStringLiteral("LZIP_FILE") ||
+            entry.type == QStringLiteral("ZSTD_FILE") ||
             entry.type == QStringLiteral("UUE_FILE") ||
             entry.type == QStringLiteral("LHA_FILE") ||
             entry.type == QStringLiteral("RAR4_FILE") ||
@@ -496,6 +516,7 @@ void OpenerSession::rebuildFolders()
             entry.type == QStringLiteral("JFS_FILE") ||
             entry.type == QStringLiteral("HPFS_FILE") ||
             entry.type == QStringLiteral("SQUASHFS_FILE") ||
+            entry.type == QStringLiteral("CRAMFS_FILE") ||
             entry.type == QStringLiteral("HFS_FILE") ||
             entry.type == QStringLiteral("BTRFS_FILE") ||
             entry.type == QStringLiteral("LVM_LOGICAL_VOLUME") ||

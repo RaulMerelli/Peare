@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QEventLoop>
 #include <QFont>
+#include <QFileInfo>
 #include <QIcon>
 #include <QLabel>
 #include <QPlainTextEdit>
@@ -40,7 +41,7 @@ static int runPreview(MainWindow& window, QApplication& app, const QString& sour
 {
     window.resize(1280, 800);
     window.show();
-    window.openFilePath(sourcePath);
+    window.openFilePath(sourcePath, QString::fromUtf8(qgetenv("PEARE_PREVIEW_PASSWORD")));
     app.processEvents();
 
     const bool selected = resourcePath.isEmpty()
@@ -222,6 +223,14 @@ int main(int argc, char* argv[])
             });
         });
         return app.exec();
+    }
+
+    for (int index = 1; index < app.arguments().size(); ++index) {
+        const QString argument = app.arguments().at(index);
+        if (!argument.startsWith(QLatin1Char('-')) && QFileInfo::exists(argument)) {
+            window.openFilePath(argument);
+            break;
+        }
     }
 
     window.show();

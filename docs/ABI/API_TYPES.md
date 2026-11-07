@@ -123,6 +123,10 @@ MSIX, APPXBUNDLE, and XAP values identify ZIP-based application packages.
 `PEARE_CONTAINER_ASAR` identifies Electron ASAR archives.
 `PEARE_CONTAINER_GZIP` identifies RFC 1952 streams. Peare checks each member's
 CRC32 and uncompressed size. It joins valid concatenated members.
+`PEARE_CONTAINER_INTEL_HEX` identifies Intel HEX files. Data resources use
+`IHEX_DATA` and store the firmware address in `data_offset`. A start-address
+record uses `IHEX_START_ADDRESS`. Its identifier contains the computed address.
+`PEARE_CONTAINER_DEB` identifies Debian binary packages with format version 2.0.
 
 The font-specific values after `PEARE_CONTAINER_GZIP` are reserved legacy IDs.
 The Opener does not emit them. `PEARE_CONTAINER_RESOURCE_FORK` identifies a

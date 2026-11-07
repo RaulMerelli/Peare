@@ -122,6 +122,10 @@ class PeareLib:
         L.peare_resource_destroy.argtypes = [_HANDLE]
         L.peare_resource_get_payload.argtypes = [_HANDLE, C.POINTER(_Blob)]
         L.peare_resource_get_payload.restype = C.c_int
+        L.peare_resource_read.argtypes = [
+            _HANDLE, C.c_uint64, C.c_void_p, C.c_size_t, C.POINTER(C.c_size_t)
+        ]
+        L.peare_resource_read.restype = C.c_int
         L.peare_resource_get_context.argtypes = [_HANDLE, C.POINTER(_Context)]
         L.peare_resource_get_context.restype = C.c_int
         L.peare_resource_context_free.argtypes = [C.POINTER(_Context)]
@@ -132,6 +136,16 @@ class PeareLib:
     def status_message(self, code: int) -> str:
         msg = self._lib.peare_status_message(code)
         return msg.decode("utf-8", "replace") if msg else f"status {code}"
+
+    def read_resource(self, resource: _HANDLE, offset: int, capacity: int) -> bytes:
+        buffer = (C.c_uint8 * capacity)()
+        count = C.c_size_t()
+        status = self._lib.peare_resource_read(
+            resource, offset, buffer, capacity, C.byref(count)
+        )
+        if status != 0:
+            raise RuntimeError(self.status_message(status))
+        return C.string_at(buffer, count.value)
 
     def open_file(self, path: str, password: str | None = None) -> "Opener | None":
         h = _HANDLE()
@@ -199,10 +213,16 @@ class Opener:
         self._L.peare_opener_get_resource_count(self._h, folder, C.byref(n))
         return n.value
 
-    def normalized_tree(self, prefix: str = "", depth: int = 0, max_depth: int = 8) -> list[dict]:
+    def normalized_tree(
+        self, prefix: str = "", depth: int = 0, max_depth: int = 8,
+        recurse_containers: bool | set[str] = True,
+        recurse_empty_containers_only: bool = False,
+        include_resource_type: bool = False,
+    ) -> list[dict]:
         """Deterministic, sorted list of every resource reachable from this opener,
         recursing into nested containers. Payload bytes are summarised as sha256 so
-        golden manifests stay small while still proving byte-exact extraction."""
+        golden manifests stay small while still proving byte-exact extraction.
+        The optional size filter can keep recursion within empty directory entries."""
         rows: list[dict] = []
         if depth > max_depth:
             return rows
@@ -218,9 +238,14 @@ class Opener:
                     # Read EVERY field we need before freeing: peare_resource_context_free
                     # zeroes the struct, so touching ctx afterwards yields 0/UNKNOWN.
                     name = ctx.identifier_utf8.to_bytes().decode("utf-8", "replace")
+                    resource_type = ctx.type_utf8.to_bytes().decode("utf-8", "replace")
                     is_container = bool(ctx.is_container)
                     fmt = CONTAINER_NAMES.get(ctx.container_format, str(ctx.container_format))
                     size = int(ctx.data_size)
+                    should_recurse = is_container and (
+                        recurse_containers is True
+                        or (isinstance(recurse_containers, set) and fmt in recurse_containers)
+                    ) and (not recurse_empty_containers_only or size == 0)
                     self._L.peare_resource_context_free(C.byref(ctx))
                     folder_path = self.folder_type(folder)
                     folder_parts = folder_path.split("\x1f") if folder_path else []
@@ -234,27 +259,33 @@ class Opener:
                     # leaf files under a sanity cap — never materialise a multi-GB
                     # container (we recurse into those instead).
                     sha = ""
-                    if not is_container and 0 < size <= _MAX_HASH_BYTES:
+                    if not should_recurse and 0 < size <= _MAX_HASH_BYTES:
                         blob = _Blob()
                         if self._L.peare_resource_get_payload(res, C.byref(blob)) == 0:
                             data = blob.to_bytes()
                             sha = hashlib.sha256(data).hexdigest() if data else ""
                             self._L.peare_blob_free(C.byref(blob))
 
-                    rows.append({
+                    row = {
                         "path": path,
                         "size": size,
                         "is_container": is_container,
                         "format": fmt,
                         "sha256": sha,
-                    })
+                    }
+                    if include_resource_type:
+                        row["resource_type"] = resource_type
+                    rows.append(row)
 
-                    if is_container and depth < max_depth:
+                    if should_recurse and depth < max_depth:
                         src = _HANDLE()
                         if self._L.peare_resource_get_source(res, C.byref(src)) == 0 and src:
                             child = self._lib._open_source(src)
                             if child:
-                                rows.extend(child.normalized_tree(path, depth + 1, max_depth))
+                                rows.extend(child.normalized_tree(
+                                    path, depth + 1, max_depth, recurse_containers,
+                                    recurse_empty_containers_only, include_resource_type,
+                                ))
                                 child.close()
                             self._L.peare_source_destroy(src)
                 finally:

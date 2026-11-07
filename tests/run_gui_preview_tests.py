@@ -58,6 +58,10 @@ def run_case(executable, output_dir, timeout, case, child_env):
     screenshot = output_dir / f"{name}.png"
     command = [str(executable), "--preview-resource", str(source), tree_path,
                str(screenshot)]
+    if "password" in case:
+        child_env["PEARE_PREVIEW_PASSWORD"] = str(case["password"])
+    else:
+        child_env.pop("PEARE_PREVIEW_PASSWORD", None)
     result = subprocess.run(command, capture_output=True, text=True, env=child_env,
                             timeout=timeout, check=False)
     if result.returncode != 0:

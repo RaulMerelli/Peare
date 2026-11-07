@@ -24,14 +24,34 @@ sample evidence.
 
 | Test module | Coverage |
 |---|---|
-| `tests/test_formats.py` | Opens each eligible repository fixture through the Opener ABI and compares its resource tree with a reviewed JSON manifest. |
+| `tests/test_formats.py` | Opens each eligible repository fixture through the Opener ABI and compares its resource tree with a reviewed JSON manifest. Optional QEMU tests cover empty and non-empty stream-optimized VMDKs; the non-empty test compares the complete virtual-disk bytes with the raw source. |
 | `tests/test_font_samples_abi.py` | Sends standalone font bytes and raw container-resource payloads to Decoder, checks collection faces, scans configured font directories, and tests GZIP/ZIP-wrapped fonts. Opener is tested only for generic container extraction and for not classifying standalone fonts. |
+| `tests/test_resource_export_abi.py` | Verifies multi-image `RT_GROUP_ICON` export as ICO through Decoder's C ABI using a real PE fixture. |
 | `tests/test_pfm_samples_abi.py` | Checks real PFM metric files through Decoder text and metadata ABI calls. |
 | `tests/test_zip_implode_abi.py` | Compares all members of a real Implode ZIP with 7-Zip through the Opener ABI. |
+| `tests/test_zipx_methods_abi.py` | Checks Deflate64, BZip2, LZMA, XZ, Zstandard, PPMd restart/freeze/cut-off, MP3, JPEG, WavPack, and all six ZIP DCL Implode modes through the Opener ABI against source files. Optional external samples use the `PEARE_ZIPX_*` variables below. |
+| `tests/test_ihex_samples_abi.py` | Compares Intel HEX data records at low and extended addresses with their source payload through the Opener ABI. |
+| `tests/test_gzip_multi_member_abi.py` | Checks concatenated GZIP members through the Opener ABI against both source payloads. |
+| `tests/test_tar_compressed_variants_abi.py` | Compares `.tgz`, `.tbz`, and `.tbz2` payloads with their TAR source, opens each nested TAR, and checks a `.taz` alias of an upstream `.tar.Z` sample. |
 | `tests/test_wad_decode_abi.py` | Opens and decodes sprites and textures from the external Doom IWAD archive when available. |
-| `tests/test_uue_samples_abi.py` | Opens upstream libarchive UUencode samples through the Opener ABI and compares each decoded payload with its paired `.Z` sample. |
+| `tests/test_uue_samples_abi.py` | Compares upstream libarchive classic UUencode samples with their `.Z` payloads and checks the RFC 6873 Base64 envelope through the Opener ABI. |
+| `tests/test_chm_samples_abi.py` | Compares CHM members with independent 7-Zip extractions through the Opener ABI. Set `PEARE_CHM_ITSF2_SAMPLE` and `PEARE_CHM_ITSF2_ORACLE` to enable the optional ITSF v2 sample case. |
+| `tests/test_lzip_samples_abi.py` | Opens GNU Lzip test samples through the Opener ABI and compares the decoded payload with the upstream source file. |
+| `tests/test_szdd_variant_b_abi.py` | Opens the local Windows 3.1 build 026 SZDD mode B corpus through the Opener ABI and checks declared sizes and selected DOS signatures. Set `PEARE_SZDD_B_SAMPLE_ROOT` to the extracted sample directory. |
+| `tests/test_kwaj_samples_abi.py` | Checks KWAJ methods 0–4 through the Opener ABI against libmspack output. It covers 549 authentic method 3 files, 311 Word 6 method 4 files, 111 multi-block MS-ZIP files, and independent method 0–2 samples. |
+| `tests/test_xbcompress_samples_abi.py` | Compares Microsoft XBCOMPRESS LZMS, multi-block LZMS, and multi-block MSZIP samples with their original inputs through the Opener ABI. |
+| `tests/test_lzma_samples_abi.py` | Opens an LZMA-alone stream from an independent XZ Utils encoder through the Opener ABI and compares its payload with the source file. |
+| `tests/test_zstd_samples_abi.py` | Opens independently encoded Zstandard frames through the Opener ABI; checks checksums, empty and concatenated frames, and nested TAR dispatch. |
 | `tests/test_lha_samples_abi.py` | Opens configured LHA samples through the Opener ABI and compares names and payloads with 7-Zip. |
 | `tests/test_7z_methods_abi.py` | Compares 7z codecs, filters, headers, six compression levels, coder properties, and solid-block settings through the Opener ABI with 7-Zip 19.00. Set `PEARE_7Z_REAL_SAMPLE_ROOT` to compare an external solid archive corpus with 7-Zip. |
+| `tests/test_rar4_samples_abi.py` | Compares RAR4 members with 7-Zip output. Covers methods, solid archives, filters, encryption, split volumes, and a compressed Unicode filename. |
+| `tests/test_rar5_samples_abi.py` | Compares RAR5 methods, solid streams, filters, encrypted data and headers, and split volumes with 7-Zip through the Opener ABI. It also reads an archive with recovery data. |
+| `tests/test_cab_samples_abi.py` | Compares uncompressed, MSZIP, LZX15, LZX21, and Quantum CAB members with 7-Zip through the Opener ABI. Set `PEARE_CAB_SAMPLE_ROOT` and `PEARE_CAB_QUANTUM_SAMPLE_ROOT` to run the external sample cases. |
+| `tests/test_rar7_sample_abi.py` | Checks RAR7 algorithm version 1 through the Opener ABI against a real 6 GiB dictionary sample and its output CRC. |
+| `tests/test_arj_samples_abi.py` | Compares ARJ methods 0-4, legacy encryption, GOST40, GOST256, GOST256L, and split-volume payloads with independent ARJ extractions through the Opener ABI. |
+| `tests/test_xar_samples_abi.py` | Checks XAR corpus samples with stored, zlib, and bzip2 members through the Opener ABI. |
+| `tests/test_deb_samples_abi.py` | Opens official Debian binary packages through the Opener ABI and checks nested control and data TAR members. Set `PEARE_DEB_SAMPLE_ROOT` to the local sample directory. |
+| `tests/test_rpm_samples_abi.py` | Opens RPM packages from ArcaOS, Red Hat EL3, and Fedora 42 through the Opener ABI and checks CPIO members. Set `PEARE_RPM_SAMPLE_ROOT` to the local sample directory. |
 | `tests/test_writer.py` | Runs CUD operations on disposable disk-image copies and checks supported Peare-created VMDKs with VMware when configured. |
 | `tests/test_android_package.py` | Checks the ELF architecture of native libraries in a built Android APK. It does not run the APK on a device. |
 | `tests/run_tests.py` | Runs pytest and stores pytest files and Python bytecode in `tmp/test-output`. |
@@ -127,10 +147,23 @@ py tests/run_gui_preview_tests.py `
 ```
 
 The runner does not infer a format or choose a resource. Tests must provide the
-same full tree path that a user can select in the GUI. Standalone font files go
-directly to Decoder. Opener is used only when the source is a container; it
-returns the selected record bytes without interpreting them. A complete font grid requires one displayed
-cell per glyph. A blank glyph is valid and does not need visible pixels.
+same full tree path that a user can select in the GUI. A manifest can include a
+`password` value for encrypted samples. Standalone font files go directly to
+Decoder. Opener is used only when the source is a container; it returns the
+selected record bytes without interpreting them. A complete font grid requires
+one displayed cell per glyph. A blank glyph is valid and does not need visible
+pixels.
+
+## Archive Directory Tests
+
+`test_archive_directory_entries_abi.py` creates small archives with 7-Zip and
+WinRAR. It checks exact directory paths and file hashes through the Opener ABI.
+It also checks that explicit archive directories are not lazy containers.
+The test covers 7z, RAR4, and RAR5. Run it with:
+
+```powershell
+py tests/run_tests.py -q tests/test_archive_directory_entries_abi.py
+```
 
 ## Offscreen GUI Writer Tests
 
@@ -209,7 +242,48 @@ bytes. The test code defines the font variants and optional sample inputs.
 | Variable | Sample |
 |---|---|
 | `PEARE_DOOM_IWADS_ZIP` | Path to an external Doom IWAD ZIP archive. |
-| `PEARE_RAR4_SAMPLE_ROOT` | External RAR4 samples for the Opener ABI tests. |
+| `PEARE_RAR4_SAMPLE_ROOT` | External RAR4 and RAR5 samples for the Opener ABI tests. |
+| `PEARE_RAR5_RECOVERY_SAMPLE` | External RAR5 archive with an inline recovery record. |
+| `PEARE_RAR5_RECOVERY_EXPECTED` | Original payload stored in the RAR5 recovery sample. |
+| `PEARE_CAB_SAMPLE_ROOT` | External uncompressed, MSZIP, and LZX15 CAB samples for the Opener ABI tests. |
+| `PEARE_CAB_QUANTUM_SAMPLE_ROOT` | External CAB samples for Quantum windows 10 to 21, mixed compression methods, and history across blocks. |
+| `PEARE_RAR7_SAMPLE` | External RAR7 algorithm version 1 sample for the Opener ABI test. |
+| `PEARE_RAR7_VERIFY_FULL` | Set to `1` to decode the full 4.56 GB RAR7 sample and check its output CRC. This test needs several GiB of RAM. |
+| `PEARE_LZIP_SAMPLE_ROOT` | Path to the GNU Lzip source `testsuite` directory. |
+| `PEARE_LZIP_MULTI_MEMBER_SAMPLE` | Lzip file created by an independent encoder from `test.txt` and `README.md`. |
+| `PEARE_LZIP_EMPTY_SAMPLE` | Empty Lzip member created by an independent encoder. |
+| `PEARE_LZIP_TAR_SAMPLE` | Lzip file created by an independent encoder from the repository TAR fixture. |
+| `PEARE_UUE_RFC_SAMPLE` | External RFC 6873 UUencode Base64 sample with introductory and trailing text. |
+| `PEARE_UUE_RFC_PAYLOAD` | Expected payload decoded from the RFC Base64 vector by Python's standard decoder. |
+| `PEARE_ZIPX_EXTERNAL_SAMPLE` | Optional multi-member PPMd ZIPX archive with reviewed payload hashes. |
+| `PEARE_ZIPX_PPMD_SAMPLE` | Optional 7-Zip PPMd ZIPX sample created from the project README. |
+| `PEARE_ZIPX_WAVPACK_SAMPLE` | External ZIPX archive with WavPack-compressed WAV members. |
+| `PEARE_ZIPX_WAVPACK_ORACLE_DIR` | Original WAV members for the WavPack ZIPX comparison. |
+| `PEARE_ZIPX_MP3_SAMPLE` | WinZip ZIPX archive that uses method 94. |
+| `PEARE_ZIPX_MP3_SOURCE` | Original MP3 source used for the method 94 comparison. |
+| `PEARE_ZIPX_JPEG_SAMPLE` | WinZip ZIPX archive that uses method 96. |
+| `PEARE_ZIPX_JPEG_SOURCE_DIR` | Original JPEG source directory for the method 96 comparison. |
+| `PEARE_ZSTD_ERROR_SAMPLE_ROOT` | Optional upstream Zstandard decompression-error corpus for malformed-stream rejection. |
+| `PEARE_ZSTD_UPSTREAM_SAMPLE_ROOT` | Optional upstream Zstandard golden-decompression samples. |
+| `PEARE_ZSTD_CLI` | Official Zstandard CLI used to provide expected output for upstream samples. |
+| `PEARE_ARJ_SAMPLE_ROOT` | Local ARJ archives used by the Opener ABI test. |
+| `PEARE_ARJ_ORACLE_ROOT` | Independent 7-Zip extractions used as the expected ARJ output. |
+| `PEARE_ARJ_EDGE_SAMPLE_ROOT` | External ARJ32 legacy-encrypted sample root. |
+| `PEARE_ARJ_ENCRYPTED_SAMPLE` | Optional external ARJ32 encrypted sample. |
+| `PEARE_ARJ_ENCRYPTED_ORACLE` | ARJ32 extraction of the encrypted sample. |
+| `PEARE_ARJ_GOST40_SAMPLE` | Optional external ARJ32 GOST40-encrypted sample. |
+| `PEARE_ARJ_GOST40_ORACLE` | ARJ32 extraction of the GOST40 sample. |
+| `PEARE_ARJ_GOST256_SAMPLE` | ARJ version 2 archive encrypted with GOST256. |
+| `PEARE_ARJ_GOST256_PASSWORD` | Password for the ARJ version 2 sample. |
+| `PEARE_ARJ_GOST256_ORACLE` | ARJ extraction of the GOST256 sample. |
+| `PEARE_ARJ_GOST256L_SAMPLE` | ARJ version 3 archive encrypted with GOST256L. |
+| `PEARE_ARJ_GOST256L_PASSWORD` | Password for the ARJ version 3 sample. |
+| `PEARE_ARJ_GOST256L_ORACLE` | ARJ extraction of the GOST256L sample. |
+| `PEARE_ARJ_GOST256L64_SAMPLE` | ARJ version 3 sample with a 64-byte password. |
+| `PEARE_ARJ_GOST256L64_PASSWORD` | 64-byte password for the GOST256L sample. |
+| `PEARE_ARJ_GOST256L64_ORACLE` | ARJ extraction of the 64-byte-password sample. |
+| `PEARE_ARJ_SPLIT_SAMPLE` | External multi-volume ARJ archive used by the split-member ABI test. |
+| `PEARE_ARJ_SPLIT_ORACLE` | ARJ extraction of the complete split-member sample. |
 | `PEARE_FONT_SAMPLE_ROOTS` | Optional list of font directories, separated by the platform path separator. |
 | `PEARE_NTFS_TEST_IMAGE` | Disposable copy source for an NTFS image. |
 | `PEARE_VMDK_STREAM_TEST_IMAGE` | Stream-optimized VMDK sample. |
@@ -227,6 +301,10 @@ bytes. The test code defines the font variants and optional sample inputs.
 | `PEARE_FAT_FLOPPY_CUD_IMAGES` | Semicolon-separated floppy image paths. |
 | `PEARE_DSK_TEST_IMAGES` | Semicolon-separated OS/2 DSK image paths. |
 | `PEARE_VMWARE_VDISKMANAGER` | VMware `vmware-vdiskmanager.exe` path for independent VMDK checks. |
+
+The Lzip sample corpus comes from the [GNU Lzip 1.26 source release](https://download-mirror.savannah.gnu.org/releases/lzip/).
+GNU Lzip 1.11 created the local multi-member sample from `test.txt` and `README.md`.
+It also created the empty-member sample from an empty input. These samples are not committed.
 
 The DOS FAT12 test uses Peare rollback-journal state fixtures next to a
 disposable copy. It checks legacy and checksummed recovery, then rejects

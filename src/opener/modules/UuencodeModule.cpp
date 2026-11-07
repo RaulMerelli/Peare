@@ -31,17 +31,48 @@ bool readLine(const QByteArray& data, qsizetype* position, QByteArray* line)
     return true;
 }
 
-bool parseHeader(const QByteArray& line, QByteArray* name)
+bool parseHeader(const QByteArray& line, QByteArray* name, bool* base64,
+                 bool* encodedName)
 {
-    if (!line.startsWith("begin ")) return false;
-    const qsizetype modeStart = 6;
+    if (!name || !base64 || !encodedName) return false;
+    qsizetype modeStart = 0;
+    if (line.startsWith("begin-base64-encoded ")) {
+        modeStart = 21;
+        *base64 = true;
+        *encodedName = true;
+    } else if (line.startsWith("begin-base64 ")) {
+        modeStart = 13;
+        *base64 = true;
+        *encodedName = false;
+    } else if (line.startsWith("begin-encoded ")) {
+        modeStart = 14;
+        *base64 = false;
+        *encodedName = true;
+    } else if (line.startsWith("begin ")) {
+        modeStart = 6;
+        *base64 = false;
+        *encodedName = false;
+    } else {
+        return false;
+    }
     const qsizetype modeEnd = line.indexOf(' ', modeStart);
     if (modeEnd - modeStart < 3 || modeEnd - modeStart > 4 || modeEnd + 1 >= line.size())
         return false;
     for (qsizetype i = modeStart; i < modeEnd; ++i)
         if (line.at(i) < '0' || line.at(i) > '7') return false;
     *name = line.mid(modeEnd + 1).trimmed();
+    if (*encodedName && name->contains(' ')) return false;
     return !name->isEmpty();
+}
+
+bool readDeviceLine(QIODevice& input, QByteArray* line);
+
+bool findHeader(QIODevice& input, QByteArray* name, bool* base64, bool* encodedName)
+{
+    QByteArray line;
+    while (readDeviceLine(input, &line))
+        if (parseHeader(line, name, base64, encodedName)) return true;
+    return false;
 }
 
 int decodeCharacter(char value)
@@ -80,6 +111,51 @@ bool decodeLine(const QByteArray& line, std::array<std::uint8_t, 45>* output,
     return decoded == count;
 }
 
+int base64Value(unsigned char value)
+{
+    if (value >= 'A' && value <= 'Z') return value - 'A';
+    if (value >= 'a' && value <= 'z') return value - 'a' + 26;
+    if (value >= '0' && value <= '9') return value - '0' + 52;
+    if (value == '+') return 62;
+    if (value == '/') return 63;
+    return -1;
+}
+
+bool decodeBase64Line(const QByteArray& line, std::array<std::uint8_t, 57>* output,
+                      int* outputSize, bool* hasPadding)
+{
+    if (!output || !outputSize || !hasPadding || line.isEmpty() || line.size() % 4 != 0 ||
+        line.size() > 76)
+        return false;
+    int decoded = 0;
+    for (qsizetype i = 0; i < line.size(); i += 4) {
+        const int a = base64Value(static_cast<unsigned char>(line.at(i)));
+        const int b = base64Value(static_cast<unsigned char>(line.at(i + 1)));
+        const char c = line.at(i + 2);
+        const char d = line.at(i + 3);
+        if (a < 0 || b < 0 || *hasPadding) return false;
+        (*output)[std::size_t(decoded++)] = std::uint8_t((a << 2) | (b >> 4));
+        if (c == '=') {
+            if (d != '=' || i + 4 != line.size() || (b & 0x0f) != 0) return false;
+            *hasPadding = true;
+            continue;
+        }
+        const int cv = base64Value(static_cast<unsigned char>(c));
+        if (cv < 0) return false;
+        (*output)[std::size_t(decoded++)] = std::uint8_t((b << 4) | (cv >> 2));
+        if (d == '=') {
+            if (i + 4 != line.size() || (cv & 0x03) != 0) return false;
+            *hasPadding = true;
+            continue;
+        }
+        const int dv = base64Value(static_cast<unsigned char>(d));
+        if (dv < 0) return false;
+        (*output)[std::size_t(decoded++)] = std::uint8_t((cv << 6) | dv);
+    }
+    *outputSize = decoded;
+    return true;
+}
+
 bool readDeviceLine(QIODevice& input, QByteArray* line)
 {
     if (!line) return false;
@@ -98,21 +174,6 @@ bool writeAll(QIODevice& output, const std::uint8_t* data, qint64 size)
             reinterpret_cast<const char*>(data + written), size - written);
         if (count <= 0) return false;
         written += count;
-    }
-    return true;
-}
-
-bool trailingWhitespace(QIODevice& input)
-{
-    std::array<char, 64 * 1024> buffer{};
-    while (!input.atEnd()) {
-        const qint64 count = input.read(buffer.data(), qint64(buffer.size()));
-        if (count <= 0) return false;
-        for (qint64 i = 0; i < count; ++i) {
-            const char value = buffer[std::size_t(i)];
-            if (value != '\r' && value != '\n' && value != ' ' && value != '\t')
-                return false;
-        }
     }
     return true;
 }
@@ -158,6 +219,40 @@ QString payloadName(QByteArray name)
         ? QStringLiteral("uue_payload") : decoded;
 }
 
+bool decodeEncodedName(QByteArray* name)
+{
+    if (!name || name->isEmpty() || name->size() % 4 != 0) return false;
+    QByteArray decoded;
+    decoded.reserve(name->size() / 4 * 3);
+    bool padded = false;
+    for (qsizetype i = 0; i < name->size(); i += 4) {
+        const int a = base64Value(static_cast<unsigned char>(name->at(i)));
+        const int b = base64Value(static_cast<unsigned char>(name->at(i + 1)));
+        const char c = name->at(i + 2);
+        const char d = name->at(i + 3);
+        if (a < 0 || b < 0 || padded) return false;
+        decoded.append(char((a << 2) | (b >> 4)));
+        if (c == '=') {
+            if (d != '=' || i + 4 != name->size() || (b & 0x0f) != 0) return false;
+            padded = true;
+            continue;
+        }
+        const int cv = base64Value(static_cast<unsigned char>(c));
+        if (cv < 0) return false;
+        decoded.append(char((b << 4) | (cv >> 2)));
+        if (d == '=') {
+            if (i + 4 != name->size() || (cv & 0x03) != 0) return false;
+            padded = true;
+            continue;
+        }
+        const int dv = base64Value(static_cast<unsigned char>(d));
+        if (dv < 0) return false;
+        decoded.append(char((cv << 6) | dv));
+    }
+    *name = std::move(decoded);
+    return !name->isEmpty();
+}
+
 }  // namespace
 
 bool UuencodeModule::hasHeader(const QByteArray& data)
@@ -166,10 +261,23 @@ bool UuencodeModule::hasHeader(const QByteArray& data)
     QByteArray header;
     QByteArray body;
     QByteArray name;
-    if (!readLine(data, &position, &header) || !parseHeader(header, &name) ||
-        !readLine(data, &position, &body))
-        return false;
-    if (body == "end") return true;
+    bool base64 = false;
+    bool encodedName = false;
+    bool found = false;
+    while (readLine(data, &position, &header)) {
+        if (parseHeader(header, &name, &base64, &encodedName)) {
+            found = true;
+            break;
+        }
+    }
+    if (!found || !readLine(data, &position, &body)) return false;
+    if ((!base64 && body == "end") || (base64 && body == "====")) return true;
+    if (base64) {
+        std::array<std::uint8_t, 57> decoded{};
+        int decodedSize = 0;
+        bool hasPadding = false;
+        return decodeBase64Line(body, &decoded, &decodedSize, &hasPadding);
+    }
     std::array<std::uint8_t, 45> decoded{};
     int decodedSize = 0;
     return decodeLine(body, &decoded, &decodedSize);
@@ -209,10 +317,15 @@ ModulePtr UuencodeModule::open(QIODevice& input, const QString& logicalName)
     module->info_.format = ModuleFormat::UUE;
     module->info_.description = QStringLiteral("UUencoded file");
 
-    QByteArray header;
     QByteArray encodedName;
-    if (!readDeviceLine(input, &header) || !parseHeader(header, &encodedName)) {
+    bool base64 = false;
+    bool hasEncodedName = false;
+    if (!findHeader(input, &encodedName, &base64, &hasEncodedName)) {
         module->info_.error = QStringLiteral("Invalid UUencode begin header");
+        return module;
+    }
+    if (hasEncodedName && !decodeEncodedName(&encodedName)) {
+        module->info_.error = QStringLiteral("Invalid UUencode encoded filename");
         return module;
     }
 
@@ -224,21 +337,34 @@ ModulePtr UuencodeModule::open(QIODevice& input, const QString& logicalName)
     std::int64_t decodedSize = 0;
     bool sawZeroLengthLine = false;
     bool sawEnd = false;
+    bool hasBase64Padding = false;
     QByteArray line;
     std::array<std::uint8_t, 45> decodedLine{};
+    std::array<std::uint8_t, 57> decodedBase64Line{};
     while (readDeviceLine(input, &line)) {
-        if (line == "end") {
+        if ((!base64 && line == "end") || (base64 && line == "====")) {
             sawEnd = true;
             break;
         }
         int lineSize = 0;
-        if (sawZeroLengthLine || !decodeLine(line, &decodedLine, &lineSize)) {
-            module->info_.error = QStringLiteral("Invalid UUencode data line");
-            return module;
+        const std::uint8_t* decodedData = nullptr;
+        if (base64) {
+            if (line.isEmpty() || !decodeBase64Line(
+                    line, &decodedBase64Line, &lineSize, &hasBase64Padding)) {
+                module->info_.error = QStringLiteral("Invalid UUencode Base64 data line");
+                return module;
+            }
+            decodedData = decodedBase64Line.data();
+        } else {
+            if (sawZeroLengthLine || !decodeLine(line, &decodedLine, &lineSize)) {
+                module->info_.error = QStringLiteral("Invalid UUencode data line");
+                return module;
+            }
+            if (line.at(0) == ' ' || line.at(0) == '`') sawZeroLengthLine = true;
+            decodedData = decodedLine.data();
         }
-        if (line.at(0) == ' ' || line.at(0) == '`') sawZeroLengthLine = true;
         if (decodedSize > std::numeric_limits<std::int64_t>::max() - lineSize ||
-            !writeAll(*decodedFile, decodedLine.data(), lineSize)) {
+            !writeAll(*decodedFile, decodedData, lineSize)) {
             module->info_.error = QStringLiteral("Cannot store decoded UUencode payload");
             return module;
         }
@@ -246,10 +372,6 @@ ModulePtr UuencodeModule::open(QIODevice& input, const QString& logicalName)
     }
     if (!sawEnd) {
         module->info_.error = QStringLiteral("UUencode end marker is missing");
-        return module;
-    }
-    if (!trailingWhitespace(input)) {
-        module->info_.error = QStringLiteral("Unexpected data after UUencode end marker");
         return module;
     }
     if (!decodedFile->flush() || !decodedFile->seek(0)) {

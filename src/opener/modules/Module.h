@@ -42,8 +42,8 @@ struct ResourceEntry {
     QByteArray data;
     // True when this resource is a complete embedded file eligible for nesting.
     bool isEmbeddedFile = false;
-    // Computed by the session for isEmbeddedFile resources: a cheap header peek
-    // recognised an openable format, so the consumer may offer to expand it.
+    // Computed by the session for isEmbeddedFile resources when nested dispatch
+    // is recognised or deferred until the consumer expands the resource.
     bool isContainer = false;
     // When set, this lazy store is authoritative; otherwise the flat `data` is used.
     peare::fs::ByteStorePtr content;

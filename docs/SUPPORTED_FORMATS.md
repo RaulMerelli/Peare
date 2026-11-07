@@ -36,6 +36,7 @@ package-specific limits on ZIP-based files.
 | HPFS file system | OS/2 HPFS | Yes | No |
 | Btrfs file system | Single-device volumes | Yes | No |
 | SquashFS file system | SquashFS version 4 | Yes | No |
+| CramFS file system | Little-endian and big-endian images, 512-byte boot padding, and validated 64-byte U-Boot prefixes | Yes | No |
 | HFS+ / HFSX file system | HFS+ and HFSX | Yes | No |
 | UDF file system | UDF Type 1 partitions | Yes | No |
 | Linux swap | Versions 1 and 2 | Yes | No |
@@ -78,6 +79,7 @@ package-specific limits on ZIP-based files.
 | Format | Description | Read | Write |
 |---|---|---:|---:|
 | Raw floppy IMG/IMA/VFD | Standard raw floppy images | Yes | Yes |
+| WinImage IMZ | Unencrypted ZIP-compatible image with one standard-capacity `.ima` or `.img` member | Yes | No |
 | OS/2 XDF floppy DSK | 3.5-inch, 1.84 MiB XDF | Yes | Yes |
 | Raw MBR/GPT disk | MBR and GPT partitioned disks | Yes | Yes |
 | Apple Partition Map | Partitioned disk images | Yes | No |
@@ -91,9 +93,13 @@ package-specific limits on ZIP-based files.
 
 | Format | Description | Read | Write |
 |---|---|---:|---:|
-| ZIP | Store, Shrink, Implode, Deflate, and ZIP64 | Yes | Yes |
+| ZIP | Store, Shrink, Reduce, Implode, Deflate, Deflate64, BZip2, LZMA, DCL Implode, and ZIP64 | Yes | Yes |
+| ZIPX | WinZip extensions: XZ, Zstandard, PPMd, WavPack, MP3, and JPEG compression | Yes | Yes |
 | 7-Zip (7z) | 7z archives | Yes | No |
+| NSIS | Nullsoft Scriptable Install System installers | Yes | No |
 | RAR4 | RAR4 archives | Yes | No |
+| RAR5 | RAR5 archive format, algorithm version 0 | Yes | No |
+| RAR7 | RAR5 archive format, algorithm version 1 | Yes | No |
 | Java JAR / WAR / EAR / AAR | Java and Android ZIP archives | Yes | Yes |
 | Android APK / APKS / AAB | Android ZIP package containers | Yes | Yes |
 | EPUB | EPUB ZIP container | Yes | Yes |
@@ -109,15 +115,24 @@ package-specific limits on ZIP-based files.
 | TIA Portal ZAP | ZIP container for `.zapXX` archives | Yes | Yes |
 | TAR | V7 and USTAR | Yes | Yes |
 | OS/2 WarpIN (WPI) | Raw revision 3 and 4 packages; stored and bzip2-compressed payloads. Self-extracting EXE packages are not included. | Yes | No |
-| Microsoft Cabinet | Uncompressed, MSZIP, and LZX folders | Yes | No |
+| RPM | RPM v3/v4 packages with CPIO payloads | Yes | No |
+| Microsoft Cabinet | Uncompressed, MSZIP, LZX (window sizes 15 to 21), and Quantum (window sizes 10 to 21) | Yes | No |
+| Microsoft Compiled HTML Help (CHM) | ITSF versions 2 and 3 with LZX-compressed content | Yes | No |
 | Electron ASAR | Packed and unpacked members | Yes | No |
-| GZIP (`.gz`, `.gzip`) | RFC 1952 streams, including concatenated members | Yes | No |
+| GZIP (`.gz`, `.gzip`, `.tgz`) | RFC 1952 streams, including concatenated members | Yes | No |
+| XZ (`.xz`, `.txz`) | LZMA2 streams, concatenation, stream padding, and CRC32, CRC64, or SHA-256 checks | Yes | No |
+| LZMA-alone (`.lzma`) | LZMA streams with declared or unknown unpacked size | Yes | No |
 | OS/2 PACK | IBM and Microsoft PACK version 1 | Yes | No |
 | OS/2 PACK2 | FTCOMP `fT19` archives only; `fT21` is not supported | Yes | No |
-| BZIP2 (`.bz2`, `.bzip2`) | Block levels 1-9; multi-block and concatenated streams | Yes | No |
-| Unix compress (`.Z`) | LZW block mode, code widths 9-16 bits | Yes | No |
+| BZIP2 (`.bz2`, `.bzip2`, `.tbz`, `.tbz2`) | Block levels 1-9; multi-block and concatenated streams | Yes | No |
+| Unix compress (`.Z`, `.taz`) | LZW block mode, code widths 9-16 bits | Yes | No |
+| Lzip (`.lz`, `.tlz`) | Version 1 members, including concatenated members | Yes | No |
+| Zstandard (`.zst`) | Standard dictionary-free frames, including concatenated and checksummed frames | Yes | No |
 | Unix ar | GNU and BSD archives; thin archives are not supported | Yes | No |
+| ARJ | Methods 0-4, legacy, GOST40, GOST256, and GOST256L password encryption, and split volumes | Yes | No |
+| XAR | XAR archives and Apple flat installer packages | Yes | No |
 | CPIO | SVR4 `newc` and CRC, POSIX `odc`, and old binary little- and big-endian variants | Yes | No |
+| Debian package | `.deb` and `.udeb`, version 2.0; raw or gzip/xz/zstd control TAR, plus raw/gzip/xz/zstd/bzip2/lzma data TAR | Yes | No |
 | LHA / LZH | LHA and LZH archives | Yes | No |
 | Doom WAD | IWAD and PWAD archives | Yes | No |
 | APPX / MSIX | Windows application ZIP packages | Yes | Yes |
@@ -131,7 +146,7 @@ package-specific limits on ZIP-based files.
 
 | Format | Description | Read | Write |
 |---|---|---:|---:|
-| UUencode | Classic single-file encoding | Yes | No |
+| UUencode | Classic and GNU Base64 single-file encoding | Yes | No |
 
 ### Binaries
 
@@ -150,12 +165,15 @@ package-specific limits on ZIP-based files.
 | Outlook MSG | Outlook MSG files | Yes | No |
 | Apple resource fork | Generic Apple resource records, including data-fork resource maps | Yes | No |
 | OS/2 FEALIST | OS/2 extended-attribute files | Yes | No |
-| Microsoft Compress | SZDD variant A | Yes | No |
+| Microsoft Compress | SZDD variants A and B | Yes | No |
+| Microsoft KWAJ compression | Methods 0, 1, 2, 3, and 4 | Yes | No |
+| Microsoft XBCOMPRESS | LZMS and MSZIP | Yes | No |
 | PlayStation 3 PUP | PUP version 1 | Yes | No |
 | Siemens ProSave IMG | Siemens HMI IMG | Yes | No |
 | Siemens ProSave FWF | Siemens HMI FWF | Yes | No |
 | Siemens FSF | Siemens FSF | Yes | No |
 | Siemens ADONIS / SMART_OS | ADONIS and SMART_OS images | Yes | No |
+| Intel HEX | Data records, checksums, and segment or linear addresses | Yes | No |
 | Windows CE ROM / IMGFS | Windows CE ROM and IMGFS variants | Yes | No |
 | Windows Registry hive | Windows Registry hive files | Yes | No |
 | Windows BCD | Windows Boot Configuration Data | Yes | No |

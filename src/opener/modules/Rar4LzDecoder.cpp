@@ -815,7 +815,7 @@ void LzState::pushHistory(std::uint8_t value)
 {
     if (history_.empty()) return;
     history_[historyWrite_] = value;
-    historyWrite_ = (historyWrite_ + 1) % history_.size();
+    if (++historyWrite_ == history_.size()) historyWrite_ = 0;
     if (historyCount_ < history_.size()) ++historyCount_;
 }
 
@@ -825,7 +825,9 @@ bool LzState::historyAtDistance(std::uint32_t distance, std::size_t window,
     if (!value || distance == 0 || distance > window || distance > historyCount_ ||
         history_.empty())
         return false;
-    const std::size_t index = (historyWrite_ + history_.size() - distance) % history_.size();
+    const std::size_t index = historyWrite_ >= distance
+        ? historyWrite_ - distance
+        : history_.size() - (distance - historyWrite_);
     *value = history_[index];
     return true;
 }

@@ -42,5 +42,8 @@ type from the resource directory; Decoder interprets the raw `RT_FONT` payload.
 OS/2 pointer and bitmap resources can contain `BA`, `BM`, `IC`, `CI`, `CP`, or
 `PT` data. One resource can produce more than one image.
 
+For Windows, `RT_GROUP_ICON` exports as one multi-image `.ico` file. The export
+includes every referenced `RT_ICON` image in the group.
+
 The C++ implementation continues to change. A `Yes` value does not guarantee
 support for undocumented or vendor-specific variants.

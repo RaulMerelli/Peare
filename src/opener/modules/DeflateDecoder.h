@@ -86,6 +86,10 @@ bool inflateRawDeflate64Exact(const std::uint8_t* data, std::size_t size,
 bool inflateRawStream(InflateInput& input, std::size_t maximum,
                       std::vector<std::uint8_t>* output,
                       std::string* error = nullptr);
+bool inflateRawStream(InflateInput& input, std::size_t maximum,
+                      const std::vector<std::uint8_t>* dictionary,
+                      std::vector<std::uint8_t>* output,
+                      std::string* error = nullptr);
 
 // Decode a complete zlib stream, verify its header and Adler-32 trailer, and
 // reject output larger than `maximum`.

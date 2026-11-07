@@ -14,12 +14,25 @@
 #include "Os2PackModule.h"
 #include "Os2EaModule.h"
 #include "SzddModule.h"
+#include "KwajModule.h"
+#include "XbcompressModule.h"
+#include "NsisModule.h"
 #include "GzipModule.h"
+#include "XzModule.h"
 #include "Bzip2Module.h"
+#include "LzipModule.h"
+#include "LzmaModule.h"
+#include "ZstdModule.h"
 #include "ArModule.h"
+#include "DebModule.h"
+#include "RpmModule.h"
+#include "ChmModule.h"
+#include "ArjModule.h"
+#include "XarModule.h"
 #include "CpioModule.h"
 #include "UnixCompressModule.h"
 #include "UuencodeModule.h"
+#include "IhexModule.h"
 #include "LhaModule.h"
 #include "SevenZipModule.h"
 #include "Rar4Module.h"
@@ -29,6 +42,7 @@
 #include "CabModule.h"
 #include "RawDiskModule.h"
 #include "FloppyImageModule.h"
+#include "ImzModule.h"
 #include "FfuModule.h"
 #include "ZipModule.h"
 #include "TarModule.h"
@@ -72,6 +86,7 @@
 #include "JfsModule.h"
 #include "HpfsModule.h"
 #include "SquashFsModule.h"
+#include "CramFsModule.h"
 #include "HfsPlusModule.h"
 #include "DmgModule.h"
 #include "BtrfsModule.h"
@@ -133,14 +148,19 @@ bool isZipFamily(ModuleFormat format)
 
 bool usesPositionedArchiveReader(ModuleFormat format)
 {
-    return format == ModuleFormat::AR || format == ModuleFormat::ASAR ||
+    return format == ModuleFormat::CHM || format == ModuleFormat::AR || format == ModuleFormat::ARJ || format == ModuleFormat::XAR || format == ModuleFormat::ASAR ||
         format == ModuleFormat::CPIO || format == ModuleFormat::RAR4 ||
         format == ModuleFormat::RAR5 ||
         format == ModuleFormat::CAB || format == ModuleFormat::LHA ||
         format == ModuleFormat::TAR ||
         format == ModuleFormat::UNIX_COMPRESS ||
-        format == ModuleFormat::GZIP || format == ModuleFormat::BZIP2 ||
+        format == ModuleFormat::GZIP || format == ModuleFormat::XZ ||
+        format == ModuleFormat::BZIP2 || format == ModuleFormat::LZIP ||
+        format == ModuleFormat::LZMA ||
+        format == ModuleFormat::ZSTD ||
+        format == ModuleFormat::RPM ||
         format == ModuleFormat::WAD || format == ModuleFormat::WPI ||
+        format == ModuleFormat::FLOPPY_IMAGE ||
         isZipFamily(format) || isEncryptedAppFamily(format);
 }
 
@@ -155,12 +175,19 @@ bool isPlayReadyXapFile(const QString& path)
 
 ModulePtr ModuleFactory::open(const QString& filePath)
 {
+    if (RpmModule::hasSupportedExtension(filePath)) return RpmModule::open(filePath);
     return openWithPassword(filePath, QString());
 }
 
 ModulePtr ModuleFactory::openWithPassword(const QString& filePath, const QString& password)
 {
+    if (RpmModule::hasSupportedExtension(filePath)) return RpmModule::open(filePath);
+    if (DebModule::hasSupportedExtension(filePath)) return DebModule::open(filePath);
     ModuleInfo info = detect(filePath);
+    if (info.format == ModuleFormat::RPM) return RpmModule::open(filePath);
+    if (info.format == ModuleFormat::CHM) return ChmModule::open(filePath);
+    if (info.format == ModuleFormat::Unknown && LzmaModule::hasExtension(filePath))
+        return LzmaModule::open(filePath);
     if (!info.isValid()) return peare::makeUnique<DetectedModule>(std::move(info));
     if (info.format == ModuleFormat::RAR4) return Rar4Module::open(filePath, password);
     if (info.format == ModuleFormat::RAR5) return Rar5Module::open(filePath, password);
@@ -193,12 +220,22 @@ ModulePtr ModuleFactory::openWithPassword(const QString& filePath, const QString
     if (info.format == ModuleFormat::OS2_PACK) return Os2PackModule::open(filePath);
     if (info.format == ModuleFormat::OS2_EA) return Os2EaModule::open(filePath);
     if (info.format == ModuleFormat::SZDD) return SzddModule::open(filePath);
+    if (info.format == ModuleFormat::KWAJ) return KwajModule::open(filePath);
+    if (info.format == ModuleFormat::XBCOMPRESS) return XbcompressModule::open(filePath);
+    if (info.format == ModuleFormat::NSIS) return NsisModule::open(filePath, info.headerOffset);
     if (info.format == ModuleFormat::GZIP) return GzipModule::open(filePath);
+    if (info.format == ModuleFormat::XZ) return XzModule::open(filePath);
     if (info.format == ModuleFormat::BZIP2) return Bzip2Module::open(filePath);
+    if (info.format == ModuleFormat::LZIP) return LzipModule::open(filePath);
+    if (info.format == ModuleFormat::LZMA) return LzmaModule::open(filePath);
+    if (info.format == ModuleFormat::ZSTD) return ZstdModule::open(filePath);
     if (info.format == ModuleFormat::AR) return ArModule::open(filePath);
+    if (info.format == ModuleFormat::ARJ) return ArjModule::open(filePath);
+    if (info.format == ModuleFormat::XAR) return XarModule::open(filePath);
     if (info.format == ModuleFormat::CPIO) return CpioModule::open(filePath);
     if (info.format == ModuleFormat::UNIX_COMPRESS) return UnixCompressModule::open(filePath);
     if (info.format == ModuleFormat::UUE) return UuencodeModule::open(filePath);
+    if (info.format == ModuleFormat::INTEL_HEX) return IhexModule::open(filePath);
     if (info.format == ModuleFormat::LHA) return LhaModule::open(filePath);
     if (info.format == ModuleFormat::SEVEN_ZIP) return SevenZipModule::open(filePath, password);
     if (info.format == ModuleFormat::RAR4) return Rar4Module::open(filePath, password);
@@ -254,6 +291,7 @@ ModulePtr ModuleFactory::openWithPassword(const QString& filePath, const QString
     if (info.format == ModuleFormat::JFS) return JfsModule::open(filePath);
     if (info.format == ModuleFormat::HPFS) return HpfsModule::open(filePath);
     if (info.format == ModuleFormat::SQUASHFS) return SquashFsModule::open(filePath);
+    if (info.format == ModuleFormat::CRAMFS) return CramFsModule::open(filePath);
     if (info.format == ModuleFormat::HFSPLUS) return HfsPlusModule::open(filePath);
     if (info.format == ModuleFormat::DMG) return DmgModule::open(filePath);
     if (info.format == ModuleFormat::BTRFS) return BtrfsModule::open(filePath);
@@ -268,7 +306,20 @@ ModulePtr ModuleFactory::openWithPassword(const QString& filePath, const QString
 ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logicalName,
                               const QString& password)
 {
+    if (RpmModule::hasSupportedExtension(logicalName))
+        return RpmModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
+    if (DebModule::hasSupportedExtension(logicalName))
+        return DebModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
     const ModuleFormatInfo detected = ModuleFormatDetector::detectFile(physicalPath);
+    if (detected.format == ModuleFormat::RPM)
+        return RpmModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
+    if (detected.format == ModuleFormat::CHM)
+        return ChmModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
+    if (detected.format == ModuleFormat::Unknown && LzmaModule::hasExtension(logicalName))
+        return LzmaModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
+    if (QFileInfo(logicalName).suffix().compare(QStringLiteral("imz"), Qt::CaseInsensitive) == 0 &&
+        (isZipFamily(detected.format) || detected.format == ModuleFormat::FLOPPY_IMAGE))
+        return ImzModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
     if (FloppyImageModule::hasSupportedExtension(logicalName) &&
         fs::floppyGeometryForCapacity(QFileInfo(physicalPath).size()).valid() &&
         (detected.format == ModuleFormat::Unknown || detected.format == ModuleFormat::FAT))
@@ -276,6 +327,8 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
 
     if (detected.format == ModuleFormat::PS3_PUP)
         return Ps3PupModule::open(physicalPath);
+    if (detected.format == ModuleFormat::NSIS)
+        return NsisModule::open(physicalPath, detected.headerOffset);
     if (detected.format == ModuleFormat::RAR4)
         return Rar4Module::open(physicalPath, password);
     if (detected.format == ModuleFormat::RAR5)
@@ -284,12 +337,22 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
         return PlayReadyXapModule::open(physicalPath);
 
     if (detected.format != ModuleFormat::SZDD &&
+        detected.format != ModuleFormat::KWAJ &&
+        detected.format != ModuleFormat::XBCOMPRESS &&
+        detected.format != ModuleFormat::NSIS &&
         detected.format != ModuleFormat::GZIP &&
+        detected.format != ModuleFormat::XZ &&
         detected.format != ModuleFormat::BZIP2 &&
+        detected.format != ModuleFormat::LZIP &&
+        detected.format != ModuleFormat::LZMA &&
+        detected.format != ModuleFormat::ZSTD &&
         detected.format != ModuleFormat::AR &&
+        detected.format != ModuleFormat::ARJ &&
+        detected.format != ModuleFormat::XAR &&
         detected.format != ModuleFormat::CPIO &&
         detected.format != ModuleFormat::UNIX_COMPRESS &&
         detected.format != ModuleFormat::UUE &&
+        detected.format != ModuleFormat::INTEL_HEX &&
         detected.format != ModuleFormat::LHA &&
         detected.format != ModuleFormat::SEVEN_ZIP &&
         detected.format != ModuleFormat::CAB &&
@@ -327,8 +390,21 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
         return AsarModule::open(physicalPath, logicalName);
     if (detected.format == ModuleFormat::GZIP)
         return GzipModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
+    if (detected.format == ModuleFormat::XZ)
+        return XzModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
     if (detected.format == ModuleFormat::BZIP2)
         return Bzip2Module::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
+    if (detected.format == ModuleFormat::LZIP)
+        return LzipModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
+    if (detected.format == ModuleFormat::LZMA)
+        return LzmaModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
+    if (detected.format == ModuleFormat::ZSTD)
+        return ZstdModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
+    if (detected.format == ModuleFormat::ARJ)
+        return ArjModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName,
+                               password);
+    if (detected.format == ModuleFormat::XAR)
+        return XarModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
     if (detected.format == ModuleFormat::LHA)
         return LhaModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
     if (detected.format == ModuleFormat::CAB)
@@ -336,8 +412,14 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
     if (detected.format == ModuleFormat::SEVEN_ZIP)
         return SevenZipModule::open(std::make_shared<fs::QFileByteStore>(physicalPath),
                                     logicalName, password);
+    if (detected.format == ModuleFormat::INTEL_HEX)
+        return IhexModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
 
     const QByteArray data = file.readAll();
+    if (detected.format == ModuleFormat::XBCOMPRESS)
+        return XbcompressModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::NSIS)
+        return NsisModule::open(data, logicalName, detected.headerOffset);
     if (detected.format == ModuleFormat::XUIZ)
         return XuizModule::open(data, logicalName);
     if (detected.format == ModuleFormat::SIEMENS_IMG)
@@ -354,16 +436,28 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
         return ResxModule::open(data, logicalName);
     if (detected.format == ModuleFormat::GZIP)
         return GzipModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::XZ)
+        return XzModule::open(data, logicalName);
     if (detected.format == ModuleFormat::BZIP2)
         return Bzip2Module::open(data, logicalName);
+    if (detected.format == ModuleFormat::ZSTD)
+        return ZstdModule::open(data, logicalName);
     if (detected.format == ModuleFormat::AR)
         return ArModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::ARJ)
+        return ArjModule::open(data, logicalName, password);
+    if (detected.format == ModuleFormat::XAR)
+        return XarModule::open(data, logicalName);
     if (detected.format == ModuleFormat::CPIO)
         return CpioModule::open(data, logicalName);
     if (detected.format == ModuleFormat::UNIX_COMPRESS)
         return UnixCompressModule::open(data, logicalName);
     if (detected.format == ModuleFormat::UUE)
         return UuencodeModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::INTEL_HEX)
+        return IhexModule::open(std::make_shared<fs::MemoryStore>(
+            reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size())),
+            logicalName);
     if (detected.format == ModuleFormat::LHA)
         return LhaModule::open(data, logicalName);
     if (detected.format == ModuleFormat::SEVEN_ZIP)
@@ -392,12 +486,21 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
         info.error = QStringLiteral("Null byte source");
         return peare::makeUnique<DetectedModule>(std::move(info));
     }
+    if (RpmModule::hasSupportedExtension(sourceName)) return RpmModule::open(disc, sourceName);
+    if (DebModule::hasSupportedExtension(sourceName)) return DebModule::open(disc, sourceName);
     // Cheap header peek (covers ISO's descriptor at 0x8001, and the UDF volume
     // recognition sequence which can extend past 0x9000 on bridge discs).
     const std::vector<std::uint8_t> head = disc->readRange(0, 0x14000);
     const QByteArray header(reinterpret_cast<const char*>(head.data()),
                             static_cast<int>(head.size()));
     ModuleFormatInfo detected = ModuleFormatDetector::detectBuffer(header);
+    if (detected.format == ModuleFormat::RPM) return RpmModule::open(disc, sourceName);
+    if (detected.format == ModuleFormat::CHM) return ChmModule::open(disc, sourceName);
+    if (detected.format == ModuleFormat::Unknown && LzmaModule::hasExtension(sourceName))
+        return LzmaModule::open(disc, sourceName);
+    if (QFileInfo(sourceName).suffix().compare(QStringLiteral("imz"), Qt::CaseInsensitive) == 0 &&
+        isZipFamily(detected.format))
+        return ImzModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::Unknown && disc->cheapRandomAccess() &&
         disc->capacity() > header.size()) {
         const std::vector<std::uint8_t> sfxHead = disc->readRange(0, 1024 * 1024 + 7);
@@ -452,8 +555,12 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
         return ZipModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::GZIP)
         return GzipModule::open(disc, sourceName);
+    if (detected.format == ModuleFormat::XZ)
+        return XzModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::BZIP2)
         return Bzip2Module::open(disc, sourceName);
+    if (detected.format == ModuleFormat::ZSTD)
+        return ZstdModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::LHA)
         return LhaModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::CAB)
@@ -500,6 +607,10 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
         return Rar4Module::open(disc, sourceName, password);
     if (detected.format == ModuleFormat::RAR5)
         return Rar5Module::open(disc, sourceName, password);
+    if (detected.format == ModuleFormat::ARJ)
+        return ArjModule::open(disc, sourceName, password);
+    if (detected.format == ModuleFormat::XAR)
+        return XarModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::WIM) return WimModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::FAT) return FatModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::UDF) return UdfModule::open(disc, sourceName, subPath);
@@ -512,6 +623,10 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
         return CpioModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::UNIX_COMPRESS)
         return UnixCompressModule::open(disc, sourceName);
+    if (detected.format == ModuleFormat::LZIP)
+        return LzipModule::open(disc, sourceName);
+    if (detected.format == ModuleFormat::LZMA)
+        return LzmaModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::UUE) {
         if (disc->capacity() > std::numeric_limits<int>::max()) {
             ModuleInfo info;
@@ -525,6 +640,8 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
         return UuencodeModule::open(
             QByteArray(reinterpret_cast<const char*>(all.data()), int(all.size())), sourceName);
     }
+    if (detected.format == ModuleFormat::INTEL_HEX)
+        return IhexModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::LHA) {
         return LhaModule::open(disc, sourceName);
     }
@@ -563,6 +680,7 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
     if (detected.format == ModuleFormat::JFS) return JfsModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::HPFS) return HpfsModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::SQUASHFS) return SquashFsModule::open(disc, sourceName, subPath);
+    if (detected.format == ModuleFormat::CRAMFS) return CramFsModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::HFSPLUS) return HfsPlusModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::DMG) return DmgModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::BTRFS) return BtrfsModule::open(disc, sourceName, subPath);
@@ -580,6 +698,8 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
 ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName,
                               const QString& password)
 {
+    if (RpmModule::hasSupportedExtension(logicalName)) return RpmModule::open(data, logicalName);
+    if (DebModule::hasSupportedExtension(logicalName)) return DebModule::open(data, logicalName);
     // A Siemens common-file IMG may start with B000FF; its footer is the outer
     // format discriminator and therefore takes precedence. QByteArray access is
     // O(1), so this adds no scan or extra materialisation.
@@ -617,6 +737,10 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
     // common path for an archive stored in a PE resource and avoids a temporary
     // file plus a second complete read.
     const ModuleFormatInfo direct = ModuleFormatDetector::detectNestedBuffer(data.left(0x14000));
+    if (direct.format == ModuleFormat::RPM) return RpmModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::CHM) return ChmModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::Unknown && LzmaModule::hasExtension(logicalName))
+        return LzmaModule::open(data, logicalName);
     if (direct.format == ModuleFormat::WINCE_ROM)
         return WinceRomModule::open(data, logicalName);
     if (direct.format == ModuleFormat::WPI)
@@ -638,6 +762,11 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
     if (direct.format == ModuleFormat::XAP && PlayReadyXapModule::isHeader(data.left(0x20)))
         return PlayReadyXapModule::open(data, logicalName);
     if (isEncryptedAppFamily(direct.format)) return EAppxModule::open(data, logicalName);
+    if (QFileInfo(logicalName).suffix().compare(QStringLiteral("imz"), Qt::CaseInsensitive) == 0 &&
+        isZipFamily(direct.format))
+        return ImzModule::open(std::make_shared<fs::MemoryStore>(
+            reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size())),
+            logicalName);
     if (isZipFamily(direct.format))
         return ZipModule::open(data, logicalName);
     if (direct.format == ModuleFormat::CAB)
@@ -648,8 +777,20 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
         return CpioModule::open(data, logicalName);
     if (direct.format == ModuleFormat::UNIX_COMPRESS)
         return UnixCompressModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::LZIP)
+        return LzipModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::LZMA)
+        return LzmaModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::ZSTD)
+        return ZstdModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::XZ)
+        return XzModule::open(data, logicalName);
     if (direct.format == ModuleFormat::UUE)
         return UuencodeModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::INTEL_HEX)
+        return IhexModule::open(std::make_shared<fs::MemoryStore>(
+            reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size())),
+            logicalName);
     if (direct.format == ModuleFormat::LHA)
         return LhaModule::open(data, logicalName);
     if (direct.format == ModuleFormat::SEVEN_ZIP)
@@ -658,6 +799,8 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
         return LhaModule::open(data, logicalName);
     if (direct.format == ModuleFormat::ASAR)
         return AsarModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::XAR)
+        return XarModule::open(data, logicalName);
     if (direct.format == ModuleFormat::PS3_PUP)
         return Ps3PupModule::open(data, logicalName);
     if (direct.format == ModuleFormat::PS2_ROMDIR)
@@ -678,6 +821,12 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
         return MsiModule::open(data, logicalName);
     if (direct.format == ModuleFormat::SZDD)
         return SzddModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::KWAJ)
+        return KwajModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::XBCOMPRESS)
+        return XbcompressModule::open(data, logicalName);
+    if (direct.format == ModuleFormat::NSIS)
+        return NsisModule::open(data, logicalName);
     if (direct.format == ModuleFormat::XUIZ)
         return XuizModule::open(data, logicalName);
     if (direct.format == ModuleFormat::SIEMENS_FWF)
@@ -704,6 +853,8 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
     const QString path = temporary.fileName();
     temporary.close();
     const ModuleFormatInfo detected = ModuleFormatDetector::detectFile(path);
+    if (detected.format == ModuleFormat::Unknown && LzmaModule::hasExtension(logicalName))
+        return LzmaModule::open(data, logicalName);
     if (detected.format == ModuleFormat::WINCE_ROM)
         return WinceRomModule::open(data, logicalName);
     if (detected.format == ModuleFormat::FFU)
@@ -712,22 +863,47 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
             logicalName);
     if (detected.format == ModuleFormat::SZDD)
         return SzddModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::KWAJ)
+        return KwajModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::XBCOMPRESS)
+        return XbcompressModule::open(data, logicalName);
     if (detected.format == ModuleFormat::GZIP)
         return GzipModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::XZ)
+        return XzModule::open(data, logicalName);
     if (detected.format == ModuleFormat::BZIP2)
         return Bzip2Module::open(data, logicalName);
     if (detected.format == ModuleFormat::AR)
         return ArModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::ARJ)
+        return ArjModule::open(data, logicalName, password);
+    if (detected.format == ModuleFormat::XAR)
+        return XarModule::open(data, logicalName);
     if (detected.format == ModuleFormat::CPIO)
         return CpioModule::open(data, logicalName);
     if (detected.format == ModuleFormat::UNIX_COMPRESS)
         return UnixCompressModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::LZIP)
+        return LzipModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::LZMA)
+        return LzmaModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::ZSTD)
+        return ZstdModule::open(data, logicalName);
     if (detected.format == ModuleFormat::UUE)
         return UuencodeModule::open(data, logicalName);
+    if (detected.format == ModuleFormat::INTEL_HEX)
+        return IhexModule::open(std::make_shared<fs::MemoryStore>(
+            reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size())),
+            logicalName);
     if (detected.format == ModuleFormat::LHA)
         return LhaModule::open(data, logicalName);
     if (detected.format == ModuleFormat::XAP && PlayReadyXapModule::isHeader(data.left(0x20)))
         return PlayReadyXapModule::open(data, logicalName);
+    if (QFileInfo(logicalName).suffix().compare(QStringLiteral("imz"), Qt::CaseInsensitive) == 0 &&
+        isZipFamily(detected.format))
+        return ImzModule::open(std::make_shared<fs::MemoryStore>(
+            reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size())),
+            logicalName);
     if (isZipFamily(detected.format))
         return ZipModule::open(data, logicalName);
     if (detected.format == ModuleFormat::TAR)

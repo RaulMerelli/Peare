@@ -1,0 +1,12 @@
+{
+  "container_format": "XZ",
+  "tree": [
+    {
+      "path": "no-extension.bin",
+      "size": 2062,
+      "is_container": false,
+      "format": "XZ",
+      "sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
+    }
+  ]
+}

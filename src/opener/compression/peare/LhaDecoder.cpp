@@ -45,6 +45,29 @@ public:
         return true;
     }
 
+    bool peek(unsigned count, std::uint32_t* value) const {
+        BitReader copy = *this;
+        return copy.read(count, value);
+    }
+
+    bool peekPadded(unsigned count, std::uint32_t* value) const {
+        if (!value || count > 32) return false;
+        BitReader copy = *this;
+        while (copy.available_ < count && copy.offset_ < copy.size_) {
+            copy.buffer_ = (copy.buffer_ << 8) | copy.data_[copy.offset_++];
+            copy.available_ += 8;
+        }
+        if (copy.available_ >= count) return copy.read(count, value);
+        const unsigned missing = count - copy.available_;
+        *value = static_cast<std::uint32_t>(copy.buffer_ << missing);
+        return true;
+    }
+
+    bool skip(unsigned count) {
+        std::uint32_t ignored = 0;
+        return read(count, &ignored);
+    }
+
 private:
     const std::uint8_t* data_;
     std::size_t size_;
@@ -591,6 +614,171 @@ bool decompressLh1(const std::uint8_t* input, std::size_t inputSize,
                 output->push_back(value);
                 window[windowPosition] = value;
                 windowPosition = (windowPosition + 1) & kLh1WindowMask;
+            }
+        }
+        return true;
+    } catch (...) {
+        output->clear();
+        return false;
+    }
+}
+
+bool decompressArjLzh(const std::uint8_t* input, std::size_t inputSize,
+                      std::size_t outputSize, std::vector<std::uint8_t>* output) {
+    constexpr unsigned dictionarySize = 26624;
+    constexpr unsigned positionSymbols = 26;
+    if (!output) return false;
+    output->clear();
+    if (outputSize == 0) return inputSize == 0;
+    if (!input || inputSize == 0) return false;
+    try {
+        BitReader bits(input, inputSize);
+        std::vector<std::uint8_t> window(dictionarySize, static_cast<std::uint8_t>(' '));
+        unsigned writePosition = 0;
+        std::uint32_t remainingBlock = 0;
+        HuffmanTree literalTree;
+        HuffmanTree distanceTree;
+        HuffmanTree codeLengthTree;
+        output->reserve(outputSize);
+
+        while (output->size() < outputSize) {
+            if (remainingBlock == 0) {
+                std::uint32_t blockSize = 0;
+                if (!bits.read(16, &blockSize) || blockSize == 0 ||
+                    !readPositionTree(bits, 19, 5, 3, &codeLengthTree) ||
+                    !readLiteralTree(bits, codeLengthTree, &literalTree) ||
+                    !readPositionTree(bits, positionSymbols, 5, -1, &distanceTree)) {
+                    output->clear();
+                    return false;
+                }
+                remainingBlock = blockSize;
+            }
+            --remainingBlock;
+
+            std::uint32_t symbol = 0;
+            if (!literalTree.decode(bits, &symbol)) {
+                output->clear();
+                return false;
+            }
+            if (symbol < 256) {
+                const std::uint8_t value = static_cast<std::uint8_t>(symbol);
+                output->push_back(value);
+                window[writePosition] = value;
+                writePosition = (writePosition + 1) % dictionarySize;
+                continue;
+            }
+
+            const std::size_t length = std::size_t(symbol - 256 + 3);
+            std::uint32_t distanceCode = 0;
+            if (!distanceTree.decode(bits, &distanceCode) || distanceCode >= positionSymbols) {
+                output->clear();
+                return false;
+            }
+            std::size_t distance = distanceCode;
+            if (distance > 1) {
+                --distance;
+                std::uint32_t low = 0;
+                if (!bits.read(static_cast<unsigned>(distance), &low)) {
+                    output->clear();
+                    return false;
+                }
+                distance = (std::size_t(1) << distance) + low;
+            }
+            if (distance >= dictionarySize || length > outputSize - output->size()) {
+                output->clear();
+                return false;
+            }
+            const std::size_t back = distance + 1;
+            for (std::size_t i = 0; i < length; ++i) {
+                const std::uint8_t value = window[(writePosition + dictionarySize - back) %
+                                                  dictionarySize];
+                output->push_back(value);
+                window[writePosition] = value;
+                writePosition = (writePosition + 1) % dictionarySize;
+            }
+        }
+        return remainingBlock == 0;
+    } catch (...) {
+        output->clear();
+        return false;
+    }
+}
+
+bool decompressArjMethod4(const std::uint8_t* input, std::size_t inputSize,
+                          std::size_t outputSize, std::vector<std::uint8_t>* output) {
+    constexpr unsigned windowSize = 1U << 15;
+    if (!output) return false;
+    output->clear();
+    if (outputSize == 0) return inputSize == 0;
+    if (!input || inputSize == 0) return false;
+    try {
+        BitReader bits(input, inputSize);
+        std::vector<std::uint8_t> window(windowSize, 0);
+        unsigned writePosition = 0;
+        output->reserve(outputSize);
+        while (output->size() < outputSize) {
+            std::uint32_t code = 0;
+            if (!bits.peekPadded(14, &code)) {
+                output->clear();
+                return false;
+            }
+            if ((code & 0x2000U) == 0) {
+                if (!bits.read(9, &code)) {
+                    output->clear();
+                    return false;
+                }
+                const std::uint8_t value = static_cast<std::uint8_t>(code);
+                output->push_back(value);
+                window[writePosition] = value;
+                writePosition = (writePosition + 1) & (windowSize - 1);
+                continue;
+            }
+
+            unsigned lengthClass = 1;
+            for (unsigned mask = 1U << 12; lengthClass < 7; ++lengthClass, mask >>= 1)
+                if ((code & mask) == 0) break;
+            const unsigned lengthBits = (lengthClass != 7 ? 1U : 0U) + lengthClass * 2U;
+            const unsigned lengthMask = (1U << lengthClass) - 1U;
+            const std::size_t length = std::size_t(lengthMask + 2U +
+                ((code >> (14U - lengthBits)) & lengthMask));
+            if (!bits.skip(lengthBits)) {
+                output->clear();
+                return false;
+            }
+
+            if (!bits.peekPadded(17, &code)) {
+                output->clear();
+                return false;
+            }
+            unsigned distanceClass = 9;
+            unsigned distanceBits = 0;
+            if (code & (1U << 16)) {
+                if (code & (1U << 15)) {
+                    if (code & (1U << 14)) {
+                        if (code & (1U << 13)) distanceClass = 13;
+                        else distanceClass = 12;
+                    } else distanceClass = 11;
+                } else distanceClass = 10;
+            }
+            distanceBits = distanceClass == 13 ? 17U : 2U * distanceClass - 8U;
+            const unsigned distanceMask = (1U << distanceClass) - 1U;
+            const std::size_t distance = (std::size_t(1) << distanceClass) - 512U +
+                (distanceBits ? ((code >> (17U - distanceBits)) & distanceMask) : 0U);
+            if (!bits.skip(distanceBits)) {
+                output->clear();
+                return false;
+            }
+            if (length > outputSize - output->size() || distance >= windowSize) {
+                output->clear();
+                return false;
+            }
+            const unsigned back = static_cast<unsigned>(distance + 1U);
+            for (std::size_t i = 0; i < length; ++i) {
+                const std::uint8_t value = window[(writePosition + windowSize - back) &
+                                                  (windowSize - 1)];
+                output->push_back(value);
+                window[writePosition] = value;
+                writePosition = (writePosition + 1) & (windowSize - 1);
             }
         }
         return true;
