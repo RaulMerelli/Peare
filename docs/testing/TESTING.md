@@ -154,6 +154,19 @@ selected record bytes without interpreting them. A complete font grid requires
 one displayed cell per glyph. A blank glyph is valid and does not need visible
 pixels.
 
+The complete Opener fixture manifest is `tests/gui/opener-preview-cases.json`.
+It covers every input fixture in `tests/formats/*/fixtures` and adds GUI paths
+for special navigation cases. Run it after a Windows build:
+
+```powershell
+py tests/run_gui_preview_tests.py `
+  --exe build-windows/Release/Peare.exe `
+  --manifest tests/gui/opener-preview-cases.json `
+  --output-dir tmp/test-output/gui-previews/opener `
+  --report tmp/test-output/gui-previews/opener-report.json `
+  --jobs 2
+```
+
 ## Archive Directory Tests
 
 `test_archive_directory_entries_abi.py` creates small archives with 7-Zip and

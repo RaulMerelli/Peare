@@ -1,0 +1,344 @@
+[
+  {
+    "name": "fixture-7z-explicit-directories-7z",
+    "source": "tests/formats/7z/fixtures/explicit-directories.7z",
+    "tree_path": "empty",
+    "sample_id": "tests/formats/7z/fixtures/explicit-directories.7z"
+  },
+  {
+    "name": "fixture-cab-readme-lzx21-cab",
+    "source": "tests/formats/cab/fixtures/readme-lzx21.cab",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/cab/fixtures/readme-lzx21.cab"
+  },
+  {
+    "name": "fixture-cab-readme-cab",
+    "source": "tests/formats/cab/fixtures/readme.cab",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/cab/fixtures/readme.cab"
+  },
+  {
+    "name": "fixture-floppy-FD14-Floppy-zip",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/KERNEL.SYS",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip"
+  },
+  {
+    "name": "fixture-gzip-README-plus-docs-tar-gz",
+    "source": "tests/formats/gzip/fixtures/README-plus-docs.tar.gz",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/gzip/fixtures/README-plus-docs.tar.gz"
+  },
+  {
+    "name": "fixture-ihex-README-extended-linear-hex",
+    "source": "tests/formats/ihex/fixtures/README-extended-linear.hex",
+    "tree_path": "0x00100000.bin",
+    "sample_id": "tests/formats/ihex/fixtures/README-extended-linear.hex"
+  },
+  {
+    "name": "fixture-ihex-README-extended-segment-hex",
+    "source": "tests/formats/ihex/fixtures/README-extended-segment.hex",
+    "tree_path": "0x00010000.bin",
+    "sample_id": "tests/formats/ihex/fixtures/README-extended-segment.hex"
+  },
+  {
+    "name": "fixture-ihex-README-low-address-hex",
+    "source": "tests/formats/ihex/fixtures/README-low-address.hex",
+    "tree_path": "0x00000000.bin",
+    "sample_id": "tests/formats/ihex/fixtures/README-low-address.hex"
+  },
+  {
+    "name": "fixture-ihex-README-sparse-segments-hex",
+    "source": "tests/formats/ihex/fixtures/README-sparse-segments.hex",
+    "tree_path": "0x00000000.bin",
+    "sample_id": "tests/formats/ihex/fixtures/README-sparse-segments.hex"
+  },
+  {
+    "name": "fixture-ihex-README-top-address-hex",
+    "source": "tests/formats/ihex/fixtures/README-top-address.hex",
+    "tree_path": "0xffff0000.bin",
+    "sample_id": "tests/formats/ihex/fixtures/README-top-address.hex"
+  },
+  {
+    "name": "fixture-lzma-README-md-lzma",
+    "source": "tests/formats/lzma/fixtures/README.md.lzma",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/lzma/fixtures/README.md.lzma"
+  },
+  {
+    "name": "fixture-rar4-rar4-explicit-directories-rar",
+    "source": "tests/formats/rar4/fixtures/rar4-explicit-directories.rar",
+    "tree_path": "empty",
+    "sample_id": "tests/formats/rar4/fixtures/rar4-explicit-directories.rar"
+  },
+  {
+    "name": "fixture-rar5-rar5-explicit-directories-rar",
+    "source": "tests/formats/rar5/fixtures/rar5-explicit-directories.rar",
+    "tree_path": "empty",
+    "sample_id": "tests/formats/rar5/fixtures/rar5-explicit-directories.rar"
+  },
+  {
+    "name": "fixture-resx-Game-resx",
+    "source": "tests/formats/resx/fixtures/Game.resx",
+    "tree_path": "Data/$this.Icon",
+    "sample_id": "tests/formats/resx/fixtures/Game.resx"
+  },
+  {
+    "name": "fixture-tar-docs-tar",
+    "source": "tests/formats/tar/fixtures/docs.tar",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/tar/fixtures/docs.tar"
+  },
+  {
+    "name": "fixture-tar-compressed-docs-tbz",
+    "source": "tests/formats/tar-compressed/fixtures/docs.tbz",
+    "tree_path": "docs.tbz/README.md",
+    "sample_id": "tests/formats/tar-compressed/fixtures/docs.tbz"
+  },
+  {
+    "name": "fixture-tar-compressed-docs-tbz2",
+    "source": "tests/formats/tar-compressed/fixtures/docs.tbz2",
+    "tree_path": "docs.tbz2/README.md",
+    "sample_id": "tests/formats/tar-compressed/fixtures/docs.tbz2"
+  },
+  {
+    "name": "fixture-tar-compressed-docs-tgz",
+    "source": "tests/formats/tar-compressed/fixtures/docs.tgz",
+    "tree_path": "docs.tar/README.md",
+    "sample_id": "tests/formats/tar-compressed/fixtures/docs.tgz"
+  },
+  {
+    "name": "fixture-wad-e1m4-wad",
+    "source": "tests/formats/wad/fixtures/e1m4.wad",
+    "tree_path": "BLOCKMAP",
+    "sample_id": "tests/formats/wad/fixtures/e1m4.wad"
+  },
+  {
+    "name": "fixture-wim-test-swm",
+    "source": "tests/formats/wim/fixtures/test.swm",
+    "tree_path": "payload-1.bin",
+    "sample_id": "tests/formats/wim/fixtures/test.swm"
+  },
+  {
+    "name": "fixture-wim-test2-swm",
+    "source": "tests/formats/wim/fixtures/test2.swm",
+    "tree_path": "payload-1.bin",
+    "sample_id": "tests/formats/wim/fixtures/test2.swm"
+  },
+  {
+    "name": "fixture-xar-bzip2-xar",
+    "source": "tests/formats/xar/fixtures/bzip2.xar",
+    "tree_path": "nested/deep/file.txt",
+    "sample_id": "tests/formats/xar/fixtures/bzip2.xar"
+  },
+  {
+    "name": "fixture-xar-mixed-xar",
+    "source": "tests/formats/xar/fixtures/mixed.xar",
+    "tree_path": "big.txt",
+    "sample_id": "tests/formats/xar/fixtures/mixed.xar"
+  },
+  {
+    "name": "fixture-xz-concatenated-xz",
+    "source": "tests/formats/xz/fixtures/concatenated.xz",
+    "tree_path": "concatenated",
+    "sample_id": "tests/formats/xz/fixtures/concatenated.xz"
+  },
+  {
+    "name": "fixture-xz-docs-crc64-xz",
+    "source": "tests/formats/xz/fixtures/docs-crc64.xz",
+    "tree_path": "docs-crc64/README.md",
+    "sample_id": "tests/formats/xz/fixtures/docs-crc64.xz"
+  },
+  {
+    "name": "fixture-xz-docs-tar-txz",
+    "source": "tests/formats/xz/fixtures/docs.tar.txz",
+    "tree_path": "docs.tar/README.md",
+    "sample_id": "tests/formats/xz/fixtures/docs.tar.txz"
+  },
+  {
+    "name": "fixture-xz-docs-tar-xz",
+    "source": "tests/formats/xz/fixtures/docs.tar.xz",
+    "tree_path": "docs.tar/README.md",
+    "sample_id": "tests/formats/xz/fixtures/docs.tar.xz"
+  },
+  {
+    "name": "fixture-xz-no-extension-bin",
+    "source": "tests/formats/xz/fixtures/no-extension.bin",
+    "tree_path": "no-extension.bin",
+    "sample_id": "tests/formats/xz/fixtures/no-extension.bin"
+  },
+  {
+    "name": "fixture-xz-README-sha256-xz",
+    "source": "tests/formats/xz/fixtures/README-sha256.xz",
+    "tree_path": "README-sha256",
+    "sample_id": "tests/formats/xz/fixtures/README-sha256.xz"
+  },
+  {
+    "name": "fixture-xz-README-md-xz",
+    "source": "tests/formats/xz/fixtures/README.md.xz",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/xz/fixtures/README.md.xz"
+  },
+  {
+    "name": "fixture-zipx-README-BZip2-zipx",
+    "source": "tests/formats/zipx/fixtures/README-BZip2.zipx",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/zipx/fixtures/README-BZip2.zipx"
+  },
+  {
+    "name": "fixture-zipx-README-DCL-ascii-1024-zip",
+    "source": "tests/formats/zipx/fixtures/README-DCL-ascii-1024.zip",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/zipx/fixtures/README-DCL-ascii-1024.zip"
+  },
+  {
+    "name": "fixture-zipx-README-DCL-ascii-2048-zip",
+    "source": "tests/formats/zipx/fixtures/README-DCL-ascii-2048.zip",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/zipx/fixtures/README-DCL-ascii-2048.zip"
+  },
+  {
+    "name": "fixture-zipx-README-DCL-ascii-4096-zip",
+    "source": "tests/formats/zipx/fixtures/README-DCL-ascii-4096.zip",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/zipx/fixtures/README-DCL-ascii-4096.zip"
+  },
+  {
+    "name": "fixture-zipx-README-DCL-binary-1024-zip",
+    "source": "tests/formats/zipx/fixtures/README-DCL-binary-1024.zip",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/zipx/fixtures/README-DCL-binary-1024.zip"
+  },
+  {
+    "name": "fixture-zipx-README-DCL-binary-2048-zip",
+    "source": "tests/formats/zipx/fixtures/README-DCL-binary-2048.zip",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/zipx/fixtures/README-DCL-binary-2048.zip"
+  },
+  {
+    "name": "fixture-zipx-README-DCL-binary-4096-zip",
+    "source": "tests/formats/zipx/fixtures/README-DCL-binary-4096.zip",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/zipx/fixtures/README-DCL-binary-4096.zip"
+  },
+  {
+    "name": "fixture-zipx-README-Deflate64-zipx",
+    "source": "tests/formats/zipx/fixtures/README-Deflate64.zipx",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/zipx/fixtures/README-Deflate64.zipx"
+  },
+  {
+    "name": "fixture-zipx-README-LZMA-zipx",
+    "source": "tests/formats/zipx/fixtures/README-LZMA.zipx",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/zipx/fixtures/README-LZMA.zipx"
+  },
+  {
+    "name": "fixture-zipx-README-PPMd-cutoff-zipx",
+    "source": "tests/formats/zipx/fixtures/README-PPMd-cutoff.zipx",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/zipx/fixtures/README-PPMd-cutoff.zipx"
+  },
+  {
+    "name": "fixture-zipx-README-PPMd-freeze-zipx",
+    "source": "tests/formats/zipx/fixtures/README-PPMd-freeze.zipx",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/zipx/fixtures/README-PPMd-freeze.zipx"
+  },
+  {
+    "name": "fixture-zipx-README-PPMd-zipx",
+    "source": "tests/formats/zipx/fixtures/README-PPMd.zipx",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/zipx/fixtures/README-PPMd.zipx"
+  },
+  {
+    "name": "fixture-zipx-README-XZ-zipx",
+    "source": "tests/formats/zipx/fixtures/README-XZ.zipx",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/zipx/fixtures/README-XZ.zipx"
+  },
+  {
+    "name": "fixture-zipx-README-Zstandard-zipx",
+    "source": "tests/formats/zipx/fixtures/README-Zstandard.zipx",
+    "tree_path": "README.md",
+    "sample_id": "tests/formats/zipx/fixtures/README-Zstandard.zipx"
+  },
+  {
+    "name": "fixture-zipx-ZipModule-Deflate64-zipx",
+    "source": "tests/formats/zipx/fixtures/ZipModule-Deflate64.zipx",
+    "tree_path": "src/opener/modules/ZipModule.cpp",
+    "sample_id": "tests/formats/zipx/fixtures/ZipModule-Deflate64.zipx"
+  },
+  {
+    "name": "fixture-zstd-docs-tar-zst",
+    "source": "tests/formats/zstd/fixtures/docs.tar.zst",
+    "tree_path": "docs.tar/README.md",
+    "sample_id": "tests/formats/zstd/fixtures/docs.tar.zst"
+  },
+  {
+    "name": "fixture-zstd-empty-zst",
+    "source": "tests/formats/zstd/fixtures/empty.zst",
+    "tree_path": "empty",
+    "sample_id": "tests/formats/zstd/fixtures/empty.zst"
+  },
+  {
+    "name": "fixture-zstd-multi-frame-zst",
+    "source": "tests/formats/zstd/fixtures/multi-frame.zst",
+    "tree_path": "multi-frame",
+    "sample_id": "tests/formats/zstd/fixtures/multi-frame.zst"
+  },
+  {
+    "name": "fixture-zstd-readme-no-check-zst",
+    "source": "tests/formats/zstd/fixtures/readme-no-check.zst",
+    "tree_path": "readme-no-check",
+    "sample_id": "tests/formats/zstd/fixtures/readme-no-check.zst"
+  },
+  {
+    "name": "fixture-zstd-readme-zst",
+    "source": "tests/formats/zstd/fixtures/readme.zst",
+    "tree_path": "readme",
+    "sample_id": "tests/formats/zstd/fixtures/readme.zst"
+  },
+  {
+    "name": "extra-7z-explicit-root-directories",
+    "source": "tests/formats/7z/fixtures/explicit-directories.7z",
+    "tree_path": "nested/settings.ini",
+    "sample_id": "tests/formats/7z/fixtures/explicit-directories.7z"
+  },
+  {
+    "name": "extra-pe-group-icon-resource",
+    "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "tree_path": ".rsrc/RT_GROUP_ICON/#32512/#0",
+    "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe"
+  },
+  {
+    "name": "extra-rar4-unicode-token-name",
+    "source": "tests/formats/rar4/rar4-unicode-token.rar",
+    "tree_path": "café-über-資料.txt",
+    "sample_id": "tests/formats/rar4/rar4-unicode-token.rar"
+  },
+  {
+    "name": "extra-rar4-explicit-root-directories",
+    "source": "tests/formats/rar4/fixtures/rar4-explicit-directories.rar",
+    "tree_path": "nested/settings.ini",
+    "sample_id": "tests/formats/rar4/fixtures/rar4-explicit-directories.rar"
+  },
+  {
+    "name": "extra-rar5-explicit-root-directories",
+    "source": "tests/formats/rar5/fixtures/rar5-explicit-directories.rar",
+    "tree_path": "nested/settings.ini",
+    "sample_id": "tests/formats/rar5/fixtures/rar5-explicit-directories.rar"
+  },
+  {
+    "name": "extra-wim-swm-first-part",
+    "source": "tests/formats/wim/fixtures/test.swm",
+    "tree_path": "payload-3.bin",
+    "sample_id": "tests/formats/wim/fixtures/test.swm"
+  },
+  {
+    "name": "extra-wim-swm-numbered-part",
+    "source": "tests/formats/wim/fixtures/test2.swm",
+    "tree_path": "payload-4.bin",
+    "sample_id": "tests/formats/wim/fixtures/test2.swm"
+  }
+]
