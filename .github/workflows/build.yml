@@ -252,7 +252,7 @@ jobs:
           mkdir -p release
           ( cd artifacts/peare-linux-x64   && tar czf "$GITHUB_WORKSPACE/release/peare-${GITHUB_REF_NAME}-linux-x64.tar.gz" . )
           ( cd artifacts/peare-windows-x64 && zip -r  "$GITHUB_WORKSPACE/release/peare-${GITHUB_REF_NAME}-windows-x64.zip" . )
-          cp artifacts/peare-android-arm64/Peare.apk "$GITHUB_WORKSPACE/release/peare-${GITHUB_REF_NAME}-android-arm64.apk"
+          cp artifacts/peare-android-arm64/android-build-debug.apk "$GITHUB_WORKSPACE/release/peare-${GITHUB_REF_NAME}-android-arm64.apk"
           cp artifacts/peare-windows-installer/Peare-Setup-*.exe "$GITHUB_WORKSPACE/release/peare-${GITHUB_REF_NAME}-windows-setup.exe"
           cp "release/peare-${GITHUB_REF_NAME}-linux-x64.tar.gz" release/peare-linux-x64.tar.gz
           cp "release/peare-${GITHUB_REF_NAME}-windows-x64.zip" release/peare-windows-x64.zip
@@ -286,7 +286,7 @@ jobs:
           mkdir -p release
           ( cd artifacts/peare-linux-x64 && tar czf "$GITHUB_WORKSPACE/release/peare-linux-x64.tar.gz" . )
           ( cd artifacts/peare-windows-x64 && zip -r "$GITHUB_WORKSPACE/release/peare-windows-x64.zip" . )
-          cp artifacts/peare-android-arm64/Peare.apk release/peare-android-arm64.apk
+          cp artifacts/peare-android-arm64/android-build-debug.apk release/peare-android-arm64.apk
           cp artifacts/peare-windows-installer/Peare-Setup-*.exe release/peare-windows-setup.exe
 
       - name: Update latest CI release
