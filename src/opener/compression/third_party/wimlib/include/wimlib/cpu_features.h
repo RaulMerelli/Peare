@@ -12,10 +12,11 @@
 
 #define ARM_CPU_FEATURE_SHA1		0x00000001
 
-#if (defined(__i386__) || defined(__x86_64__)) || \
+#if !defined(PEARE_WIMLIB_DISABLE_CPU_FEATURES) && \
+    ((defined(__i386__) || defined(__x86_64__)) || \
     (defined(__aarch64__) && defined(__linux__)) || \
     (defined(__aarch64__) && defined(__APPLE__)) || \
-    (defined(__aarch64__) && defined(_WIN32))
+    (defined(__aarch64__) && defined(_WIN32)))
 
 #define CPU_FEATURES_ENABLED	1
 extern u32 cpu_features;

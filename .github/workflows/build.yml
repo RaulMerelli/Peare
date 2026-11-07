@@ -200,6 +200,12 @@ jobs:
       - name: Build Android libraries
         run: cmake --build build-android --target Peare --parallel 2
 
+      - name: Stage Android native libraries
+        run: |
+          mkdir -p build-android/android-build/libs/arm64-v8a
+          cp build-android/libPeare_arm64-v8a.so build-android/android-build/libs/arm64-v8a/
+          cp build-android/libPeareOpener.so build-android/libPeareDecoder.so build-android/libPeareWriter.so build-android/android-build/libs/arm64-v8a/
+
       - name: Package debug-signed APK
         run: >
           "$QT_HOST_PATH/bin/androiddeployqt"

@@ -596,6 +596,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
     target_sources(PeareOpener PRIVATE
         src/opener/compression/third_party/zstd/decompress/huf_decompress_amd64.S
     )
+    set_source_files_properties(
+        src/opener/compression/third_party/wimlib/src/lzms_common.c
+        PROPERTIES COMPILE_DEFINITIONS PEARE_WIMLIB_DISABLE_CPU_FEATURES
+    )
 endif()
 target_compile_definitions(PeareOpener PRIVATE PEARE_OPENER_BUILD)
 target_include_directories(PeareOpener
