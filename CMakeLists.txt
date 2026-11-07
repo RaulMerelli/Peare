@@ -591,6 +591,12 @@ set_source_files_properties(
     src/opener/compression/third_party/packmp3/packmp3.cpp
     PROPERTIES COMPILE_DEFINITIONS BUILD_LIB
 )
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+    enable_language(ASM)
+    target_sources(PeareOpener PRIVATE
+        src/opener/compression/third_party/zstd/decompress/huf_decompress_amd64.S
+    )
+endif()
 target_compile_definitions(PeareOpener PRIVATE PEARE_OPENER_BUILD)
 target_include_directories(PeareOpener
     PUBLIC

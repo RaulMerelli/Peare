@@ -169,7 +169,8 @@ bool decryptArjGost256(std::vector<std::uint8_t>* data, const QByteArray& passwo
         return false;
 
     Key key{};
-    for (int i = 0; i < std::min(password.size(), 32); ++i)
+    const int keyLength = password.size() < 32 ? int(password.size()) : 32;
+    for (int i = 0; i < keyLength; ++i)
         key[unsigned(i / 4)] |= std::uint32_t(std::uint8_t(password.at(i))) <<
                                 (unsigned(i % 4) * 8);
     const Block iv{{fileTime, std::uint32_t(std::int32_t(std::int8_t(modifier)))}};
