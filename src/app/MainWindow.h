@@ -4,6 +4,7 @@
 #include "SettingsIcons.h"
 #include "peare/peare_writer.h"
 
+#include <QByteArray>
 #include <QMainWindow>
 #include <QString>
 #include <QStringList>
@@ -30,6 +31,17 @@ class QTreeWidget;
 class QWidget;
 class QTimer;
 
+struct OffscreenPreviewDiagnostics {
+    QString selectedType;
+    quint64 dataSize = 0;
+    QByteArray payloadSha256;
+    int previewImageCount = 0;
+    int previewTextCharacters = 0;
+    bool leaf = false;
+    QStringList duplicatePaths;
+    QString error;
+};
+
 class MainWindow final : public QMainWindow
 {
 public:
@@ -42,6 +54,7 @@ public:
     void openFilePath(const QString& path, const QString& password);
     bool navigateToResource(const QString& path);
     bool navigateToFirstLeafResource();
+    bool inspectOffscreenPreview(OffscreenPreviewDiagnostics* diagnostics);
     bool runOffscreenWriterScenario(const QString& imagePath,
                                     const QString& scenarioPath,
                                     const QString& reportPath,

@@ -125,9 +125,9 @@ py tests/run_tests.py -q tests/test_writer.py::test_exfat_vmdk_v2_process_termin
 
 Use one format-independent path for every GUI preview. A case gives a source
 file or folder and the exact path shown in Peare's navigation tree. The path can
-cross any number of nested containers and can select a container or a leaf.
-The runner saves one screenshot per case and fails if Peare cannot navigate to
-the path, render preview content, or save a valid PNG.
+cross any number of nested containers, but it must select a leaf. The runner
+saves one screenshot per case and fails if Peare cannot navigate to the path,
+render preview content, or save a valid PNG.
 
 On Windows, the build script stores the offscreen plugin in
 `build-windows/test-plugins/platforms`. The GUI runners use this path by
@@ -137,6 +137,12 @@ For a large sample set, pass a JSON manifest. Each case needs `name`, `source`,
 and `tree_path`. Set `min_images` when the case must render a known number of
 preview images. Use `sample_id` to group several resources from one source file.
 Set `--jobs` to run cases in parallel and `--report` to save all results.
+
+Manifest cases must include `expected_size` and `expected_sha256`. The runner
+compares them with the selected payload. It also checks that the selected item
+is a leaf and that loaded GUI paths have no duplicates. A zero-byte leaf can
+have no preview text. Ad hoc `--case` runs can omit the ABI oracle. Their report
+sets `oracle_verified` to `false`.
 
 ```powershell
 py tests/run_gui_preview_tests.py `
@@ -155,8 +161,10 @@ one displayed cell per glyph. A blank glyph is valid and does not need visible
 pixels.
 
 The complete Opener fixture manifest is `tests/gui/opener-preview-cases.json`.
-It covers every input fixture in `tests/formats/*/fixtures` and adds GUI paths
-for special navigation cases. Run it after a Windows build:
+It covers every input fixture in `tests/formats/*/fixtures` and every hashable
+GUI leaf. It also checks the empty-output and RAR4 Unicode cases. Intel HEX
+address markers are not GUI files, so the manifest omits them. Run it after a
+Windows build:
 
 ```powershell
 py tests/run_gui_preview_tests.py `

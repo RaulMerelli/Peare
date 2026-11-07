@@ -10,6 +10,9 @@
 #include <QLabel>
 #include <QPlainTextEdit>
 #include <QPixmap>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QToolButton>
@@ -132,6 +135,28 @@ static int runPreview(MainWindow& window, QApplication& app, const QString& sour
 
     if (previewImages == 0 && previewTextViews == 0 && previewTextLabels == 0) {
         std::fprintf(stderr, "The selected tree path produced no visible preview content.\n");
+        return 3;
+    }
+
+    OffscreenPreviewDiagnostics diagnostics;
+    const bool inspected = window.inspectOffscreenPreview(&diagnostics);
+    QJsonArray duplicatePaths;
+    for (const QString& path : diagnostics.duplicatePaths)
+        duplicatePaths.append(path);
+    QJsonObject inspection;
+    inspection.insert(QStringLiteral("leaf"), diagnostics.leaf);
+    inspection.insert(QStringLiteral("type"), diagnostics.selectedType);
+    inspection.insert(QStringLiteral("size"), static_cast<qint64>(diagnostics.dataSize));
+    inspection.insert(QStringLiteral("sha256"), QString::fromLatin1(diagnostics.payloadSha256));
+    inspection.insert(QStringLiteral("preview_images"), diagnostics.previewImageCount);
+    inspection.insert(QStringLiteral("preview_text_characters"), diagnostics.previewTextCharacters);
+    inspection.insert(QStringLiteral("duplicate_paths"), duplicatePaths);
+    inspection.insert(QStringLiteral("error"), diagnostics.error);
+    std::printf("GUI_INSPECTION %s\n",
+                QJsonDocument(inspection).toJson(QJsonDocument::Compact).constData());
+    if (!inspected) {
+        std::fprintf(stderr, "GUI inspection failed: %s\n",
+                     diagnostics.error.toUtf8().constData());
         return 3;
     }
 

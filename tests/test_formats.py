@@ -15,6 +15,7 @@ import json
 import os
 import ctypes as C
 import hashlib
+from collections import Counter
 import struct
 import subprocess
 from pathlib import Path
@@ -81,6 +82,9 @@ def test_fixture_matches_golden(peare_lib, fixture):
         f"missing golden {expected_path}; create it with "
         f"PEARE_UPDATE_EXPECTED=1 and review the diff")
     expected = json.loads(expected_path.read_text(encoding="utf-8"))
+    paths = [row["path"] for row in actual["tree"]]
+    duplicates = sorted(path for path, count in Counter(paths).items() if count > 1)
+    assert not duplicates, f"duplicate Opener resource paths in {fixture}: {duplicates}"
     assert actual == expected
 
 

@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 IMAGE_COUNT = re.compile(r"\((\d+) images,")
+INSPECTION = re.compile(r"^GUI_INSPECTION (\{.*\})$", re.MULTILINE)
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -74,16 +75,51 @@ def run_case(executable, output_dir, timeout, case, child_env):
     if image_count < min_images:
         raise RuntimeError(
             f"{name}: expected at least {min_images} preview images, got {image_count}")
+    inspection_match = INSPECTION.search(result.stdout)
+    if not inspection_match:
+        raise RuntimeError(f"{name}: Peare did not report GUI inspection results")
+    try:
+        inspection = json.loads(inspection_match.group(1))
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"{name}: invalid GUI inspection JSON: {error}") from error
+    if not inspection.get("leaf"):
+        raise RuntimeError(f"{name}: selected GUI resource is not a leaf")
+    if inspection.get("duplicate_paths"):
+        raise RuntimeError(
+            f"{name}: duplicate GUI paths: {inspection['duplicate_paths']}")
+    if inspection.get("error"):
+        raise RuntimeError(f"{name}: GUI inspection error: {inspection['error']}")
+    if inspection.get("preview_images", 0) + \
+            inspection.get("preview_text_characters", 0) <= 0:
+        raise RuntimeError(f"{name}: leaf has no decoded preview content")
+    has_size = "expected_size" in case
+    has_hash = "expected_sha256" in case
+    if has_size != has_hash:
+        raise RuntimeError(f"{name}: ABI oracle needs both expected_size and expected_sha256")
+    if case.get("require_oracle", True) and not has_size:
+        raise RuntimeError(f"{name}: missing ABI oracle fields")
+    oracle_verified = has_size
+    if oracle_verified and inspection.get("size") != case["expected_size"]:
+        raise RuntimeError(
+            f"{name}: ABI size mismatch: expected {case['expected_size']}, "
+            f"got {inspection.get('size')}")
+    if oracle_verified and inspection.get("sha256") != case["expected_sha256"]:
+        raise RuntimeError(
+            f"{name}: ABI payload mismatch: expected {case['expected_sha256']}, "
+            f"got {inspection.get('sha256')}")
     if not valid_png(screenshot):
         raise RuntimeError(f"{name}: Peare did not save a valid GUI screenshot")
     return {"name": name, "sample_id": case.get("sample_id", str(source)),
             "source": str(source), "tree_path": tree_path,
-            "images": image_count, "screenshot": str(screenshot), "passed": True}
+            "images": image_count, "inspection": inspection,
+            "oracle_verified": oracle_verified,
+            "screenshot": str(screenshot), "passed": True}
 
 
 def load_cases(args):
     if args.case:
-        return [dict(name=name, source=source, tree_path=tree_path)
+        return [dict(name=name, source=source, tree_path=tree_path,
+                     require_oracle=False)
                 for name, source, tree_path in args.case]
     data = sys.stdin.read() if args.manifest == "-" else Path(args.manifest).read_text(
         encoding="utf-8")

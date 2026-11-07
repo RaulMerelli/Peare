@@ -1,344 +1,1641 @@
 [
   {
-    "name": "fixture-7z-explicit-directories-7z",
+    "name": "leaf-7z-explicit-directories.7z-3-nested-deep-copyright.txt",
     "source": "tests/formats/7z/fixtures/explicit-directories.7z",
-    "tree_path": "empty",
-    "sample_id": "tests/formats/7z/fixtures/explicit-directories.7z"
+    "tree_path": "nested/deep/copyright.txt",
+    "sample_id": "tests/formats/7z/fixtures/explicit-directories.7z",
+    "expected_size": 2253,
+    "expected_sha256": "069dec1a74194be896249c2be6a8d077fdb19c9a3369ce7919ceb383de026fac"
   },
   {
-    "name": "fixture-cab-readme-lzx21-cab",
+    "name": "leaf-7z-explicit-directories.7z-4-nested-settings.ini",
+    "source": "tests/formats/7z/fixtures/explicit-directories.7z",
+    "tree_path": "nested/settings.ini",
+    "sample_id": "tests/formats/7z/fixtures/explicit-directories.7z",
+    "expected_size": 1193,
+    "expected_sha256": "6a26f9b09f8614b865c066e504db2b104bca45e7bcc43f502dfabda1d0d84632"
+  },
+  {
+    "name": "leaf-7z-explicit-directories.7z-5-root-readme.txt",
+    "source": "tests/formats/7z/fixtures/explicit-directories.7z",
+    "tree_path": "root-readme.txt",
+    "sample_id": "tests/formats/7z/fixtures/explicit-directories.7z",
+    "expected_size": 3011,
+    "expected_sha256": "0ff3c89d460d256b54ba6d4a08376e50fa46d72a441983c7c1c153c543e1a09a"
+  },
+  {
+    "name": "leaf-cab-readme-lzx21.cab-0-README.md",
     "source": "tests/formats/cab/fixtures/readme-lzx21.cab",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/cab/fixtures/readme-lzx21.cab"
+    "sample_id": "tests/formats/cab/fixtures/readme-lzx21.cab",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-cab-readme-cab",
+    "name": "leaf-cab-readme.cab-0-README.md",
     "source": "tests/formats/cab/fixtures/readme.cab",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/cab/fixtures/readme.cab"
+    "sample_id": "tests/formats/cab/fixtures/readme.cab",
+    "expected_size": 30892,
+    "expected_sha256": "2709e7c6a379270a75fab71ccad78186e3487d9f3ae1afbca8890aaed080f54d"
   },
   {
-    "name": "fixture-floppy-FD14-Floppy-zip",
+    "name": "leaf-floppy-FD14-Floppy.zip-1-720k-x86BOOT.img-KERNEL.SYS",
     "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
     "tree_path": "720k/x86BOOT.img/KERNEL.SYS",
-    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip"
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 46485,
+    "expected_sha256": "f34a7483c575fcf2709d9a7d0bc3db81c6211c279530f9e1bf78576b9233924d"
   },
   {
-    "name": "fixture-gzip-README-plus-docs-tar-gz",
+    "name": "leaf-floppy-FD14-Floppy.zip-2-720k-x86BOOT.img-fdauto.bat",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/fdauto.bat",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 1476,
+    "expected_sha256": "193b356df218e68117fcd5af11b2305c4c5fd88671ec4d555aef01a0530c42a0"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-3-720k-x86BOOT.img-fdconfig.sys",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/fdconfig.sys",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 392,
+    "expected_sha256": "aece52eb1f13f090640423c09eed43fd400cf9552e2a00ad463c909658e7f671"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-6-720k-x86BOOT.img-freedos-bin-attrib.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/attrib.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 5044,
+    "expected_sha256": "63e5932a6f6604c584f77691ba55f882439f1c4c8637fb6e45f4ee5bc41f0414"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-8-720k-x86BOOT.img-freedos-bin-country.sys",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/country.sys",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 30250,
+    "expected_sha256": "f641d6eb65a392ef449e4e873e9ec4ae648d43e7358052ae9fee28a120b1e4da"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-9-720k-x86BOOT.img-freedos-bin-cp850.v8f",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/cp850.v8f",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 3103,
+    "expected_sha256": "69a7bac2cb83201d2e59d624bcbc675cded04bfbc0a48d90c850f5817f79bf69"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-10-720k-x86BOOT.img-freedos-bin-cp857.v8f",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/cp857.v8f",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 3132,
+    "expected_sha256": "bef70f051f22a61c6748ee8146ed24b834ebfa8ceae05d49d3a4b1699518f575"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-11-720k-x86BOOT.img-freedos-bin-cp858.v8f",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/cp858.v8f",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 1060,
+    "expected_sha256": "4e9bbdebb5fb9dd3db09c4b6cbfe6af31e4c59fe21a1a2c88822a078530bf3d8"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-12-720k-x86BOOT.img-freedos-bin-cp866.v8f",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/cp866.v8f",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 1277,
+    "expected_sha256": "f94336d043119e0db9327b4e5a8238f1541980bcbd0376f95d5fe4f65f91365f"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-13-720k-x86BOOT.img-freedos-bin-deltree.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/deltree.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 3339,
+    "expected_sha256": "72b6b5596048979a7a8526c73753892e0b13408821441cd3154e8d0b5fb013cb"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-14-720k-x86BOOT.img-freedos-bin-fasthelp.bat",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/fasthelp.bat",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 64,
+    "expected_sha256": "e237660bb4053e6e3c28227d0fcc5472109eae4ffcfcc0935c27c118c9f3fa38"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-16-720k-x86BOOT.img-freedos-bin-fdapm.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/fdapm.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 7434,
+    "expected_sha256": "8e670866c16c9cfb10796f33a785aa55e4ae94f4eabcff3fea0cfd5449a8ac73"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-17-720k-x86BOOT.img-freedos-bin-fdbanner.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/fdbanner.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 475,
+    "expected_sha256": "0c9c7d565c28416cf08133485ae717fab170dd495bb15415dcf5e1f9967d5ebf"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-19-720k-x86BOOT.img-freedos-bin-fdisk.ini",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/fdisk.ini",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 7046,
+    "expected_sha256": "de3c2dcbd0ca175bfd72007e6cd6fb4259ac48a3983749d46bee7df1eefbad17"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-20-720k-x86BOOT.img-freedos-bin-fdwrapup.bat",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/fdwrapup.bat",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 757,
+    "expected_sha256": "450a4b2b47577403ef2746bc12d57bf4a66b12094b9289ec0013718e753cf894"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-22-720k-x86BOOT.img-freedos-bin-kernl386.sys",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/kernl386.sys",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 46256,
+    "expected_sha256": "932c0c155701eddb7b902f7269a1b2ce31f5c82a6dc195172f2336d18a74e1fb"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-25-720k-x86BOOT.img-freedos-bin-setlang.bat",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/setlang.bat",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 5322,
+    "expected_sha256": "dd15099d8e4efeaa806ecac08953ed7cdaad9439be4a361c2811b4ea3ca6eb35"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-26-720k-x86BOOT.img-freedos-bin-setver.sys",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/setver.sys",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 109,
+    "expected_sha256": "bc67a19e687fc9a01f1c9e27ca7f9f17b7970822d10278d1d8198e74f7ea0ba7"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-28-720k-x86BOOT.img-freedos-bin-sys.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/sys.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 11727,
+    "expected_sha256": "74e663071019cf6447d43af8245e65948d8b864ffb4f08842467c579fdf89bdd"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-29-720k-x86BOOT.img-freedos-bin-vask.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/vask.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 3159,
+    "expected_sha256": "f710372e071b2505595e7402bc760d92b5ffe5edcd5b85a853ec4c1472d59670"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-30-720k-x86BOOT.img-freedos-bin-vchoice.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/vchoice.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 2904,
+    "expected_sha256": "fdefe05bf1601ba89dfec459b8f2ec3712f1326a7752e6fefec7c481f9b03d8b"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-31-720k-x86BOOT.img-freedos-bin-vcls.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/vcls.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 1976,
+    "expected_sha256": "86f0f881b164b0af472ecd90e873a5a03814835164aa5b74e6ec0c8173fefe53"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-32-720k-x86BOOT.img-freedos-bin-vcursor.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/vcursor.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 1342,
+    "expected_sha256": "c5ee4f90278514ba2924da51cd4cdcf623a5137a360719ffe13c936aa4ac1ae2"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-33-720k-x86BOOT.img-freedos-bin-vdelay.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/vdelay.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 1360,
+    "expected_sha256": "7daa53d304b0992cbeaa768dfbb0b9377f96170c6b4263f62642debd5d928f38"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-34-720k-x86BOOT.img-freedos-bin-veach.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/veach.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 3166,
+    "expected_sha256": "11b763ce4099467b6b8039d89d03762fbe8ac20c77a56b657e8a59d4a7377313"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-35-720k-x86BOOT.img-freedos-bin-vecho.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/vecho.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 2196,
+    "expected_sha256": "f38fef1c4f5c72922699afcf3b4cd8e45fd5c975a1dc0c45b7719b462eb3f1d1"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-36-720k-x86BOOT.img-freedos-bin-verrlvl.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/verrlvl.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 1083,
+    "expected_sha256": "274a8b6abe0c278770d986e06d57ffb34afbb197883d79e02c47dd3eb020ced2"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-37-720k-x86BOOT.img-freedos-bin-vfdutil.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/vfdutil.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 2334,
+    "expected_sha256": "4ebb9473ca0428a2a97c8db2c370828a7be56ca9eeb9584cab69c54893c88ee2"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-38-720k-x86BOOT.img-freedos-bin-vfont.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/vfont.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 1970,
+    "expected_sha256": "8acb7a777cfac75619fad9562170c569b1554c6fd441268e01bf48e4d8ce7ac4"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-39-720k-x86BOOT.img-freedos-bin-vframe.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/vframe.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 2492,
+    "expected_sha256": "e6adb7a64b8baa20906d2215398f7a3843ab631c80e6503b27c8ac9615c758fd"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-40-720k-x86BOOT.img-freedos-bin-vgotoxy.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/vgotoxy.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 2085,
+    "expected_sha256": "908671805e0929a8bcdd9f95bc26c8fe71b18ae1e19d6e01d2dd69baebc5764e"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-41-720k-x86BOOT.img-freedos-bin-vinfo.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/vinfo.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 3112,
+    "expected_sha256": "71fff0ec4f570f9bbc3f3997c64625eb12832dc263d54ba7b17471f690635e1d"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-42-720k-x86BOOT.img-freedos-bin-vline.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/vline.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 2144,
+    "expected_sha256": "1972ec10bcd5c9d60056356a18b78a4cba92eae4e65c36a99c920f2812098326"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-43-720k-x86BOOT.img-freedos-bin-vpause.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/vpause.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 2012,
+    "expected_sha256": "e98cac140c50331ff51ce779217dcfeabdf58c7752d46a6822a140fb451c1e63"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-44-720k-x86BOOT.img-freedos-bin-vprogres.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/vprogres.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 2424,
+    "expected_sha256": "0a688188075b6831ed9ece8a0e34aa57a4e0930876fe220ecc288a548bba8a58"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-45-720k-x86BOOT.img-freedos-bin-vstr.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/vstr.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 2387,
+    "expected_sha256": "2e026fd3e2dd8f31b2f4df4b839977b410b608457b47e667f8c08641ba55e1d1"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-46-720k-x86BOOT.img-freedos-bin-vtest.com",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/vtest.com",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 2791,
+    "expected_sha256": "db5fdd1a5f26ea8a5d4914ff7e25572543ab285f970966118ec8d1cbd00019a8"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-47-720k-x86BOOT.img-freedos-bin-welcome.bat",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/bin/welcome.bat",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 923,
+    "expected_sha256": "b9b570389d951b217c8a2c06f60ceca2aac21dbb6b213bbccaa9879b640ce8cc"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-50-720k-x86BOOT.img-freedos-configs-autoexec.086",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/configs/autoexec.086",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 1841,
+    "expected_sha256": "7e3702e736d7db69da540311cd8c3703516232a727ca3d4b6465a01c7e24bfae"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-51-720k-x86BOOT.img-freedos-configs-autoexec.186",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/configs/autoexec.186",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 1841,
+    "expected_sha256": "7e3702e736d7db69da540311cd8c3703516232a727ca3d4b6465a01c7e24bfae"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-52-720k-x86BOOT.img-freedos-configs-autoexec.286",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/configs/autoexec.286",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 1985,
+    "expected_sha256": "085dd180b55966633c1eed801a07848d5060fc865d2420bb44d6e3d790f6e99a"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-53-720k-x86BOOT.img-freedos-configs-autoexec.dbx",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/configs/autoexec.dbx",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 2799,
+    "expected_sha256": "656b39cd74048ac595e30dd0922c8ddb607f273726732a795e34b4364675065a"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-54-720k-x86BOOT.img-freedos-configs-autoexec.def",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/configs/autoexec.def",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 2343,
+    "expected_sha256": "247beb00dfc04804d7fb9770112776e460e63a3518ee36ddd276bcb4e76c61cf"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-55-720k-x86BOOT.img-freedos-configs-autoexec.vbx",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/configs/autoexec.vbx",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 2331,
+    "expected_sha256": "8fc045e563f8dc3b8ab5754be6bb32e5e69c3eadaefed69ac0353701b953db1e"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-56-720k-x86BOOT.img-freedos-configs-config.086",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/configs/config.086",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 327,
+    "expected_sha256": "805d70480ad08cda30f5fc03ece8da3fc9d7c55b1071a371c08f2f7f61ace703"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-57-720k-x86BOOT.img-freedos-configs-config.186",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/configs/config.186",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 327,
+    "expected_sha256": "805d70480ad08cda30f5fc03ece8da3fc9d7c55b1071a371c08f2f7f61ace703"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-58-720k-x86BOOT.img-freedos-configs-config.286",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/configs/config.286",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 601,
+    "expected_sha256": "41bc050cf5bfa5620eba4c15e6b980759a5780362d42a92a372614c5cf5a8e2f"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-59-720k-x86BOOT.img-freedos-configs-config.dbx",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/configs/config.dbx",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 49,
+    "expected_sha256": "b8a4301f5d0b1c681243cd02dab23f215959af962c27660b5e9108c81cbdce8a"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-60-720k-x86BOOT.img-freedos-configs-config.def",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/configs/config.def",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 954,
+    "expected_sha256": "febb68c68da8cbacd07378fb30dbb5bba107d4177efac9803b571cc6e0fea45b"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-61-720k-x86BOOT.img-freedos-configs-config.vbx",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/configs/config.vbx",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 866,
+    "expected_sha256": "308f2c5c0436a2f82329eb7927a17453cbc0d94470b7634719f8d1d5c24c026a"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-63-720k-x86BOOT.img-freedos-nls-setup.de",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/setup.de",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 8784,
+    "expected_sha256": "27d2250adc5901c766fff8cf53f357c35aa03651a7bfcbd586f8b45f89393f56"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-64-720k-x86BOOT.img-freedos-nls-setup.en",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/setup.en",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 7948,
+    "expected_sha256": "caee16a04c46b5c8d719e9693ab3610a2210659e511f46a6bcc2a9f082692512"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-65-720k-x86BOOT.img-freedos-nls-setup.es",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/setup.es",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 7877,
+    "expected_sha256": "30268f4b2cf0559f8e0f70cdf9caeb26f85a565dafa7ab375f3517a1532d140d"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-66-720k-x86BOOT.img-freedos-nls-setup.fr",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/setup.fr",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 8660,
+    "expected_sha256": "b3ef0f3c9d5980ff561fef2ed240f51c5c2c4249c472dcfca1f8bd1b0c72373c"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-67-720k-x86BOOT.img-freedos-nls-setup.sv",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/setup.sv",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 8096,
+    "expected_sha256": "485b0bb505bb59395465204430523fd0e7d6ce1038f86b0dd03933a408e7e646"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-68-720k-x86BOOT.img-freedos-nls-setup.tr",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/setup.tr",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 7773,
+    "expected_sha256": "a16ddffc1be3fa6824c32dc49b50d4d6413fedc2e4274f1d3f1657fc38146d85"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-69-720k-x86BOOT.img-freedos-nls-slicer.de",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/slicer.de",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 7030,
+    "expected_sha256": "52c2a44f6368dffef5e2d1e77f38e4664515cf26ef99bfcdaba6c3ea8b992045"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-70-720k-x86BOOT.img-freedos-nls-slicer.en",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/slicer.en",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 6321,
+    "expected_sha256": "2b5ed4e87fa0ad4cbc588950c9c7faa91130b866d184d4b71a995f4708d4879a"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-71-720k-x86BOOT.img-freedos-nls-slicer.es",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/slicer.es",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 6880,
+    "expected_sha256": "f2e760a837bceb1cedbafc9df7c513f35a03d486be12314ea0b4684c430af555"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-72-720k-x86BOOT.img-freedos-nls-slicer.fr",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/slicer.fr",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 7233,
+    "expected_sha256": "3b55c8081c816b73b6501e07fefd24c49c0a98d6fda88b2fceebb2840311d8a6"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-73-720k-x86BOOT.img-freedos-nls-slicer.sv",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/slicer.sv",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 6501,
+    "expected_sha256": "5cfab4c8a01bb77fe98451c6024c3f0bfebf86cc58ec21dd47f8952ebe32d96f"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-74-720k-x86BOOT.img-freedos-nls-slicer.tr",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/slicer.tr",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 6778,
+    "expected_sha256": "f60abe885304165ae9b5b75911f94bd13f4f8e49f01bc4d5cf06a38a53ab5aa1"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-75-720k-x86BOOT.img-freedos-nls-welcome.de",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/welcome.de",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 294,
+    "expected_sha256": "62c0a646afea7b44bb6a2cf6e7d79649079ae9e1624c4ceb661d8e3fcc823221"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-76-720k-x86BOOT.img-freedos-nls-welcome.en",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/welcome.en",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 253,
+    "expected_sha256": "dd7e2e91107cb11bb1c3d65a2866940330e6d32953e6a97b6b7710b799533762"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-77-720k-x86BOOT.img-freedos-nls-welcome.eo",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/welcome.eo",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 274,
+    "expected_sha256": "760dfafa6bd4ba86603e7fc95b0abf49fc0863ca01add63d76dd2e355208d5b6"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-78-720k-x86BOOT.img-freedos-nls-welcome.es",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/welcome.es",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 295,
+    "expected_sha256": "76ea3b0697773334ab56246e4ced5a5f3d61294edda40282d8dcec304a9c1684"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-79-720k-x86BOOT.img-freedos-nls-welcome.fr",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/welcome.fr",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 305,
+    "expected_sha256": "0cc9c8faad9c677b5f85f07b2793958202183c607e6754e35e9432a42105ac5a"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-80-720k-x86BOOT.img-freedos-nls-welcome.nl",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/welcome.nl",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 270,
+    "expected_sha256": "10f81ba6c09ead4f28386e2a115d33a6ee1f844df643c1e2db179d282509a402"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-81-720k-x86BOOT.img-freedos-nls-welcome.sv",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/welcome.sv",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 262,
+    "expected_sha256": "a66e1429972892431eefb066e6821f6d82ae6e5d2be035dded66963000e1dfde"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-82-720k-x86BOOT.img-freedos-nls-welcome.tr",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/nls/welcome.tr",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 251,
+    "expected_sha256": "1e1550fe417f46e5f8d8ffbf5836eca95fa2808de396ae9f52b6bd59ffbd3457"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-83-720k-x86BOOT.img-freedos-version.fdi",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/freedos/version.fdi",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 51,
+    "expected_sha256": "40066993c6bc408e12358913314a0cbfc1908ff13b3906ba0857e6b3d0b3958a"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-84-720k-x86BOOT.img-setup.bat",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86BOOT.img/setup.bat",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 39560,
+    "expected_sha256": "e9d60e8099efabec00fe7003260a9bea0fb3297b19cff70340a02fd819818a9e"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-86-720k-x86DSK01.img-freedos.001",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK01.img/freedos.001",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "b0f66bd27d9a50f678fac9cd2b87588b3ae1c9f1a89928b7294a58a84dbeaf31"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-87-720k-x86DSK01.img-freedos.002",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK01.img/freedos.002",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "22630a5fba0f566990e212f16e9ea10e0f0f82e50913d9ce02aa5477ae900d8b"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-88-720k-x86DSK01.img-freedos.003",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK01.img/freedos.003",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "6ec740693e92fbe464f377c1ef8556a2bde688fb29fd5aa96f66cb2d291abe2a"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-89-720k-x86DSK01.img-freedos.004",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK01.img/freedos.004",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "49e27a0c0395197174d0feef293f099ff1a123d242aadd802e7582801c64d287"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-90-720k-x86DSK01.img-freedos.005",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK01.img/freedos.005",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "1dae224ed027284d30549b2dc28f9e9a6abf2e60ec8bc2c8804ea9b1875ee72f"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-91-720k-x86DSK01.img-freedos.006",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK01.img/freedos.006",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "048ec097afd154bbf7a4d16f701f4ed5c4e9af29b91a2dfc3a1df22cbfdc05fa"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-92-720k-x86DSK01.img-freedos.007",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK01.img/freedos.007",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "8f09c1436df350461fb45497c3afe4da7fd800855a522d7529e4fc071e0995fa"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-93-720k-x86DSK01.img-freedos.008",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK01.img/freedos.008",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "f51aeae35265a28e323d16464a6fc4f22708e77fde0af1f834a6cc518d9e5317"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-94-720k-x86DSK01.img-freedos.009",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK01.img/freedos.009",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "ef4e9cfb7ce03ab2c922baccf8a35cbc1ba1e25181462a2c2abe6674b7726dfd"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-95-720k-x86DSK01.img-freedos.010",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK01.img/freedos.010",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "67275575f0bd37d4ec899036b449a324e0da1ebcab16003de46a150660331aa9"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-96-720k-x86DSK01.img-freedos.011",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK01.img/freedos.011",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "f7e7a616bf84aa41f0f6781c5c48e05cadf381f09b57fc510a2b64e369c23636"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-97-720k-x86DSK01.img-freedos.saf",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK01.img/freedos.saf",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "4064bb67a61c177ac4cde7d9cbc12294728f921e863c0ef9777804668d5a37cb"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-99-720k-x86DSK02.img-freedos.012",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK02.img/freedos.012",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "b949529d569b120d1ec4e2d76c4504375cfd0f341803d3eceadc449de580bb89"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-100-720k-x86DSK02.img-freedos.013",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK02.img/freedos.013",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "1739cda48b4c7dd3872ec0a095f750aa0df1bf52ae361c53d46051639c865b87"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-101-720k-x86DSK02.img-freedos.014",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK02.img/freedos.014",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "d14384d5f7bed30e48007d4291d38621d3e76228adc3ad3894ba54d2f3cd3380"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-102-720k-x86DSK02.img-freedos.015",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK02.img/freedos.015",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "45dd1b9b85788e76a6312c00290cbb5cea63687e60dc7f0d266c279a4ef06a15"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-103-720k-x86DSK02.img-freedos.016",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK02.img/freedos.016",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "dbb939f0024e45e7945e5a24e0e9d6574779566ed394ab51bdbc9db4be766014"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-104-720k-x86DSK02.img-freedos.017",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK02.img/freedos.017",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "485bf660c434aceff5349e7071395642b32acf8f0274c3f9dbb3a18b494c3496"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-105-720k-x86DSK02.img-freedos.018",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK02.img/freedos.018",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "39215cb593ccff4de3967960a536715f19348ece5cd4019a411f9aa68fd519f6"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-106-720k-x86DSK02.img-freedos.019",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK02.img/freedos.019",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "4ffa31b65fa3ae785dd1ff01cfa1952e16b4a2ff0c994a2dbfc425b95f050426"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-107-720k-x86DSK02.img-freedos.020",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK02.img/freedos.020",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "b594246b66ad7e3301f76363fd0fb9b767d4acac51acf09015a83ee4a5fbd60d"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-108-720k-x86DSK02.img-freedos.021",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK02.img/freedos.021",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "49bf33db9f8d39ef1059efc693403b8aaf93e2f856d1504c6a8d57cbd5f0b637"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-109-720k-x86DSK02.img-freedos.022",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK02.img/freedos.022",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "d6edb85bb0ccaf2c924d0716d1f3961091126e6417277fbdcd7d09a6f8e4e4dc"
+  },
+  {
+    "name": "leaf-floppy-FD14-Floppy.zip-110-720k-x86DSK02.img-freedos.023",
+    "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "tree_path": "720k/x86DSK02.img/freedos.023",
+    "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expected_size": 60416,
+    "expected_sha256": "933ea6ba5b331697249c86447966d453ecc3126a4f6686dbf078141ac815910b"
+  },
+  {
+    "name": "leaf-gzip-README-plus-docs.tar.gz-0-README.md",
     "source": "tests/formats/gzip/fixtures/README-plus-docs.tar.gz",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/gzip/fixtures/README-plus-docs.tar.gz"
+    "sample_id": "tests/formats/gzip/fixtures/README-plus-docs.tar.gz",
+    "expected_size": 54211,
+    "expected_sha256": "281291583401fd85d44562729fb76f723f9b5ce562d665c06b7258ddcf8ac431"
   },
   {
-    "name": "fixture-ihex-README-extended-linear-hex",
+    "name": "leaf-ihex-README-extended-linear.hex-1-0x00100000.bin",
     "source": "tests/formats/ihex/fixtures/README-extended-linear.hex",
     "tree_path": "0x00100000.bin",
-    "sample_id": "tests/formats/ihex/fixtures/README-extended-linear.hex"
+    "sample_id": "tests/formats/ihex/fixtures/README-extended-linear.hex",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-ihex-README-extended-segment-hex",
+    "name": "leaf-ihex-README-extended-segment.hex-1-0x00010000.bin",
     "source": "tests/formats/ihex/fixtures/README-extended-segment.hex",
     "tree_path": "0x00010000.bin",
-    "sample_id": "tests/formats/ihex/fixtures/README-extended-segment.hex"
+    "sample_id": "tests/formats/ihex/fixtures/README-extended-segment.hex",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-ihex-README-low-address-hex",
+    "name": "leaf-ihex-README-low-address.hex-0-0x00000000.bin",
     "source": "tests/formats/ihex/fixtures/README-low-address.hex",
     "tree_path": "0x00000000.bin",
-    "sample_id": "tests/formats/ihex/fixtures/README-low-address.hex"
+    "sample_id": "tests/formats/ihex/fixtures/README-low-address.hex",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-ihex-README-sparse-segments-hex",
+    "name": "leaf-ihex-README-sparse-segments.hex-0-0x00000000.bin",
     "source": "tests/formats/ihex/fixtures/README-sparse-segments.hex",
     "tree_path": "0x00000000.bin",
-    "sample_id": "tests/formats/ihex/fixtures/README-sparse-segments.hex"
+    "sample_id": "tests/formats/ihex/fixtures/README-sparse-segments.hex",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-ihex-README-top-address-hex",
+    "name": "leaf-ihex-README-sparse-segments.hex-1-0x00100000.bin",
+    "source": "tests/formats/ihex/fixtures/README-sparse-segments.hex",
+    "tree_path": "0x00100000.bin",
+    "sample_id": "tests/formats/ihex/fixtures/README-sparse-segments.hex",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
+  },
+  {
+    "name": "leaf-ihex-README-top-address.hex-1-0xffff0000.bin",
     "source": "tests/formats/ihex/fixtures/README-top-address.hex",
     "tree_path": "0xffff0000.bin",
-    "sample_id": "tests/formats/ihex/fixtures/README-top-address.hex"
+    "sample_id": "tests/formats/ihex/fixtures/README-top-address.hex",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-lzma-README-md-lzma",
+    "name": "leaf-lzma-README.md.lzma-0-README.md",
     "source": "tests/formats/lzma/fixtures/README.md.lzma",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/lzma/fixtures/README.md.lzma"
+    "sample_id": "tests/formats/lzma/fixtures/README.md.lzma",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-rar4-rar4-explicit-directories-rar",
+    "name": "leaf-pe-MerelliBattleShip.exe-0-.reloc",
+    "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "tree_path": "PE section .reloc",
+    "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "expected_size": 512,
+    "expected_sha256": "deafa380e83542a8c1f3ed69afb803da4cffee4ae11b7efe5e54bfc10e080b0a"
+  },
+  {
+    "name": "leaf-pe-MerelliBattleShip.exe-1-.rsrc",
+    "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "tree_path": "PE section .rsrc",
+    "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "expected_size": 111104,
+    "expected_sha256": "c57fe2d2b19e36d2bb0ffb7eaae133dcbbafb83afa782c40dc7f838ba0e5fa7b"
+  },
+  {
+    "name": "leaf-pe-MerelliBattleShip.exe-2-.rsrc-RT_GROUP_ICON-32512-0-32512",
+    "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "tree_path": ".rsrc/RT_GROUP_ICON/#32512/#0",
+    "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "expected_size": 90,
+    "expected_sha256": "853bdf0220e1c964f8d1f5d341b396404a7ad320f177c11ae884df6ab33d0199",
+    "min_images": 6
+  },
+  {
+    "name": "leaf-pe-MerelliBattleShip.exe-3-.rsrc-RT_ICON-1-0-1",
+    "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "tree_path": ".rsrc/RT_ICON/#1/#0",
+    "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "expected_size": 9517,
+    "expected_sha256": "d59c1eb229043dee0f6fd478363c50c3b4d10db6527bc5192e5ca6d31cacca66",
+    "min_images": 1
+  },
+  {
+    "name": "leaf-pe-MerelliBattleShip.exe-4-.rsrc-RT_ICON-2-0-2",
+    "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "tree_path": ".rsrc/RT_ICON/#2/#0",
+    "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "expected_size": 67624,
+    "expected_sha256": "48585884e8853c2bd58291b77cee72a3fdf8ea95ef27b4ae38ae684f11db24f6",
+    "min_images": 1
+  },
+  {
+    "name": "leaf-pe-MerelliBattleShip.exe-5-.rsrc-RT_ICON-3-0-3",
+    "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "tree_path": ".rsrc/RT_ICON/#3/#0",
+    "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "expected_size": 16936,
+    "expected_sha256": "e0592ace4326c353ff29f721c8e23291e23600d72e4420b8b5e0294de916f01b",
+    "min_images": 1
+  },
+  {
+    "name": "leaf-pe-MerelliBattleShip.exe-6-.rsrc-RT_ICON-4-0-4",
+    "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "tree_path": ".rsrc/RT_ICON/#4/#0",
+    "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "expected_size": 9640,
+    "expected_sha256": "d6cfcfac4f932e34544caa01fbeda194dc64ad8a497fde8728e08233b9a1c7d6",
+    "min_images": 1
+  },
+  {
+    "name": "leaf-pe-MerelliBattleShip.exe-7-.rsrc-RT_ICON-5-0-5",
+    "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "tree_path": ".rsrc/RT_ICON/#5/#0",
+    "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "expected_size": 4264,
+    "expected_sha256": "8a2909965104334b939b43b9e80a8fbf99b086501a5f9488d6f4b17dfc79f864",
+    "min_images": 1
+  },
+  {
+    "name": "leaf-pe-MerelliBattleShip.exe-8-.rsrc-RT_ICON-6-0-6",
+    "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "tree_path": ".rsrc/RT_ICON/#6/#0",
+    "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "expected_size": 1128,
+    "expected_sha256": "f1a2e7c78b3079735634e4a35660fe55628b70007fd406cd47bb3017eeaa6fb4",
+    "min_images": 1
+  },
+  {
+    "name": "leaf-pe-MerelliBattleShip.exe-9-.rsrc-RT_MANIFEST-1-0-1",
+    "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "tree_path": ".rsrc/RT_MANIFEST/#1/#0",
+    "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "expected_size": 490,
+    "expected_sha256": "539dc26a14b6277e87348594ab7d6e932d16aabb18612d77f29fe421a9f1d46a"
+  },
+  {
+    "name": "leaf-pe-MerelliBattleShip.exe-10-.rsrc-RT_VERSION-1-0-1",
+    "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "tree_path": ".rsrc/RT_VERSION/#1/#0",
+    "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "expected_size": 860,
+    "expected_sha256": "63b2beb483eec39784aca597767c36d9e26fe450c544dd97c866183062c4373f"
+  },
+  {
+    "name": "leaf-pe-MerelliBattleShip.exe-11-.text",
+    "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "tree_path": "PE section .text",
+    "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "expected_size": 374272,
+    "expected_sha256": "2c8940413e499089a7b535a7552755ee2a3f99f7938e01a245a6cb6d1f212ff3"
+  },
+  {
+    "name": "leaf-pe-MerelliBattleShip.exe-12-headers",
+    "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "tree_path": "PE headers",
+    "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
+    "expected_size": 512,
+    "expected_sha256": "ee3a6a8277163aee891691f4e4aa453c0f23dd51d3ee6b8d153e7bdbbfc0ff93"
+  },
+  {
+    "name": "leaf-rar4-rar4-explicit-directories.rar-3-nested-deep-license.txt",
     "source": "tests/formats/rar4/fixtures/rar4-explicit-directories.rar",
-    "tree_path": "empty",
-    "sample_id": "tests/formats/rar4/fixtures/rar4-explicit-directories.rar"
+    "tree_path": "nested/deep/license.txt",
+    "sample_id": "tests/formats/rar4/fixtures/rar4-explicit-directories.rar",
+    "expected_size": 35164,
+    "expected_sha256": "2b4c42737f1ccc403f97328c597e0abd272aad5e413a22539b3ba5c31ea943c2"
   },
   {
-    "name": "fixture-rar5-rar5-explicit-directories-rar",
+    "name": "leaf-rar4-rar4-explicit-directories.rar-4-nested-settings.ini",
+    "source": "tests/formats/rar4/fixtures/rar4-explicit-directories.rar",
+    "tree_path": "nested/settings.ini",
+    "sample_id": "tests/formats/rar4/fixtures/rar4-explicit-directories.rar",
+    "expected_size": 1193,
+    "expected_sha256": "6a26f9b09f8614b865c066e504db2b104bca45e7bcc43f502dfabda1d0d84632"
+  },
+  {
+    "name": "leaf-rar4-rar4-explicit-directories.rar-5-root-readme.txt",
+    "source": "tests/formats/rar4/fixtures/rar4-explicit-directories.rar",
+    "tree_path": "root-readme.txt",
+    "sample_id": "tests/formats/rar4/fixtures/rar4-explicit-directories.rar",
+    "expected_size": 3011,
+    "expected_sha256": "0ff3c89d460d256b54ba6d4a08376e50fa46d72a441983c7c1c153c543e1a09a"
+  },
+  {
+    "name": "leaf-rar5-rar5-explicit-directories.rar-3-nested-deep-license.txt",
     "source": "tests/formats/rar5/fixtures/rar5-explicit-directories.rar",
-    "tree_path": "empty",
-    "sample_id": "tests/formats/rar5/fixtures/rar5-explicit-directories.rar"
+    "tree_path": "nested/deep/license.txt",
+    "sample_id": "tests/formats/rar5/fixtures/rar5-explicit-directories.rar",
+    "expected_size": 35164,
+    "expected_sha256": "2b4c42737f1ccc403f97328c597e0abd272aad5e413a22539b3ba5c31ea943c2"
   },
   {
-    "name": "fixture-resx-Game-resx",
+    "name": "leaf-rar5-rar5-explicit-directories.rar-4-nested-settings.ini",
+    "source": "tests/formats/rar5/fixtures/rar5-explicit-directories.rar",
+    "tree_path": "nested/settings.ini",
+    "sample_id": "tests/formats/rar5/fixtures/rar5-explicit-directories.rar",
+    "expected_size": 1193,
+    "expected_sha256": "6a26f9b09f8614b865c066e504db2b104bca45e7bcc43f502dfabda1d0d84632"
+  },
+  {
+    "name": "leaf-rar5-rar5-explicit-directories.rar-5-root-readme.txt",
+    "source": "tests/formats/rar5/fixtures/rar5-explicit-directories.rar",
+    "tree_path": "root-readme.txt",
+    "sample_id": "tests/formats/rar5/fixtures/rar5-explicit-directories.rar",
+    "expected_size": 3011,
+    "expected_sha256": "0ff3c89d460d256b54ba6d4a08376e50fa46d72a441983c7c1c153c543e1a09a"
+  },
+  {
+    "name": "leaf-resx-Game.resx-0-Data-this.Icon",
     "source": "tests/formats/resx/fixtures/Game.resx",
     "tree_path": "Data/$this.Icon",
-    "sample_id": "tests/formats/resx/fixtures/Game.resx"
+    "sample_id": "tests/formats/resx/fixtures/Game.resx",
+    "expected_size": 109211,
+    "expected_sha256": "39e75483cab411f5f9e4f0542a594bb74d1b45db95d43d164dd0fae934e03572"
   },
   {
-    "name": "fixture-tar-docs-tar",
+    "name": "leaf-resx-Game.resx-1-Metadata-AspettaColpo.TrayLocation",
+    "source": "tests/formats/resx/fixtures/Game.resx",
+    "tree_path": "Metadata/AspettaColpo.TrayLocation",
+    "sample_id": "tests/formats/resx/fixtures/Game.resx",
+    "expected_size": 7,
+    "expected_sha256": "06935dab82a55f3a9d56677412777a0112bfd3bd2a85acf858af3357691561be"
+  },
+  {
+    "name": "leaf-resx-Game.resx-2-Metadata-load_enemy_table.TrayLocation",
+    "source": "tests/formats/resx/fixtures/Game.resx",
+    "tree_path": "Metadata/load_enemy_table.TrayLocation",
+    "sample_id": "tests/formats/resx/fixtures/Game.resx",
+    "expected_size": 6,
+    "expected_sha256": "65e33ae8aac3d70286bdd28c271ea835fc08767746018686685bc286904c1dcd"
+  },
+  {
+    "name": "leaf-tar-docs.tar-0-README.md",
     "source": "tests/formats/tar/fixtures/docs.tar",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/tar/fixtures/docs.tar"
+    "sample_id": "tests/formats/tar/fixtures/docs.tar",
+    "expected_size": 30892,
+    "expected_sha256": "2709e7c6a379270a75fab71ccad78186e3487d9f3ae1afbca8890aaed080f54d"
   },
   {
-    "name": "fixture-tar-compressed-docs-tbz",
+    "name": "leaf-tar-docs.tar-1-docs-TESTING.md",
+    "source": "tests/formats/tar/fixtures/docs.tar",
+    "tree_path": "docs/TESTING.md",
+    "sample_id": "tests/formats/tar/fixtures/docs.tar",
+    "expected_size": 5751,
+    "expected_sha256": "d4d58b537b8d8aa044c44f8264d5bc81e940ead8a5f27dbefb7729e48c5f4a1d"
+  },
+  {
+    "name": "leaf-tar-docs.tar-2-tests-POLICY.md",
+    "source": "tests/formats/tar/fixtures/docs.tar",
+    "tree_path": "tests/POLICY.md",
+    "sample_id": "tests/formats/tar/fixtures/docs.tar",
+    "expected_size": 1583,
+    "expected_sha256": "f0aa2c710d9f980e1f015953243487d5f3f21b07398db2ebd274733977dac45e"
+  },
+  {
+    "name": "leaf-tar-compressed-docs.tbz-1-docs.tbz-README.md",
     "source": "tests/formats/tar-compressed/fixtures/docs.tbz",
     "tree_path": "docs.tbz/README.md",
-    "sample_id": "tests/formats/tar-compressed/fixtures/docs.tbz"
+    "sample_id": "tests/formats/tar-compressed/fixtures/docs.tbz",
+    "expected_size": 30892,
+    "expected_sha256": "2709e7c6a379270a75fab71ccad78186e3487d9f3ae1afbca8890aaed080f54d"
   },
   {
-    "name": "fixture-tar-compressed-docs-tbz2",
+    "name": "leaf-tar-compressed-docs.tbz-2-docs.tbz-docs-TESTING.md",
+    "source": "tests/formats/tar-compressed/fixtures/docs.tbz",
+    "tree_path": "docs.tbz/docs/TESTING.md",
+    "sample_id": "tests/formats/tar-compressed/fixtures/docs.tbz",
+    "expected_size": 5751,
+    "expected_sha256": "d4d58b537b8d8aa044c44f8264d5bc81e940ead8a5f27dbefb7729e48c5f4a1d"
+  },
+  {
+    "name": "leaf-tar-compressed-docs.tbz-3-docs.tbz-tests-POLICY.md",
+    "source": "tests/formats/tar-compressed/fixtures/docs.tbz",
+    "tree_path": "docs.tbz/tests/POLICY.md",
+    "sample_id": "tests/formats/tar-compressed/fixtures/docs.tbz",
+    "expected_size": 1583,
+    "expected_sha256": "f0aa2c710d9f980e1f015953243487d5f3f21b07398db2ebd274733977dac45e"
+  },
+  {
+    "name": "leaf-tar-compressed-docs.tbz2-1-docs.tbz2-README.md",
     "source": "tests/formats/tar-compressed/fixtures/docs.tbz2",
     "tree_path": "docs.tbz2/README.md",
-    "sample_id": "tests/formats/tar-compressed/fixtures/docs.tbz2"
+    "sample_id": "tests/formats/tar-compressed/fixtures/docs.tbz2",
+    "expected_size": 30892,
+    "expected_sha256": "2709e7c6a379270a75fab71ccad78186e3487d9f3ae1afbca8890aaed080f54d"
   },
   {
-    "name": "fixture-tar-compressed-docs-tgz",
+    "name": "leaf-tar-compressed-docs.tbz2-2-docs.tbz2-docs-TESTING.md",
+    "source": "tests/formats/tar-compressed/fixtures/docs.tbz2",
+    "tree_path": "docs.tbz2/docs/TESTING.md",
+    "sample_id": "tests/formats/tar-compressed/fixtures/docs.tbz2",
+    "expected_size": 5751,
+    "expected_sha256": "d4d58b537b8d8aa044c44f8264d5bc81e940ead8a5f27dbefb7729e48c5f4a1d"
+  },
+  {
+    "name": "leaf-tar-compressed-docs.tbz2-3-docs.tbz2-tests-POLICY.md",
+    "source": "tests/formats/tar-compressed/fixtures/docs.tbz2",
+    "tree_path": "docs.tbz2/tests/POLICY.md",
+    "sample_id": "tests/formats/tar-compressed/fixtures/docs.tbz2",
+    "expected_size": 1583,
+    "expected_sha256": "f0aa2c710d9f980e1f015953243487d5f3f21b07398db2ebd274733977dac45e"
+  },
+  {
+    "name": "leaf-tar-compressed-docs.tgz-1-docs.tar-README.md",
     "source": "tests/formats/tar-compressed/fixtures/docs.tgz",
     "tree_path": "docs.tar/README.md",
-    "sample_id": "tests/formats/tar-compressed/fixtures/docs.tgz"
+    "sample_id": "tests/formats/tar-compressed/fixtures/docs.tgz",
+    "expected_size": 30892,
+    "expected_sha256": "2709e7c6a379270a75fab71ccad78186e3487d9f3ae1afbca8890aaed080f54d"
   },
   {
-    "name": "fixture-wad-e1m4-wad",
+    "name": "leaf-tar-compressed-docs.tgz-2-docs.tar-docs-TESTING.md",
+    "source": "tests/formats/tar-compressed/fixtures/docs.tgz",
+    "tree_path": "docs.tar/docs/TESTING.md",
+    "sample_id": "tests/formats/tar-compressed/fixtures/docs.tgz",
+    "expected_size": 5751,
+    "expected_sha256": "d4d58b537b8d8aa044c44f8264d5bc81e940ead8a5f27dbefb7729e48c5f4a1d"
+  },
+  {
+    "name": "leaf-tar-compressed-docs.tgz-3-docs.tar-tests-POLICY.md",
+    "source": "tests/formats/tar-compressed/fixtures/docs.tgz",
+    "tree_path": "docs.tar/tests/POLICY.md",
+    "sample_id": "tests/formats/tar-compressed/fixtures/docs.tgz",
+    "expected_size": 1583,
+    "expected_sha256": "f0aa2c710d9f980e1f015953243487d5f3f21b07398db2ebd274733977dac45e"
+  },
+  {
+    "name": "leaf-wad-e1m4.wad-0-BLOCKMAP",
     "source": "tests/formats/wad/fixtures/e1m4.wad",
     "tree_path": "BLOCKMAP",
-    "sample_id": "tests/formats/wad/fixtures/e1m4.wad"
+    "sample_id": "tests/formats/wad/fixtures/e1m4.wad",
+    "expected_size": 14210,
+    "expected_sha256": "b5c1b4476018a4f5fef147b86655d34b9e4a350272c8f737db50c03f426cbf40"
   },
   {
-    "name": "fixture-wim-test-swm",
+    "name": "leaf-wad-e1m4.wad-2-LINEDEFS",
+    "source": "tests/formats/wad/fixtures/e1m4.wad",
+    "tree_path": "LINEDEFS",
+    "sample_id": "tests/formats/wad/fixtures/e1m4.wad",
+    "expected_size": 31962,
+    "expected_sha256": "e2d3a0d9057ebd54d0043b880b7e4c895591e328899be834496edeb1d4b8b286"
+  },
+  {
+    "name": "leaf-wad-e1m4.wad-3-NODES",
+    "source": "tests/formats/wad/fixtures/e1m4.wad",
+    "tree_path": "NODES",
+    "sample_id": "tests/formats/wad/fixtures/e1m4.wad",
+    "expected_size": 33628,
+    "expected_sha256": "a87de06a304772e0e5973a33b5405098f8a6254be94b5704cac34ef7fb49a1c0"
+  },
+  {
+    "name": "leaf-wad-e1m4.wad-4-REJECT",
+    "source": "tests/formats/wad/fixtures/e1m4.wad",
+    "tree_path": "REJECT",
+    "sample_id": "tests/formats/wad/fixtures/e1m4.wad",
+    "expected_size": 9385,
+    "expected_sha256": "1c9a2f2c00a806447097cdc9dfec69a5c6c2abfb2fb462cf4552b717d553a94e"
+  },
+  {
+    "name": "leaf-wad-e1m4.wad-5-SECTORS",
+    "source": "tests/formats/wad/fixtures/e1m4.wad",
+    "tree_path": "SECTORS",
+    "sample_id": "tests/formats/wad/fixtures/e1m4.wad",
+    "expected_size": 7124,
+    "expected_sha256": "6498f258ccb3c9f566346e716bdf911ff4de3cc16ca1711c95d1c6163acd69c5"
+  },
+  {
+    "name": "leaf-wad-e1m4.wad-6-SEGS",
+    "source": "tests/formats/wad/fixtures/e1m4.wad",
+    "tree_path": "SEGS",
+    "sample_id": "tests/formats/wad/fixtures/e1m4.wad",
+    "expected_size": 42024,
+    "expected_sha256": "4515eaa098c2e53d00f59ff9759a9b534ee2227007e4ef14e7cf72e9362c05ec"
+  },
+  {
+    "name": "leaf-wad-e1m4.wad-7-SIDEDEFS",
+    "source": "tests/formats/wad/fixtures/e1m4.wad",
+    "tree_path": "SIDEDEFS",
+    "sample_id": "tests/formats/wad/fixtures/e1m4.wad",
+    "expected_size": 96330,
+    "expected_sha256": "8b76c8121c967887e5e6fbee4a959ac7b95c3d18a741d57715a802f445dc9f9f"
+  },
+  {
+    "name": "leaf-wad-e1m4.wad-8-SSECTORS",
+    "source": "tests/formats/wad/fixtures/e1m4.wad",
+    "tree_path": "SSECTORS",
+    "sample_id": "tests/formats/wad/fixtures/e1m4.wad",
+    "expected_size": 4808,
+    "expected_sha256": "0f184ebe2648fcdcc90bae1f0bf788112a696c92a22d5e282b0725c6a9ed28d6"
+  },
+  {
+    "name": "leaf-wad-e1m4.wad-9-THINGS",
+    "source": "tests/formats/wad/fixtures/e1m4.wad",
+    "tree_path": "THINGS",
+    "sample_id": "tests/formats/wad/fixtures/e1m4.wad",
+    "expected_size": 3780,
+    "expected_sha256": "c733bdbf230d374471efefb1f553c215d5192d01e61bfdabdab6f2557287613f"
+  },
+  {
+    "name": "leaf-wad-e1m4.wad-10-VERTEXES",
+    "source": "tests/formats/wad/fixtures/e1m4.wad",
+    "tree_path": "VERTEXES",
+    "sample_id": "tests/formats/wad/fixtures/e1m4.wad",
+    "expected_size": 9080,
+    "expected_sha256": "9d33872bb5839330489e674b260e75e52d0493db3d6f14920a2f506975fed831"
+  },
+  {
+    "name": "leaf-wim-test.swm-0-payload-1.bin",
     "source": "tests/formats/wim/fixtures/test.swm",
     "tree_path": "payload-1.bin",
-    "sample_id": "tests/formats/wim/fixtures/test.swm"
+    "sample_id": "tests/formats/wim/fixtures/test.swm",
+    "expected_size": 409600,
+    "expected_sha256": "654d2fba08fcb04660c46daa1323024545ebace16913533dd37b705726f6fcdc"
   },
   {
-    "name": "fixture-wim-test2-swm",
+    "name": "leaf-wim-test.swm-1-payload-2.bin",
+    "source": "tests/formats/wim/fixtures/test.swm",
+    "tree_path": "payload-2.bin",
+    "sample_id": "tests/formats/wim/fixtures/test.swm",
+    "expected_size": 409600,
+    "expected_sha256": "69ef50559afeeb2b48695075ef95119373b49f3497caa26b0b34269e1177f1ba"
+  },
+  {
+    "name": "leaf-wim-test.swm-2-payload-3.bin",
+    "source": "tests/formats/wim/fixtures/test.swm",
+    "tree_path": "payload-3.bin",
+    "sample_id": "tests/formats/wim/fixtures/test.swm",
+    "expected_size": 409600,
+    "expected_sha256": "e2a11780fc95d24db4867636e676048f69b8094b85db89a2d58e3b9d83aedfb4"
+  },
+  {
+    "name": "leaf-wim-test.swm-3-payload-4.bin",
+    "source": "tests/formats/wim/fixtures/test.swm",
+    "tree_path": "payload-4.bin",
+    "sample_id": "tests/formats/wim/fixtures/test.swm",
+    "expected_size": 409600,
+    "expected_sha256": "a4ba7b8c701671de76fad7f13ca46560c1484e47c1c2e090b288d772e87848ac"
+  },
+  {
+    "name": "leaf-wim-test2.swm-0-payload-1.bin",
     "source": "tests/formats/wim/fixtures/test2.swm",
     "tree_path": "payload-1.bin",
-    "sample_id": "tests/formats/wim/fixtures/test2.swm"
+    "sample_id": "tests/formats/wim/fixtures/test2.swm",
+    "expected_size": 409600,
+    "expected_sha256": "654d2fba08fcb04660c46daa1323024545ebace16913533dd37b705726f6fcdc"
   },
   {
-    "name": "fixture-xar-bzip2-xar",
+    "name": "leaf-wim-test2.swm-1-payload-2.bin",
+    "source": "tests/formats/wim/fixtures/test2.swm",
+    "tree_path": "payload-2.bin",
+    "sample_id": "tests/formats/wim/fixtures/test2.swm",
+    "expected_size": 409600,
+    "expected_sha256": "69ef50559afeeb2b48695075ef95119373b49f3497caa26b0b34269e1177f1ba"
+  },
+  {
+    "name": "leaf-wim-test2.swm-2-payload-3.bin",
+    "source": "tests/formats/wim/fixtures/test2.swm",
+    "tree_path": "payload-3.bin",
+    "sample_id": "tests/formats/wim/fixtures/test2.swm",
+    "expected_size": 409600,
+    "expected_sha256": "e2a11780fc95d24db4867636e676048f69b8094b85db89a2d58e3b9d83aedfb4"
+  },
+  {
+    "name": "leaf-wim-test2.swm-3-payload-4.bin",
+    "source": "tests/formats/wim/fixtures/test2.swm",
+    "tree_path": "payload-4.bin",
+    "sample_id": "tests/formats/wim/fixtures/test2.swm",
+    "expected_size": 409600,
+    "expected_sha256": "a4ba7b8c701671de76fad7f13ca46560c1484e47c1c2e090b288d772e87848ac"
+  },
+  {
+    "name": "leaf-xar-bzip2.xar-2-nested-deep-file.txt",
     "source": "tests/formats/xar/fixtures/bzip2.xar",
     "tree_path": "nested/deep/file.txt",
-    "sample_id": "tests/formats/xar/fixtures/bzip2.xar"
+    "sample_id": "tests/formats/xar/fixtures/bzip2.xar",
+    "expected_size": 20,
+    "expected_sha256": "5d0e5bc93dbc8febbb6b3cea0503bfd7460284e544c2f689538fd55da59accb2"
   },
   {
-    "name": "fixture-xar-mixed-xar",
+    "name": "leaf-xar-bzip2.xar-3-plain.txt",
+    "source": "tests/formats/xar/fixtures/bzip2.xar",
+    "tree_path": "plain.txt",
+    "sample_id": "tests/formats/xar/fixtures/bzip2.xar",
+    "expected_size": 10,
+    "expected_sha256": "1ddc234bae1b3930239b3d8625224117828d8a576bb8951087cbe6097387fb1e"
+  },
+  {
+    "name": "leaf-xar-mixed.xar-0-big.txt",
     "source": "tests/formats/xar/fixtures/mixed.xar",
     "tree_path": "big.txt",
-    "sample_id": "tests/formats/xar/fixtures/mixed.xar"
+    "sample_id": "tests/formats/xar/fixtures/mixed.xar",
+    "expected_size": 80000,
+    "expected_sha256": "74df55e3a157d7f060d99596d05007254b4232739f6b771e721ab501d30b9c7a"
   },
   {
-    "name": "fixture-xz-concatenated-xz",
-    "source": "tests/formats/xz/fixtures/concatenated.xz",
-    "tree_path": "concatenated",
-    "sample_id": "tests/formats/xz/fixtures/concatenated.xz"
+    "name": "leaf-xar-mixed.xar-4-nested-deep-file.txt",
+    "source": "tests/formats/xar/fixtures/mixed.xar",
+    "tree_path": "nested/deep/file.txt",
+    "sample_id": "tests/formats/xar/fixtures/mixed.xar",
+    "expected_size": 20,
+    "expected_sha256": "5d0e5bc93dbc8febbb6b3cea0503bfd7460284e544c2f689538fd55da59accb2"
   },
   {
-    "name": "fixture-xz-docs-crc64-xz",
-    "source": "tests/formats/xz/fixtures/docs-crc64.xz",
-    "tree_path": "docs-crc64/README.md",
-    "sample_id": "tests/formats/xz/fixtures/docs-crc64.xz"
+    "name": "leaf-xar-mixed.xar-5-plain.txt",
+    "source": "tests/formats/xar/fixtures/mixed.xar",
+    "tree_path": "plain.txt",
+    "sample_id": "tests/formats/xar/fixtures/mixed.xar",
+    "expected_size": 10,
+    "expected_sha256": "1ddc234bae1b3930239b3d8625224117828d8a576bb8951087cbe6097387fb1e"
   },
   {
-    "name": "fixture-xz-docs-tar-txz",
-    "source": "tests/formats/xz/fixtures/docs.tar.txz",
-    "tree_path": "docs.tar/README.md",
-    "sample_id": "tests/formats/xz/fixtures/docs.tar.txz"
+    "name": "leaf-xar-mixed.xar-6-setuid.sh",
+    "source": "tests/formats/xar/fixtures/mixed.xar",
+    "tree_path": "setuid.sh",
+    "sample_id": "tests/formats/xar/fixtures/mixed.xar",
+    "expected_size": 7,
+    "expected_sha256": "fcd249947a42433f3ca96fd828ace5d07193ea0d7023210bfffd1453f1860a75"
   },
   {
-    "name": "fixture-xz-docs-tar-xz",
-    "source": "tests/formats/xz/fixtures/docs.tar.xz",
-    "tree_path": "docs.tar/README.md",
-    "sample_id": "tests/formats/xz/fixtures/docs.tar.xz"
+    "name": "leaf-xar-mixed.xar-7-store.bin",
+    "source": "tests/formats/xar/fixtures/mixed.xar",
+    "tree_path": "store.bin",
+    "sample_id": "tests/formats/xar/fixtures/mixed.xar",
+    "expected_size": 4096,
+    "expected_sha256": "89df9d13a9eb9f62f594c1060bfb70958186b21654e8c67f2ce0aea4a438c4e2"
   },
   {
-    "name": "fixture-xz-no-extension-bin",
-    "source": "tests/formats/xz/fixtures/no-extension.bin",
-    "tree_path": "no-extension.bin",
-    "sample_id": "tests/formats/xz/fixtures/no-extension.bin"
-  },
-  {
-    "name": "fixture-xz-README-sha256-xz",
+    "name": "leaf-xz-README-sha256.xz-0-README-sha256",
     "source": "tests/formats/xz/fixtures/README-sha256.xz",
     "tree_path": "README-sha256",
-    "sample_id": "tests/formats/xz/fixtures/README-sha256.xz"
+    "sample_id": "tests/formats/xz/fixtures/README-sha256.xz",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-xz-README-md-xz",
+    "name": "leaf-xz-README.md.xz-0-README.md",
     "source": "tests/formats/xz/fixtures/README.md.xz",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/xz/fixtures/README.md.xz"
+    "sample_id": "tests/formats/xz/fixtures/README.md.xz",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-zipx-README-BZip2-zipx",
+    "name": "leaf-xz-concatenated.xz-0-concatenated",
+    "source": "tests/formats/xz/fixtures/concatenated.xz",
+    "tree_path": "concatenated",
+    "sample_id": "tests/formats/xz/fixtures/concatenated.xz",
+    "expected_size": 53262,
+    "expected_sha256": "d7c6a1ba1285349ae35cf5c19d0b8397ad4183e8969798f46e80e882188d0331"
+  },
+  {
+    "name": "leaf-xz-docs-crc64.xz-1-docs-crc64-README.md",
+    "source": "tests/formats/xz/fixtures/docs-crc64.xz",
+    "tree_path": "docs-crc64/README.md",
+    "sample_id": "tests/formats/xz/fixtures/docs-crc64.xz",
+    "expected_size": 30892,
+    "expected_sha256": "2709e7c6a379270a75fab71ccad78186e3487d9f3ae1afbca8890aaed080f54d"
+  },
+  {
+    "name": "leaf-xz-docs-crc64.xz-2-docs-crc64-docs-TESTING.md",
+    "source": "tests/formats/xz/fixtures/docs-crc64.xz",
+    "tree_path": "docs-crc64/docs/TESTING.md",
+    "sample_id": "tests/formats/xz/fixtures/docs-crc64.xz",
+    "expected_size": 5751,
+    "expected_sha256": "d4d58b537b8d8aa044c44f8264d5bc81e940ead8a5f27dbefb7729e48c5f4a1d"
+  },
+  {
+    "name": "leaf-xz-docs-crc64.xz-3-docs-crc64-tests-POLICY.md",
+    "source": "tests/formats/xz/fixtures/docs-crc64.xz",
+    "tree_path": "docs-crc64/tests/POLICY.md",
+    "sample_id": "tests/formats/xz/fixtures/docs-crc64.xz",
+    "expected_size": 1583,
+    "expected_sha256": "f0aa2c710d9f980e1f015953243487d5f3f21b07398db2ebd274733977dac45e"
+  },
+  {
+    "name": "leaf-xz-docs.tar.txz-1-docs.tar-README.md",
+    "source": "tests/formats/xz/fixtures/docs.tar.txz",
+    "tree_path": "docs.tar/README.md",
+    "sample_id": "tests/formats/xz/fixtures/docs.tar.txz",
+    "expected_size": 30892,
+    "expected_sha256": "2709e7c6a379270a75fab71ccad78186e3487d9f3ae1afbca8890aaed080f54d"
+  },
+  {
+    "name": "leaf-xz-docs.tar.txz-2-docs.tar-docs-TESTING.md",
+    "source": "tests/formats/xz/fixtures/docs.tar.txz",
+    "tree_path": "docs.tar/docs/TESTING.md",
+    "sample_id": "tests/formats/xz/fixtures/docs.tar.txz",
+    "expected_size": 5751,
+    "expected_sha256": "d4d58b537b8d8aa044c44f8264d5bc81e940ead8a5f27dbefb7729e48c5f4a1d"
+  },
+  {
+    "name": "leaf-xz-docs.tar.txz-3-docs.tar-tests-POLICY.md",
+    "source": "tests/formats/xz/fixtures/docs.tar.txz",
+    "tree_path": "docs.tar/tests/POLICY.md",
+    "sample_id": "tests/formats/xz/fixtures/docs.tar.txz",
+    "expected_size": 1583,
+    "expected_sha256": "f0aa2c710d9f980e1f015953243487d5f3f21b07398db2ebd274733977dac45e"
+  },
+  {
+    "name": "leaf-xz-docs.tar.xz-1-docs.tar-README.md",
+    "source": "tests/formats/xz/fixtures/docs.tar.xz",
+    "tree_path": "docs.tar/README.md",
+    "sample_id": "tests/formats/xz/fixtures/docs.tar.xz",
+    "expected_size": 30892,
+    "expected_sha256": "2709e7c6a379270a75fab71ccad78186e3487d9f3ae1afbca8890aaed080f54d"
+  },
+  {
+    "name": "leaf-xz-docs.tar.xz-2-docs.tar-docs-TESTING.md",
+    "source": "tests/formats/xz/fixtures/docs.tar.xz",
+    "tree_path": "docs.tar/docs/TESTING.md",
+    "sample_id": "tests/formats/xz/fixtures/docs.tar.xz",
+    "expected_size": 5751,
+    "expected_sha256": "d4d58b537b8d8aa044c44f8264d5bc81e940ead8a5f27dbefb7729e48c5f4a1d"
+  },
+  {
+    "name": "leaf-xz-docs.tar.xz-3-docs.tar-tests-POLICY.md",
+    "source": "tests/formats/xz/fixtures/docs.tar.xz",
+    "tree_path": "docs.tar/tests/POLICY.md",
+    "sample_id": "tests/formats/xz/fixtures/docs.tar.xz",
+    "expected_size": 1583,
+    "expected_sha256": "f0aa2c710d9f980e1f015953243487d5f3f21b07398db2ebd274733977dac45e"
+  },
+  {
+    "name": "leaf-xz-no-extension.bin-0-no-extension.bin",
+    "source": "tests/formats/xz/fixtures/no-extension.bin",
+    "tree_path": "no-extension.bin",
+    "sample_id": "tests/formats/xz/fixtures/no-extension.bin",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
+  },
+  {
+    "name": "leaf-zipx-README-BZip2.zipx-0-README.md",
     "source": "tests/formats/zipx/fixtures/README-BZip2.zipx",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/zipx/fixtures/README-BZip2.zipx"
+    "sample_id": "tests/formats/zipx/fixtures/README-BZip2.zipx",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-zipx-README-DCL-ascii-1024-zip",
+    "name": "leaf-zipx-README-DCL-ascii-1024.zip-0-README.md",
     "source": "tests/formats/zipx/fixtures/README-DCL-ascii-1024.zip",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/zipx/fixtures/README-DCL-ascii-1024.zip"
+    "sample_id": "tests/formats/zipx/fixtures/README-DCL-ascii-1024.zip",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-zipx-README-DCL-ascii-2048-zip",
+    "name": "leaf-zipx-README-DCL-ascii-2048.zip-0-README.md",
     "source": "tests/formats/zipx/fixtures/README-DCL-ascii-2048.zip",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/zipx/fixtures/README-DCL-ascii-2048.zip"
+    "sample_id": "tests/formats/zipx/fixtures/README-DCL-ascii-2048.zip",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-zipx-README-DCL-ascii-4096-zip",
+    "name": "leaf-zipx-README-DCL-ascii-4096.zip-0-README.md",
     "source": "tests/formats/zipx/fixtures/README-DCL-ascii-4096.zip",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/zipx/fixtures/README-DCL-ascii-4096.zip"
+    "sample_id": "tests/formats/zipx/fixtures/README-DCL-ascii-4096.zip",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-zipx-README-DCL-binary-1024-zip",
+    "name": "leaf-zipx-README-DCL-binary-1024.zip-0-README.md",
     "source": "tests/formats/zipx/fixtures/README-DCL-binary-1024.zip",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/zipx/fixtures/README-DCL-binary-1024.zip"
+    "sample_id": "tests/formats/zipx/fixtures/README-DCL-binary-1024.zip",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-zipx-README-DCL-binary-2048-zip",
+    "name": "leaf-zipx-README-DCL-binary-2048.zip-0-README.md",
     "source": "tests/formats/zipx/fixtures/README-DCL-binary-2048.zip",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/zipx/fixtures/README-DCL-binary-2048.zip"
+    "sample_id": "tests/formats/zipx/fixtures/README-DCL-binary-2048.zip",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-zipx-README-DCL-binary-4096-zip",
+    "name": "leaf-zipx-README-DCL-binary-4096.zip-0-README.md",
     "source": "tests/formats/zipx/fixtures/README-DCL-binary-4096.zip",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/zipx/fixtures/README-DCL-binary-4096.zip"
+    "sample_id": "tests/formats/zipx/fixtures/README-DCL-binary-4096.zip",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-zipx-README-Deflate64-zipx",
+    "name": "leaf-zipx-README-Deflate64.zipx-0-README.md",
     "source": "tests/formats/zipx/fixtures/README-Deflate64.zipx",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/zipx/fixtures/README-Deflate64.zipx"
+    "sample_id": "tests/formats/zipx/fixtures/README-Deflate64.zipx",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-zipx-README-LZMA-zipx",
+    "name": "leaf-zipx-README-LZMA.zipx-0-README.md",
     "source": "tests/formats/zipx/fixtures/README-LZMA.zipx",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/zipx/fixtures/README-LZMA.zipx"
+    "sample_id": "tests/formats/zipx/fixtures/README-LZMA.zipx",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-zipx-README-PPMd-cutoff-zipx",
+    "name": "leaf-zipx-README-PPMd-cutoff.zipx-0-README.md",
     "source": "tests/formats/zipx/fixtures/README-PPMd-cutoff.zipx",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/zipx/fixtures/README-PPMd-cutoff.zipx"
+    "sample_id": "tests/formats/zipx/fixtures/README-PPMd-cutoff.zipx",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-zipx-README-PPMd-freeze-zipx",
+    "name": "leaf-zipx-README-PPMd-freeze.zipx-0-README.md",
     "source": "tests/formats/zipx/fixtures/README-PPMd-freeze.zipx",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/zipx/fixtures/README-PPMd-freeze.zipx"
+    "sample_id": "tests/formats/zipx/fixtures/README-PPMd-freeze.zipx",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-zipx-README-PPMd-zipx",
+    "name": "leaf-zipx-README-PPMd.zipx-0-README.md",
     "source": "tests/formats/zipx/fixtures/README-PPMd.zipx",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/zipx/fixtures/README-PPMd.zipx"
+    "sample_id": "tests/formats/zipx/fixtures/README-PPMd.zipx",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-zipx-README-XZ-zipx",
+    "name": "leaf-zipx-README-XZ.zipx-0-README.md",
     "source": "tests/formats/zipx/fixtures/README-XZ.zipx",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/zipx/fixtures/README-XZ.zipx"
+    "sample_id": "tests/formats/zipx/fixtures/README-XZ.zipx",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-zipx-README-Zstandard-zipx",
+    "name": "leaf-zipx-README-Zstandard.zipx-0-README.md",
     "source": "tests/formats/zipx/fixtures/README-Zstandard.zipx",
     "tree_path": "README.md",
-    "sample_id": "tests/formats/zipx/fixtures/README-Zstandard.zipx"
+    "sample_id": "tests/formats/zipx/fixtures/README-Zstandard.zipx",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
-    "name": "fixture-zipx-ZipModule-Deflate64-zipx",
+    "name": "leaf-zipx-ZipModule-Deflate64.zipx-0-src-opener-modules-ZipModule.cpp",
     "source": "tests/formats/zipx/fixtures/ZipModule-Deflate64.zipx",
     "tree_path": "src/opener/modules/ZipModule.cpp",
-    "sample_id": "tests/formats/zipx/fixtures/ZipModule-Deflate64.zipx"
+    "sample_id": "tests/formats/zipx/fixtures/ZipModule-Deflate64.zipx",
+    "expected_size": 52792,
+    "expected_sha256": "710682de7e5883fad49bf884bf75d83b13dd954c061669a769a42c2309a00305"
   },
   {
-    "name": "fixture-zstd-docs-tar-zst",
+    "name": "leaf-zstd-docs.tar.zst-1-docs.tar-README.md",
     "source": "tests/formats/zstd/fixtures/docs.tar.zst",
     "tree_path": "docs.tar/README.md",
-    "sample_id": "tests/formats/zstd/fixtures/docs.tar.zst"
+    "sample_id": "tests/formats/zstd/fixtures/docs.tar.zst",
+    "expected_size": 30892,
+    "expected_sha256": "2709e7c6a379270a75fab71ccad78186e3487d9f3ae1afbca8890aaed080f54d"
+  },
+  {
+    "name": "leaf-zstd-docs.tar.zst-2-docs.tar-docs-TESTING.md",
+    "source": "tests/formats/zstd/fixtures/docs.tar.zst",
+    "tree_path": "docs.tar/docs/TESTING.md",
+    "sample_id": "tests/formats/zstd/fixtures/docs.tar.zst",
+    "expected_size": 5751,
+    "expected_sha256": "d4d58b537b8d8aa044c44f8264d5bc81e940ead8a5f27dbefb7729e48c5f4a1d"
+  },
+  {
+    "name": "leaf-zstd-docs.tar.zst-3-docs.tar-tests-POLICY.md",
+    "source": "tests/formats/zstd/fixtures/docs.tar.zst",
+    "tree_path": "docs.tar/tests/POLICY.md",
+    "sample_id": "tests/formats/zstd/fixtures/docs.tar.zst",
+    "expected_size": 1583,
+    "expected_sha256": "f0aa2c710d9f980e1f015953243487d5f3f21b07398db2ebd274733977dac45e"
+  },
+  {
+    "name": "leaf-zstd-multi-frame.zst-0-multi-frame",
+    "source": "tests/formats/zstd/fixtures/multi-frame.zst",
+    "tree_path": "multi-frame",
+    "sample_id": "tests/formats/zstd/fixtures/multi-frame.zst",
+    "expected_size": 53262,
+    "expected_sha256": "d7c6a1ba1285349ae35cf5c19d0b8397ad4183e8969798f46e80e882188d0331"
+  },
+  {
+    "name": "leaf-zstd-readme-no-check.zst-0-readme-no-check",
+    "source": "tests/formats/zstd/fixtures/readme-no-check.zst",
+    "tree_path": "readme-no-check",
+    "sample_id": "tests/formats/zstd/fixtures/readme-no-check.zst",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
+  },
+  {
+    "name": "leaf-zstd-readme.zst-0-readme",
+    "source": "tests/formats/zstd/fixtures/readme.zst",
+    "tree_path": "readme",
+    "sample_id": "tests/formats/zstd/fixtures/readme.zst",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
     "name": "fixture-zstd-empty-zst",
     "source": "tests/formats/zstd/fixtures/empty.zst",
     "tree_path": "empty",
-    "sample_id": "tests/formats/zstd/fixtures/empty.zst"
-  },
-  {
-    "name": "fixture-zstd-multi-frame-zst",
-    "source": "tests/formats/zstd/fixtures/multi-frame.zst",
-    "tree_path": "multi-frame",
-    "sample_id": "tests/formats/zstd/fixtures/multi-frame.zst"
-  },
-  {
-    "name": "fixture-zstd-readme-no-check-zst",
-    "source": "tests/formats/zstd/fixtures/readme-no-check.zst",
-    "tree_path": "readme-no-check",
-    "sample_id": "tests/formats/zstd/fixtures/readme-no-check.zst"
-  },
-  {
-    "name": "fixture-zstd-readme-zst",
-    "source": "tests/formats/zstd/fixtures/readme.zst",
-    "tree_path": "readme",
-    "sample_id": "tests/formats/zstd/fixtures/readme.zst"
-  },
-  {
-    "name": "extra-7z-explicit-root-directories",
-    "source": "tests/formats/7z/fixtures/explicit-directories.7z",
-    "tree_path": "nested/settings.ini",
-    "sample_id": "tests/formats/7z/fixtures/explicit-directories.7z"
-  },
-  {
-    "name": "extra-pe-group-icon-resource",
-    "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
-    "tree_path": ".rsrc/RT_GROUP_ICON/#32512/#0",
-    "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe"
+    "sample_id": "tests/formats/zstd/fixtures/empty.zst",
+    "expected_size": 0,
+    "expected_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   {
     "name": "extra-rar4-unicode-token-name",
     "source": "tests/formats/rar4/rar4-unicode-token.rar",
     "tree_path": "café-über-資料.txt",
-    "sample_id": "tests/formats/rar4/rar4-unicode-token.rar"
-  },
-  {
-    "name": "extra-rar4-explicit-root-directories",
-    "source": "tests/formats/rar4/fixtures/rar4-explicit-directories.rar",
-    "tree_path": "nested/settings.ini",
-    "sample_id": "tests/formats/rar4/fixtures/rar4-explicit-directories.rar"
-  },
-  {
-    "name": "extra-rar5-explicit-root-directories",
-    "source": "tests/formats/rar5/fixtures/rar5-explicit-directories.rar",
-    "tree_path": "nested/settings.ini",
-    "sample_id": "tests/formats/rar5/fixtures/rar5-explicit-directories.rar"
-  },
-  {
-    "name": "extra-wim-swm-first-part",
-    "source": "tests/formats/wim/fixtures/test.swm",
-    "tree_path": "payload-3.bin",
-    "sample_id": "tests/formats/wim/fixtures/test.swm"
-  },
-  {
-    "name": "extra-wim-swm-numbered-part",
-    "source": "tests/formats/wim/fixtures/test2.swm",
-    "tree_path": "payload-4.bin",
-    "sample_id": "tests/formats/wim/fixtures/test2.swm"
+    "sample_id": "tests/formats/rar4/rar4-unicode-token.rar",
+    "expected_size": 2062,
+    "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   }
 ]

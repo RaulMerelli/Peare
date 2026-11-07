@@ -9,6 +9,7 @@
 #include <QApplication>
 #include <QMetaObject>
 #include <QComboBox>
+#include <QCryptographicHash>
 #include <QDialogButtonBox>
 #include <QDesktopServices>
 #include <QDialog>
@@ -862,6 +863,102 @@ bool MainWindow::navigateToFirstLeafResource() {
             pending.push_back(item->child(index));
     }
     return false;
+}
+
+bool MainWindow::inspectOffscreenPreview(OffscreenPreviewDiagnostics* diagnostics) {
+    if (!diagnostics || !treeView_) return false;
+    *diagnostics = {};
+
+    QHash<QString, int> pathCounts;
+    struct TreeNode {
+        QTreeWidgetItem* item;
+        QString parentPath;
+    };
+    QVector<TreeNode> nodes;
+    for (int i = 0; i < treeView_->topLevelItemCount(); ++i)
+        nodes.push_back({treeView_->topLevelItem(i), {}});
+    for (int index = 0; index < nodes.size(); ++index) {
+        const TreeNode node = nodes.at(index);
+        if (!node.item || node.item->data(0, PlaceholderRole).toBool()) continue;
+        const QString label = node.item->text(0);
+        const QString path = node.parentPath.isEmpty()
+            ? label : node.parentPath + QLatin1Char('/') + label;
+        ++pathCounts[path];
+        for (int child = 0; child < node.item->childCount(); ++child)
+            nodes.push_back({node.item->child(child), path});
+    }
+    for (auto it = pathCounts.cbegin(); it != pathCounts.cend(); ++it) {
+        if (it.value() > 1) diagnostics->duplicatePaths.push_back(it.key());
+    }
+    diagnostics->duplicatePaths.sort();
+
+    QTreeWidgetItem* selected = treeView_->currentItem();
+    if (!selected || !selected->data(0, TypeRole).isValid()) {
+        diagnostics->error = QStringLiteral("The selected GUI item is not a resource.");
+        return false;
+    }
+    diagnostics->selectedType = selected->data(0, TypeRole).toString();
+    const QString type = diagnostics->selectedType;
+    bool hasVisibleChildren = false;
+    for (int child = 0; child < selected->childCount(); ++child) {
+        if (!selected->child(child)->data(0, PlaceholderRole).toBool()) {
+            hasVisibleChildren = true;
+            break;
+        }
+    }
+    pearegui::Session* owner = sessionOf(selected);
+    pearegui::Resource resource = owner
+        ? owner->openResource(selected->data(0, FolderIndexRole).toULongLong(),
+                              selected->data(0, ResourceIndexRole).toULongLong())
+        : pearegui::Resource();
+    if (!resource.isValid()) {
+        diagnostics->error = QStringLiteral("The selected GUI resource could not be opened.");
+        return false;
+    }
+    const pearegui::ResourceContext context = resource.context();
+    diagnostics->dataSize = context.dataSize;
+    diagnostics->leaf = !isDirectoryEntryType(type) && !context.isContainer &&
+                        !selected->data(0, PendingRole).toBool() && !hasVisibleChildren;
+    if (!diagnostics->leaf) {
+        diagnostics->error = QStringLiteral("The selected GUI resource is not a leaf.");
+        return false;
+    }
+    if (context.dataSize > 64 * 1024 * 1024) {
+        diagnostics->error = QStringLiteral("The selected leaf exceeds the 64 MiB test limit.");
+        return false;
+    }
+    const QByteArray payload = resource.payload();
+    if (quint64(payload.size()) != context.dataSize) {
+        diagnostics->error = QStringLiteral("The selected resource payload size does not match its context.");
+        return false;
+    }
+    diagnostics->payloadSha256 = QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex();
+    diagnostics->previewImageCount = currentPreview_.images.size();
+    for (const QImage& image : currentPreview_.images) {
+        if (image.isNull() || image.width() <= 0 || image.height() <= 0) {
+            diagnostics->error = QStringLiteral("The GUI preview contains an invalid image.");
+            return false;
+        }
+    }
+    diagnostics->previewTextCharacters = currentPreview_.text.trimmed().size();
+    if (!currentPreview_.error.isEmpty()) {
+        diagnostics->error = currentPreview_.error;
+        return false;
+    }
+    if (payload.isEmpty() && context.dataSize == 0) {
+        if (!diagnostics->duplicatePaths.isEmpty())
+            diagnostics->error = QStringLiteral("The GUI tree contains duplicate resource paths.");
+        return diagnostics->duplicatePaths.isEmpty();
+    }
+    if (diagnostics->previewImageCount == 0 && diagnostics->previewTextCharacters == 0) {
+        diagnostics->error = QStringLiteral("The selected leaf has no decoded preview content.");
+        return false;
+    }
+    if (!diagnostics->duplicatePaths.isEmpty()) {
+        diagnostics->error = QStringLiteral("The GUI tree contains duplicate resource paths.");
+        return false;
+    }
+    return true;
 }
 
 QTreeWidgetItem* MainWindow::detailsSourceItem(QTreeWidgetItem* row) const {
