@@ -1,5 +1,7 @@
 """Check standalone LZMA samples through the public Opener ABI."""
 
+import hashlib
+import json
 from pathlib import Path
 import shutil
 
@@ -33,7 +35,7 @@ def _payload(peare_lib, opener):
 
 def test_lzma_unknown_size_matches_independent_encoder_source(peare_lib):
     sample = FIXTURES / "README.md.lzma"
-    expected = REPO / "README.md"
+    expected = REPO / "tests" / "formats" / "lzma" / "expected" / "README.md.json"
     assert sample.is_file()
     assert expected.is_file()
 
@@ -41,7 +43,10 @@ def test_lzma_unknown_size_matches_independent_encoder_source(peare_lib):
     assert opener is not None
     with opener:
         assert opener.container_format() == "LZMA"
-        assert _payload(peare_lib, opener) == expected.read_bytes()
+        payload = _payload(peare_lib, opener)
+        manifest = json.loads(expected.read_text(encoding="utf-8"))["tree"][0]
+        assert len(payload) == manifest["size"]
+        assert hashlib.sha256(payload).hexdigest() == manifest["sha256"]
 
 
 def test_lzma_extension_does_not_override_archive_signature(peare_lib, tmp_path):

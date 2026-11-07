@@ -1,5 +1,7 @@
 """Check independent Zstandard samples through the public Opener ABI."""
 
+import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -37,7 +39,7 @@ def test_zstd_payload_matches_independent_encoder(peare_lib):
     assert opener is not None
     with opener:
         assert opener.container_format() == "ZSTD"
-        assert _payload(peare_lib, opener) == (REPO / "README.md").read_bytes()
+        _assert_expected_payload("readme", _payload(peare_lib, opener))
 
 
 def test_zstd_frame_without_checksum(peare_lib):
@@ -46,7 +48,7 @@ def test_zstd_frame_without_checksum(peare_lib):
     assert opener is not None
     with opener:
         assert opener.container_format() == "ZSTD"
-        assert _payload(peare_lib, opener) == (REPO / "README.md").read_bytes()
+        _assert_expected_payload("readme-no-check", _payload(peare_lib, opener))
 
 
 def test_zstd_empty_frame(peare_lib):
@@ -62,9 +64,7 @@ def test_zstd_concatenated_frames(peare_lib):
     assert opener is not None
     with opener:
         assert opener.container_format() == "ZSTD"
-        expected = (REPO / "README.md").read_bytes()
-        expected += (REPO / "tests" / "formats" / "tar" / "fixtures" / "docs.tar").read_bytes()
-        assert _payload(peare_lib, opener) == expected
+        _assert_expected_payload("multi-frame", _payload(peare_lib, opener))
 
 
 def test_zstd_payload_opens_nested_tar_through_abi(peare_lib):
@@ -122,3 +122,10 @@ def test_zstd_rejects_upstream_truncated_frame(peare_lib):
     with opener:
         assert opener.container_format() == "ZSTD"
         assert opener.folder_count() == 0
+
+
+def _assert_expected_payload(name, payload):
+    manifest_path = REPO / "tests" / "formats" / "zstd" / "expected" / f"{name}.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))["tree"][0]
+    assert len(payload) == manifest["size"]
+    assert hashlib.sha256(payload).hexdigest() == manifest["sha256"]

@@ -318,10 +318,10 @@ struct Rar5UnpackState {
 };
 
 struct Rar5Filter {
-    std::size_t offset = 0;
-    std::size_t length = 0;
-    std::uint32_t type = 0;
-    std::uint32_t channels = 0;
+    std::size_t offset;
+    std::size_t length;
+    std::uint32_t type;
+    std::uint32_t channels;
 };
 
 bool readRar5FilterData(Rar5BitReader* bits, std::uint32_t* value)
@@ -663,8 +663,8 @@ QString nextPartVolumePath(const QString& path)
 
 struct Rar5DataChunk {
     fs::ByteStorePtr source;
-    std::int64_t offset = 0;
-    std::uint64_t size = 0;
+    std::int64_t offset;
+    std::uint64_t size;
 };
 
 struct Rar5MemberData {

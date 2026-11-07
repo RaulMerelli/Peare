@@ -100,7 +100,7 @@ ResourcePreview RT_GROUP_ICON::preview(const ResourceEntry& entry, const IResour
             if (child->data.isEmpty())
                 completeIcon = false;
         } else {
-            iconImages.append({});
+            iconImages.append(QByteArray());
             completeIcon = false;
         }
 

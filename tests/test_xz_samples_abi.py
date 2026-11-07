@@ -1,5 +1,7 @@
 """Test independent XZ samples through the public Opener ABI."""
 
+import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -12,23 +14,18 @@ DEFAULT_ROOT = REPO / "tests" / "formats" / "xz" / "fixtures"
 
 
 @pytest.mark.parametrize(
-    ("sample_name", "payload_paths"),
+    "sample_name",
     [
-        ("docs.tar.xz", (REPO / "tests" / "formats" / "tar" / "fixtures" / "docs.tar",)),
-        ("docs-crc64.xz", (REPO / "tests" / "formats" / "tar" / "fixtures" / "docs.tar",)),
-        ("README-sha256.xz", (REPO / "README.md",)),
-        ("docs.tar.txz", (REPO / "tests" / "formats" / "tar" / "fixtures" / "docs.tar",)),
-        ("README.md.xz", (REPO / "README.md",)),
-        (
-            "concatenated.xz",
-            (REPO / "README.md", REPO / "tests" / "formats" / "tar" / "fixtures" / "docs.tar"),
-        ),
-        ("no-extension.bin", (REPO / "README.md",)),
+        "docs.tar.xz",
+        "docs-crc64.xz",
+        "README-sha256.xz",
+        "docs.tar.txz",
+        "README.md.xz",
+        "concatenated.xz",
+        "no-extension.bin",
     ],
 )
-def test_independently_created_xz_samples_match_original_payload(
-    peare_lib, sample_name, payload_paths
-):
+def test_independently_created_xz_samples_match_original_payload(peare_lib, sample_name):
     root = Path(os.environ.get("PEARE_XZ_SAMPLE_ROOT", DEFAULT_ROOT))
     sample = root / sample_name
     if not sample.is_file():
@@ -50,7 +47,15 @@ def test_independently_created_xz_samples_match_original_payload(
                 resource, po.C.byref(blob)
             ) == 0
             try:
-                assert blob.to_bytes() == b"".join(path.read_bytes() for path in payload_paths)
+                payload = blob.to_bytes()
+                if sample_name in ("docs.tar.xz", "docs-crc64.xz", "docs.tar.txz"):
+                    assert payload == (REPO / "tests" / "formats" / "tar" / "fixtures" / "docs.tar").read_bytes()
+                else:
+                    manifest_name = "no-extension" if sample_name.endswith(".bin") else sample_name[:-3]
+                    manifest_path = REPO / "tests" / "formats" / "xz" / "expected" / f"{manifest_name}.json"
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))["tree"][0]
+                    assert len(payload) == manifest["size"]
+                    assert hashlib.sha256(payload).hexdigest() == manifest["sha256"]
             finally:
                 peare_lib._lib.peare_blob_free(po.C.byref(blob))
         finally:

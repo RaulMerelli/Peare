@@ -1,6 +1,8 @@
 """Check independently generated Intel HEX samples through the Opener ABI."""
 
 import ctypes as C
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -21,7 +23,11 @@ SAMPLES = (
 @pytest.mark.parametrize(("name", "addresses", "start_address"), SAMPLES)
 def test_ihex_data_records_match_source(peare_lib, name, addresses, start_address):
     sample = FIXTURES / name
-    expected = (ROOT / "README.md").read_bytes()
+    expected_entries = json.loads(
+        (ROOT / "tests" / "formats" / "ihex" / "expected" / (name[:-4] + ".json"))
+        .read_text(encoding="utf-8")
+    )["tree"]
+    expected_entries = [entry for entry in expected_entries if entry["path"].endswith(".bin")]
     opener = peare_lib.open_file(str(sample))
     assert opener is not None
     with opener:
@@ -42,7 +48,8 @@ def test_ihex_data_records_match_source(peare_lib, name, addresses, start_addres
                     try:
                         kind = context.type_utf8.to_bytes()
                         if kind == b"IHEX_DATA":
-                            assert context.data_size == len(expected)
+                            expected_entry = expected_entries[len(data_entries)]
+                            assert context.data_size == expected_entry["size"]
                             address = context.data_offset
                         elif kind == b"IHEX_START_ADDRESS":
                             assert context.data_size == 4
@@ -61,7 +68,11 @@ def test_ihex_data_records_match_source(peare_lib, name, addresses, start_addres
                         peare_lib._lib.peare_blob_free(C.byref(blob))
                 finally:
                     peare_lib._lib.peare_resource_destroy(resource)
-        assert data_entries == [(address, expected) for address in addresses]
+        assert [address for address, _ in data_entries] == list(addresses)
+        assert [
+            (len(payload), hashlib.sha256(payload).hexdigest())
+            for _, payload in data_entries
+        ] == [(entry["size"], entry["sha256"]) for entry in expected_entries]
         address_type = "segment" if "segment" in name else "linear"
         expected_start = [] if start_address is None else [
             f"0x{start_address:08x} ({address_type})".encode()

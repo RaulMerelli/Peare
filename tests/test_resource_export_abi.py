@@ -45,6 +45,8 @@ def decoder(peare_decoder_path):
 
 def test_group_icon_exports_complete_multilayer_ico(peare_lib, decoder):
     sample = Path(__file__).parent / "formats" / "pe" / "fixtures" / "MerelliBattleShip.exe"
+    if not sample.is_file():
+        pytest.skip("Personal PE sample is not present in this checkout")
     opener = peare_lib.open_file(str(sample))
     assert opener is not None
     resources = {}

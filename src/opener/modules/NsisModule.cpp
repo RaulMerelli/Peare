@@ -218,7 +218,7 @@ enum class Method { Deflate, Bzip2, Lzma };
 
 struct FileItem {
     QString path;
-    quint32 position = 0;
+    quint32 position;
 };
 
 bool parseItems(const std::vector<std::uint8_t>& header, QVector<FileItem>* items)

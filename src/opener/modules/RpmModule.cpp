@@ -46,10 +46,10 @@ bool readAt(const fs::ByteStorePtr& source, std::int64_t offset, std::size_t siz
 }
 
 struct HeaderTag {
-    std::uint32_t tag = 0;
-    std::uint32_t type = 0;
-    std::uint32_t offset = 0;
-    std::uint32_t count = 0;
+    std::uint32_t tag;
+    std::uint32_t type;
+    std::uint32_t offset;
+    std::uint32_t count;
 };
 
 struct Header {
@@ -64,7 +64,7 @@ bool parseHeader(const fs::ByteStorePtr& source, std::int64_t start, Header* hea
         std::memcmp(intro, kHeaderMagic, sizeof(kHeaderMagic)) != 0) return false;
     const std::uint32_t indexCount = be32(intro + 8);
     const std::uint32_t dataSize = be32(intro + 12);
-    if (indexCount > 1'000'000 || dataSize > 256U * 1024U * 1024U) return false;
+    if (indexCount > 1000000 || dataSize > 256U * 1024U * 1024U) return false;
     const std::uint64_t indexBytes = std::uint64_t(indexCount) * 16;
     const std::uint64_t total = 16 + indexBytes + dataSize;
     if (total > std::uint64_t(source->capacity() - start)) return false;

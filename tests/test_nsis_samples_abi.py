@@ -14,6 +14,10 @@ DEFAULT_ROOT = (Path.home() / "Documents" / "inerente a" / "Peare" /
 SAMPLES = tuple(f"sample-{method}-{mode}.exe"
                 for method in ("zlib", "bzip2", "lzma")
                 for mode in ("nonsolid", "solid"))
+EXPECTED_SOURCE_FILES = {
+    "README.md": (2062, "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"),
+    "docs/SUPPORTED_FORMATS.md": (13205, "e0482f630081b2d9cb512d9e914bd90b7e9a0295b3807a4341bce2e0df77a1f5"),
+}
 
 
 def _tree_map(rows):
@@ -25,23 +29,17 @@ def _tree_map(rows):
 
 
 @pytest.mark.parametrize("name", SAMPLES)
-def test_nsis_compression_samples_match_source_files(peare_lib, name):
+def test_nsis_compression_samples_match_pinned_payloads(peare_lib, name):
     root = Path(os.environ.get("PEARE_NSIS_SAMPLE_ROOT", DEFAULT_ROOT / "samples"))
     sample = root / name
     if not sample.is_file():
         pytest.skip(f"Missing local NSIS validation sample: {sample}")
 
-    repo = Path(__file__).resolve().parents[1]
-    expected = {}
-    for relative in ("README.md", "docs/SUPPORTED_FORMATS.md"):
-        data = (repo / relative).read_bytes()
-        expected[relative] = (len(data), hashlib.sha256(data).hexdigest())
-
     opener = peare_lib.open_file(str(sample))
     assert opener is not None
     with opener:
         assert opener.container_format() == "NSIS"
-        assert _tree_map(opener.normalized_tree(recurse_containers=False)) == expected
+        assert _tree_map(opener.normalized_tree(recurse_containers=False)) == EXPECTED_SOURCE_FILES
 
 
 def test_official_nsis_installer_matches_7zip_extraction(peare_lib):
@@ -69,22 +67,16 @@ def test_official_nsis_installer_matches_7zip_extraction(peare_lib):
 
 
 @pytest.mark.parametrize("compression", ("zlib", "bzip2"))
-def test_official_nsis198_compiler_samples_match_source(peare_lib, compression):
+def test_official_nsis198_compiler_samples_match_pinned_payloads(peare_lib, compression):
     sample = DEFAULT_ROOT / "versions" / f"nsis198-{compression}.exe"
     if not sample.is_file():
         pytest.skip(f"Missing local NSIS 1.98 {compression} validation sample")
-
-    repo = Path(__file__).resolve().parents[1]
-    expected = {}
-    for relative in ("README.md", "docs/SUPPORTED_FORMATS.md"):
-        data = (repo / relative).read_bytes()
-        expected[relative] = (len(data), hashlib.sha256(data).hexdigest())
 
     opener = peare_lib.open_file(str(sample))
     assert opener is not None
     with opener:
         assert opener.container_format() == "NSIS"
-        assert _tree_map(opener.normalized_tree(recurse_containers=False)) == expected
+        assert _tree_map(opener.normalized_tree(recurse_containers=False)) == EXPECTED_SOURCE_FILES
 
 
 def test_official_nsis198_distribution_opens_through_abi(peare_lib):
@@ -103,7 +95,7 @@ def test_official_nsis198_distribution_opens_through_abi(peare_lib):
         assert "makensis.exe" in paths
 
 
-def test_official_nsis_release_corpus_matches_source_files(peare_lib):
+def test_official_nsis_release_corpus_matches_pinned_payloads(peare_lib):
     root = Path(os.environ.get("PEARE_NSIS_RELEASE_ROOT", DEFAULT_ROOT / "all-releases"))
     manifest_path = root / "generated-samples.json"
     if not manifest_path.is_file():
@@ -115,12 +107,8 @@ def test_official_nsis_release_corpus_matches_source_files(peare_lib):
     assert len(versions) == len(set(versions))
     assert len(releases) == 71
 
-    repo = Path(__file__).resolve().parents[1]
-    expected = {}
-    for relative in ("README.md", "docs/SUPPORTED_FORMATS.md"):
-        data = (repo / relative).read_bytes()
-        expected[relative.rsplit("/", 1)[-1]] = (
-            len(data), hashlib.sha256(data).hexdigest())
+    expected = {path.rsplit("/", 1)[-1]: value
+                for path, value in EXPECTED_SOURCE_FILES.items()}
 
     for release in releases:
         archive = root / release["archive"]

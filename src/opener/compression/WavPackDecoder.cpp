@@ -114,7 +114,9 @@ bool decodeWavPackZip(const std::uint8_t* data, std::size_t size,
         return false;
 
     try {
-        MemoryReader reader{data, std::int64_t(size), 0};
+        MemoryReader reader;
+        reader.data = data;
+        reader.size = std::int64_t(size);
         char error[128] = {};
         std::unique_ptr<WavpackContext, decltype(&WavpackCloseFile)> context(
             WavpackOpenFileInputEx64(const_cast<WavpackStreamReader64*>(&kReader),

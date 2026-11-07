@@ -15,7 +15,7 @@
 namespace peare {
 namespace {
 
-constexpr std::uint64_t kMaxEntries = 1'000'000;
+constexpr std::uint64_t kMaxEntries = 1000000;
 constexpr std::uint64_t kMaxName = 32768;
 constexpr std::uint32_t kDirectoryChunkSizeLimit = 1u << 20;
 
@@ -51,9 +51,9 @@ bool readBytes(const fs::ByteStorePtr& source, std::uint64_t offset,
 
 struct Entry {
     QString name;
-    std::uint64_t section = 0;
-    std::uint64_t offset = 0;
-    std::uint64_t size = 0;
+    std::uint64_t section;
+    std::uint64_t offset;
+    std::uint64_t size;
 };
 
 class Cursor {
