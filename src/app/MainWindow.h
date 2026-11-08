@@ -95,6 +95,7 @@ private:
     void openFile();
     void openFolder();
     void openFolderPath(const QString& path);
+    void showFileAssociationSettings();
     void addFilesToNewContainer();
     void addFilesToContainer(const QStringList& sources = QStringList(),
                              const QString& destination = QString());

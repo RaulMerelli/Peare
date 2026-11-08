@@ -1,7 +1,9 @@
 #include "MainWindow.h"
 
 #include <QApplication>
+#include <QAction>
 #include <QByteArray>
+#include <QDialog>
 #include <QDir>
 #include <QEventLoop>
 #include <QFont>
@@ -16,6 +18,7 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QToolButton>
+#include <QListWidget>
 #include <QTimer>
 
 #include <cstdio>
@@ -37,6 +40,48 @@ static bool isStartupIconTestRequested(int argc, char* argv[])
 {
     return argc >= 2 && QString::fromLocal8Bit(argv[1]) ==
         QStringLiteral("--startup-icons-test");
+}
+
+static bool isFileAssociationTestRequested(int argc, char* argv[])
+{
+    return argc >= 2 && QString::fromLocal8Bit(argv[1]) ==
+        QStringLiteral("--file-associations-test");
+}
+
+static int runFileAssociationTest(MainWindow& window, QApplication& app,
+                                  const QString& screenshotPath)
+{
+    QAction* action = window.findChild<QAction*>(QStringLiteral("fileAssociationsAction"));
+    if (!action) {
+        std::fprintf(stderr, "File associations toolbar action was not found.\n");
+        return 3;
+    }
+    QPixmap screenshot;
+    int categories = 0;
+    int extensions = 0;
+    QTimer::singleShot(0, &window, [&screenshot, &categories, &extensions] {
+        QDialog* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog)
+            return;
+        screenshot = dialog->grab();
+        const QListWidget* categoryList = dialog->findChild<QListWidget*>(
+            QStringLiteral("associationCategories"));
+        categories = categoryList ? categoryList->count() : 0;
+        for (const QListWidget* list : dialog->findChildren<QListWidget*>())
+            if (list->objectName() == QStringLiteral("associationExtensions"))
+                extensions += list->count();
+        dialog->accept();
+    });
+    action->trigger();
+    if (screenshot.isNull() || !screenshot.save(screenshotPath, "PNG") ||
+        categories != 10 || extensions < 100) {
+        std::fprintf(stderr, "File association dialog check failed: %d categories, %d extension choices.\n",
+            categories, extensions);
+        return 3;
+    }
+    std::printf("File association dialog passed: %d categories, %d extension choices.\n",
+        categories, extensions);
+    return 0;
 }
 
 static int runPreview(MainWindow& window, QApplication& app, const QString& sourcePath,
@@ -178,6 +223,7 @@ int main(int argc, char* argv[])
     const bool previewMode = isPreviewModeRequested(argc, argv);
     const bool writerTestMode = isWriterTestRequested(argc, argv);
     const bool startupIconTestMode = isStartupIconTestRequested(argc, argv);
+    const bool fileAssociationTestMode = isFileAssociationTestRequested(argc, argv);
     if (previewMode && argc != 5) {
         std::fprintf(stderr,
                      "Usage: Peare.exe --preview-resource <source> <tree-path-or-empty> <preview.png>\n"
@@ -193,7 +239,7 @@ int main(int argc, char* argv[])
         std::fprintf(stderr, "Set PEARE_ENABLE_GUI_WRITER_TEST=1 to enable GUI writer tests.\n");
         return 2;
     }
-    if (previewMode || writerTestMode || startupIconTestMode) {
+    if (previewMode || writerTestMode || startupIconTestMode || fileAssociationTestMode) {
         qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
 #ifdef Q_OS_WIN
         if (qEnvironmentVariableIsEmpty("QT_QPA_FONTDIR")) {
@@ -211,11 +257,19 @@ int main(int argc, char* argv[])
     QApplication::setOrganizationName(QStringLiteral("Raul Merelli"));
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/peare/icon.ico")));
 #ifdef Q_OS_WIN
-    if (previewMode || writerTestMode || startupIconTestMode)
+    if (previewMode || writerTestMode || startupIconTestMode || fileAssociationTestMode)
         app.setFont(QFont(QStringLiteral("Segoe UI"), 9));
 #endif
 
     MainWindow window;
+    if (fileAssociationTestMode) {
+        if (argc != 3) {
+            std::fprintf(stderr,
+                         "Usage: Peare.exe --file-associations-test <screenshot.png>\n");
+            return 2;
+        }
+        return runFileAssociationTest(window, app, app.arguments().at(2));
+    }
     if (previewMode) {
         return runPreview(window, app, app.arguments().at(2), app.arguments().at(3),
                           app.arguments().at(4));

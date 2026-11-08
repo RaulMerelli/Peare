@@ -160,8 +160,8 @@ bool Win12MonochromeResource::IsValidHeaderAt(
         return false;
     }
 
-    const int minimumStride = (width + 7) / 8;
-    if (bytesPerLine < minimumStride || (bytesPerLine & 1) != 0)
+    const int alignedStride = ((width + 15) / 16) * 2;
+    if (bytesPerLine != alignedStride)
         return false;
 
     const qint64 planeSize = qint64(bytesPerLine) * height;

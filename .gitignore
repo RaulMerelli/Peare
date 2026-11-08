@@ -59,6 +59,7 @@ __pycache__/
 
 # Peare test artifacts; keep this working area out of version control.
 /tmp/
+/tests/output/
 
 # Generated Autotools files in the vendored NTFS-3G source tree.
 /src/writer/third_party/ntfs-3g/autom4te.cache/

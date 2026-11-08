@@ -684,6 +684,7 @@
     "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
     "tree_path": "720k/x86DSK01.img/freedos.009",
     "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expect_no_images": true,
     "expected_size": 60416,
     "expected_sha256": "ef4e9cfb7ce03ab2c922baccf8a35cbc1ba1e25181462a2c2abe6674b7726dfd"
   },
@@ -724,6 +725,7 @@
     "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
     "tree_path": "720k/x86DSK02.img/freedos.013",
     "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expect_no_images": true,
     "expected_size": 60416,
     "expected_sha256": "1739cda48b4c7dd3872ec0a095f750aa0df1bf52ae361c53d46051639c865b87"
   },
@@ -732,6 +734,7 @@
     "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
     "tree_path": "720k/x86DSK02.img/freedos.014",
     "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expect_no_images": true,
     "expected_size": 60416,
     "expected_sha256": "d14384d5f7bed30e48007d4291d38621d3e76228adc3ad3894ba54d2f3cd3380"
   },
@@ -740,6 +743,7 @@
     "source": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
     "tree_path": "720k/x86DSK02.img/freedos.015",
     "sample_id": "tests/formats/floppy/fixtures/FD14-Floppy.zip",
+    "expect_no_images": true,
     "expected_size": 60416,
     "expected_sha256": "45dd1b9b85788e76a6312c00290cbb5cea63687e60dc7f0d266c279a4ef06a15"
   },
@@ -864,6 +868,30 @@
     "expected_sha256": "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
   },
   {
+    "name": "leaf-ihex-extended-linear-address",
+    "source": "tests/formats/ihex/fixtures/README-extended-linear.hex",
+    "tree_path": "IHEX_START_ADDRESS/0x00100000 (linear)",
+    "sample_id": "tests/formats/ihex/fixtures/README-extended-linear.hex",
+    "expected_size": 4,
+    "expected_sha256": "2385b2772b668a99005ca6136ff00311e78c8c8a97b302c9548fe08fe808dd3d"
+  },
+  {
+    "name": "leaf-ihex-extended-segment-address",
+    "source": "tests/formats/ihex/fixtures/README-extended-segment.hex",
+    "tree_path": "IHEX_START_ADDRESS/0x00010000 (segment)",
+    "sample_id": "tests/formats/ihex/fixtures/README-extended-segment.hex",
+    "expected_size": 4,
+    "expected_sha256": "097328e8c957de2428283954f6a1ee8ff7ad7def12e100a600178407f5decf24"
+  },
+  {
+    "name": "leaf-ihex-top-address-record",
+    "source": "tests/formats/ihex/fixtures/README-top-address.hex",
+    "tree_path": "IHEX_START_ADDRESS/0xffff0000 (linear)",
+    "sample_id": "tests/formats/ihex/fixtures/README-top-address.hex",
+    "expected_size": 4,
+    "expected_sha256": "08efea1c0957a5a1fe019e6edb21fdc9fbe5de2213487eab7a05e06eca1c9784"
+  },
+  {
     "name": "leaf-lzma-README.md.lzma-0-README.md",
     "source": "tests/formats/lzma/fixtures/README.md.lzma",
     "tree_path": "README.md",
@@ -874,7 +902,7 @@
   {
     "name": "leaf-pe-MerelliBattleShip.exe-0-.reloc",
     "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
-    "tree_path": "PE section .reloc",
+    "tree_path": ".reloc",
     "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
     "expected_size": 512,
     "expected_sha256": "deafa380e83542a8c1f3ed69afb803da4cffee4ae11b7efe5e54bfc10e080b0a"
@@ -882,7 +910,7 @@
   {
     "name": "leaf-pe-MerelliBattleShip.exe-1-.rsrc",
     "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
-    "tree_path": "PE section .rsrc",
+    "tree_path": ".rsrc",
     "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
     "expected_size": 111104,
     "expected_sha256": "c57fe2d2b19e36d2bb0ffb7eaae133dcbbafb83afa782c40dc7f838ba0e5fa7b"
@@ -890,7 +918,7 @@
   {
     "name": "leaf-pe-MerelliBattleShip.exe-2-.rsrc-RT_GROUP_ICON-32512-0-32512",
     "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
-    "tree_path": ".rsrc/RT_GROUP_ICON/#32512/#0",
+    "tree_path": ".rsrc/RT_GROUP_ICON/#32512/#0/#32512",
     "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
     "expected_size": 90,
     "expected_sha256": "853bdf0220e1c964f8d1f5d341b396404a7ad320f177c11ae884df6ab33d0199",
@@ -899,7 +927,7 @@
   {
     "name": "leaf-pe-MerelliBattleShip.exe-3-.rsrc-RT_ICON-1-0-1",
     "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
-    "tree_path": ".rsrc/RT_ICON/#1/#0",
+    "tree_path": ".rsrc/RT_ICON/#1/#0/#1",
     "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
     "expected_size": 9517,
     "expected_sha256": "d59c1eb229043dee0f6fd478363c50c3b4d10db6527bc5192e5ca6d31cacca66",
@@ -908,7 +936,7 @@
   {
     "name": "leaf-pe-MerelliBattleShip.exe-4-.rsrc-RT_ICON-2-0-2",
     "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
-    "tree_path": ".rsrc/RT_ICON/#2/#0",
+    "tree_path": ".rsrc/RT_ICON/#2/#0/#2",
     "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
     "expected_size": 67624,
     "expected_sha256": "48585884e8853c2bd58291b77cee72a3fdf8ea95ef27b4ae38ae684f11db24f6",
@@ -917,7 +945,7 @@
   {
     "name": "leaf-pe-MerelliBattleShip.exe-5-.rsrc-RT_ICON-3-0-3",
     "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
-    "tree_path": ".rsrc/RT_ICON/#3/#0",
+    "tree_path": ".rsrc/RT_ICON/#3/#0/#3",
     "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
     "expected_size": 16936,
     "expected_sha256": "e0592ace4326c353ff29f721c8e23291e23600d72e4420b8b5e0294de916f01b",
@@ -926,7 +954,7 @@
   {
     "name": "leaf-pe-MerelliBattleShip.exe-6-.rsrc-RT_ICON-4-0-4",
     "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
-    "tree_path": ".rsrc/RT_ICON/#4/#0",
+    "tree_path": ".rsrc/RT_ICON/#4/#0/#4",
     "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
     "expected_size": 9640,
     "expected_sha256": "d6cfcfac4f932e34544caa01fbeda194dc64ad8a497fde8728e08233b9a1c7d6",
@@ -935,7 +963,7 @@
   {
     "name": "leaf-pe-MerelliBattleShip.exe-7-.rsrc-RT_ICON-5-0-5",
     "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
-    "tree_path": ".rsrc/RT_ICON/#5/#0",
+    "tree_path": ".rsrc/RT_ICON/#5/#0/#5",
     "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
     "expected_size": 4264,
     "expected_sha256": "8a2909965104334b939b43b9e80a8fbf99b086501a5f9488d6f4b17dfc79f864",
@@ -944,7 +972,7 @@
   {
     "name": "leaf-pe-MerelliBattleShip.exe-8-.rsrc-RT_ICON-6-0-6",
     "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
-    "tree_path": ".rsrc/RT_ICON/#6/#0",
+    "tree_path": ".rsrc/RT_ICON/#6/#0/#6",
     "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
     "expected_size": 1128,
     "expected_sha256": "f1a2e7c78b3079735634e4a35660fe55628b70007fd406cd47bb3017eeaa6fb4",
@@ -953,7 +981,7 @@
   {
     "name": "leaf-pe-MerelliBattleShip.exe-9-.rsrc-RT_MANIFEST-1-0-1",
     "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
-    "tree_path": ".rsrc/RT_MANIFEST/#1/#0",
+    "tree_path": ".rsrc/RT_MANIFEST/#1/#0/#1",
     "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
     "expected_size": 490,
     "expected_sha256": "539dc26a14b6277e87348594ab7d6e932d16aabb18612d77f29fe421a9f1d46a"
@@ -961,7 +989,7 @@
   {
     "name": "leaf-pe-MerelliBattleShip.exe-10-.rsrc-RT_VERSION-1-0-1",
     "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
-    "tree_path": ".rsrc/RT_VERSION/#1/#0",
+    "tree_path": ".rsrc/RT_VERSION/#1/#0/#1",
     "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
     "expected_size": 860,
     "expected_sha256": "63b2beb483eec39784aca597767c36d9e26fe450c544dd97c866183062c4373f"
@@ -969,7 +997,7 @@
   {
     "name": "leaf-pe-MerelliBattleShip.exe-11-.text",
     "source": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
-    "tree_path": "PE section .text",
+    "tree_path": ".text",
     "sample_id": "tests/formats/pe/fixtures/MerelliBattleShip.exe",
     "expected_size": 374272,
     "expected_sha256": "2c8940413e499089a7b535a7552755ee2a3f99f7938e01a245a6cb6d1f212ff3"

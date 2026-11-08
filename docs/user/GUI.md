@@ -94,7 +94,7 @@ that entry's parent folder. In local folder mode, the same rule copies files.
 Use **Edit > New folder** or **Edit > New file** to create entries when the
 Writer reports those operations. Select an entry and use **Rename**, **Delete**,
 or **Replace file** when the Writer reports those operations. The same commands
-are available in the entry context menu. ZIP, TAR, and supported FAT targets
+are available in the context menu. ZIP, TAR, and supported FAT targets
 expose these operations.
 The GUI reads operation support from the Writer ABI. Disk images with multiple
 FAT volumes prompt for the target volume before an update.
@@ -135,6 +135,19 @@ Deleting a symbolic link or junction does not follow its target.
 ## Layout
 
 Use **View > Navigation pane** and **View > Preview pane** to show or hide either side of the splitter. Drag the divider to resize the panes.
+
+## File associations
+
+Use **File associations** on the toolbar to manage extensions by category.
+On Linux, selected types become per-user defaults. Clearing a type restores its
+previous default.
+
+On Windows, Peare registers the selected types in Windows Default Apps and opens
+that system page. Select Peare there to change the defaults. Peare does not edit
+the Open with lists.
+
+Android controls file handlers through system settings. Android does not let an
+app assign itself as the default handler. Other platforms need native support.
 
 ## Native application menu
 

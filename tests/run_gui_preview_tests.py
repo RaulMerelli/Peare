@@ -48,6 +48,7 @@ def run_case(executable, output_dir, timeout, case, child_env):
     source_text = case["source"]
     tree_path = case["tree_path"]
     min_images = int(case.get("min_images", 0))
+    expect_no_images = bool(case.get("expect_no_images", False))
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
         raise ValueError(f"invalid case name: {name}")
     if min_images < 0:
@@ -72,6 +73,8 @@ def run_case(executable, output_dir, timeout, case, child_env):
     if not match:
         raise RuntimeError(f"{name}: Peare did not report preview image metrics")
     image_count = int(match.group(1))
+    if expect_no_images and image_count != 0:
+        raise RuntimeError(f"{name}: expected no decoded images, got {image_count}")
     if image_count < min_images:
         raise RuntimeError(
             f"{name}: expected at least {min_images} preview images, got {image_count}")

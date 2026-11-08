@@ -895,6 +895,8 @@ set(PEARE_APP_SOURCES
     src/app/main.cpp
     src/app/MainWindow.cpp
     src/app/MainWindow.h
+    src/app/FileAssociationSettingsDialog.cpp
+    src/app/FileAssociationSettingsDialog.h
     src/app/PeareApi.h
     src/app/PeareApi.cpp
     src/app/IconFromExt.h
@@ -925,8 +927,14 @@ target_include_directories(Peare PRIVATE
 )
 target_link_libraries(Peare PRIVATE PeareOpener PeareDecoder PeareWriter ${PEARE_QT_WIDGETS})
 if(WIN32)
-    target_link_libraries(Peare PRIVATE shell32)
+    target_link_libraries(Peare PRIVATE shell32 advapi32)
 endif()
+
+add_custom_command(TARGET Peare POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/filetypes"
+        "$<TARGET_FILE_DIR:Peare>/filetypes"
+)
 
 if(ANDROID AND QT_VERSION_MAJOR GREATER_EQUAL 6)
     set_property(TARGET Peare PROPERTY QT_ANDROID_PACKAGE_NAME "org.peare.app")
@@ -940,6 +948,7 @@ install(TARGETS PeareOpener PeareDecoder PeareWriter
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
+install(DIRECTORY resources/filetypes DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES
     src/decoder/api/peare/peare.h
     src/opener/api/peare/peare_types.h

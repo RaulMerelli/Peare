@@ -3,4 +3,13 @@
     <file alias="logo.png">peare.png</file>
     <file alias="icon.ico">peare.ico</file>
   </qresource>
+  <qresource prefix="/filetypes">
+    <file alias="archive.ico">filetypes/archive.ico</file>
+    <file alias="disk.ico">filetypes/disk.ico</file>
+    <file alias="floppy.ico">filetypes/floppy.ico</file>
+    <file alias="font.ico">filetypes/font.ico</file>
+    <file alias="image.ico">filetypes/image.ico</file>
+    <file alias="optical.ico">filetypes/optical.ico</file>
+    <file alias="text.ico">filetypes/text.ico</file>
+  </qresource>
 </RCC>

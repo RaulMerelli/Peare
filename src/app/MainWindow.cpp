@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "FileAssociationSettingsDialog.h"
 #include <functional>
 #include "IconFromExt.h"
 #include "peare/peare_writer.h"
@@ -49,6 +50,7 @@
 #include <QStyle>
 #include <QSizePolicy>
 #include <QToolButton>
+#include <QToolBar>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 #include <QTimer>
@@ -566,6 +568,21 @@ void MainWindow::buildMenus() {
     helpMenu->addAction(issueAction);
     helpMenu->addSeparator();
     helpMenu->addAction(aboutAction);
+
+    QToolBar* toolbar = addToolBar(QStringLiteral("Main"));
+    toolbar->setObjectName(QStringLiteral("mainToolbar"));
+    QAction* associationsAction = toolbar->addAction(
+        style()->standardIcon(QStyle::SP_FileDialogDetailedView),
+        QStringLiteral("File associations"));
+    associationsAction->setObjectName(QStringLiteral("fileAssociationsAction"));
+    associationsAction->setToolTip(QStringLiteral("Manage file associations"));
+    connect(associationsAction, &QAction::triggered,
+            this, &MainWindow::showFileAssociationSettings);
+}
+
+void MainWindow::showFileAssociationSettings() {
+    FileAssociationSettingsDialog dialog(this);
+    dialog.exec();
 }
 
 void MainWindow::buildCentralUi() {
@@ -899,13 +916,6 @@ bool MainWindow::inspectOffscreenPreview(OffscreenPreviewDiagnostics* diagnostic
     }
     diagnostics->selectedType = selected->data(0, TypeRole).toString();
     const QString type = diagnostics->selectedType;
-    bool hasVisibleChildren = false;
-    for (int child = 0; child < selected->childCount(); ++child) {
-        if (!selected->child(child)->data(0, PlaceholderRole).toBool()) {
-            hasVisibleChildren = true;
-            break;
-        }
-    }
     pearegui::Session* owner = sessionOf(selected);
     pearegui::Resource resource = owner
         ? owner->openResource(selected->data(0, FolderIndexRole).toULongLong(),
@@ -918,7 +928,7 @@ bool MainWindow::inspectOffscreenPreview(OffscreenPreviewDiagnostics* diagnostic
     const pearegui::ResourceContext context = resource.context();
     diagnostics->dataSize = context.dataSize;
     diagnostics->leaf = !isDirectoryEntryType(type) && !context.isContainer &&
-                        !selected->data(0, PendingRole).toBool() && !hasVisibleChildren;
+                        !selected->data(0, PendingRole).toBool();
     if (!diagnostics->leaf) {
         diagnostics->error = QStringLiteral("The selected GUI resource is not a leaf.");
         return false;
@@ -2407,7 +2417,8 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
                     if (sibling->text(0) == segment &&
                         sibling->data(0, NameRole).toString() == segment &&
                         (!sibling->data(0, TypeRole).isValid() ||
-                         isDirectoryEntryType(sibling->data(0, TypeRole).toString()))) {
+                         isDirectoryEntryType(sibling->data(0, TypeRole).toString()) ||
+                         sibling->data(0, TypeRole).toString() == QStringLiteral("PE_SECTION"))) {
                         existing = sibling;
                         break;
                     }
@@ -2436,11 +2447,11 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
             QString label = context.identifier;
             if (context.type == QStringLiteral("PE_HEADERS"))
                 label = QStringLiteral("PE headers");
-            else if (context.type == QStringLiteral("PE_SECTION"))
-                label = QStringLiteral("PE section %1").arg(context.identifier);
             QStringList hierarchyPath = folderType.split(QChar(0x1f), Qt::SkipEmptyParts);
             const bool resourceAtPathLeaf = !hierarchyPath.isEmpty() &&
-                hierarchyPath.last() == context.language;
+                hierarchyPath.last() == context.language &&
+                !(context.containerFormat == PEARE_CONTAINER_PE &&
+                  hierarchyPath.first() == QStringLiteral(".rsrc"));
             if (!resourceAtPathLeaf && hasVisibleLanguage(context.language))
                 label += QStringLiteral(" [%1]").arg(context.language);
             auto* typeItem = ensurePath(hierarchyPath);
@@ -3369,7 +3380,7 @@ void MainWindow::showSelectedResource() {
         preview.images.clear();
         preview.pngs.clear();
         preview.texts.clear();
-        if (item->childCount() > 0) {
+        if (navigationContainer) {
             // Expandable container resources are navigation nodes.  Showing their
             // raw bytes as a fallback is misleading when an Opener already
             // exposes the contained payloads below them.

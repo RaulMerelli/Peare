@@ -106,6 +106,9 @@ jobs:
           copy LICENSE dist\ >nul
           copy COPYRIGHT.md dist\ >nul
           copy THIRDPARTY.md dist\ >nul
+          xcopy build\Release\filetypes dist\filetypes\ /E /I /Y >nul
+          if errorlevel 2 exit /b 1
+          if not exist dist\filetypes\archive.ico (echo File association icons were not staged & exit /b 1)
           dir dist
 
       - name: Run Opener tests
@@ -118,30 +121,6 @@ jobs:
           PEARE_WRITER_LIB: dist\PeareWriter.dll
           PEARE_GUI_EXE: dist\Peare.exe
           QT_QPA_PLATFORM_PLUGIN_PATH: build\test-plugins\platforms
-
-      - name: Build Windows installer
-        shell: pwsh
-        run: |
-          choco install innosetup --version=6.7.1 --yes --no-progress
-          $version = "1.0.0"
-          if ($env:GITHUB_REF_NAME.StartsWith("v")) { $version = $env:GITHUB_REF_NAME.Substring(1) }
-          $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (!(Test-Path -LiteralPath $compiler)) { throw "Inno Setup compiler was not installed." }
-          New-Item -ItemType Directory -Path installer-output -Force | Out-Null
-          $sourceDir = Join-Path $PWD "dist"
-          $outputDir = Join-Path $PWD "installer-output"
-          Push-Location packaging\windows
-          & $compiler "/DAppVersion=$version" "/DSourceDir=$sourceDir" "/DOutputDir=$outputDir" Peare.iss
-          $compileExitCode = $LASTEXITCODE
-          Pop-Location
-          if ($compileExitCode -ne 0) { exit $compileExitCode }
-          Get-ChildItem installer-output
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: peare-windows-installer
-          path: installer-output/*.exe
-          if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
@@ -253,11 +232,9 @@ jobs:
           ( cd artifacts/peare-linux-x64   && tar czf "$GITHUB_WORKSPACE/release/peare-${GITHUB_REF_NAME}-linux-x64.tar.gz" . )
           ( cd artifacts/peare-windows-x64 && zip -r  "$GITHUB_WORKSPACE/release/peare-${GITHUB_REF_NAME}-windows-x64.zip" . )
           cp artifacts/peare-android-arm64/android-build-debug.apk "$GITHUB_WORKSPACE/release/peare-${GITHUB_REF_NAME}-android-arm64.apk"
-          cp artifacts/peare-windows-installer/Peare-Setup-*.exe "$GITHUB_WORKSPACE/release/peare-${GITHUB_REF_NAME}-windows-setup.exe"
           cp "release/peare-${GITHUB_REF_NAME}-linux-x64.tar.gz" release/peare-linux-x64.tar.gz
           cp "release/peare-${GITHUB_REF_NAME}-windows-x64.zip" release/peare-windows-x64.zip
           cp "release/peare-${GITHUB_REF_NAME}-android-arm64.apk" release/peare-android-arm64.apk
-          cp "release/peare-${GITHUB_REF_NAME}-windows-setup.exe" release/peare-windows-setup.exe
           ls -la release
 
       - name: Create GitHub Release
@@ -287,7 +264,6 @@ jobs:
           ( cd artifacts/peare-linux-x64 && tar czf "$GITHUB_WORKSPACE/release/peare-linux-x64.tar.gz" . )
           ( cd artifacts/peare-windows-x64 && zip -r "$GITHUB_WORKSPACE/release/peare-windows-x64.zip" . )
           cp artifacts/peare-android-arm64/android-build-debug.apk release/peare-android-arm64.apk
-          cp artifacts/peare-windows-installer/Peare-Setup-*.exe release/peare-windows-setup.exe
 
       - name: Update latest CI release
         env:

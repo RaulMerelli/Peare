@@ -11,7 +11,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/RaulMerelli/Peare/releases/download/ci-latest/peare-windows-setup.exe"><img alt="Latest Windows installer" src="https://img.shields.io/badge/Install-Windows-2f6f9f?style=for-the-badge"></a>
   <a href="https://github.com/RaulMerelli/Peare/releases/download/ci-latest/peare-windows-x64.zip"><img alt="Latest portable Windows build" src="https://img.shields.io/badge/Portable-Windows-527fa2?style=for-the-badge"></a>
   <a href="https://github.com/RaulMerelli/Peare/releases/download/ci-latest/peare-linux-x64.tar.gz"><img alt="Latest Linux CI build" src="https://img.shields.io/badge/Latest_CI-Linux-4b7d52?style=for-the-badge"></a>
   <a href="https://github.com/RaulMerelli/Peare/releases/download/ci-latest/peare-android-arm64.apk"><img alt="Latest Android CI build" src="https://img.shields.io/badge/Latest_CI-Android-3c8b52?style=for-the-badge"></a>
@@ -37,7 +36,7 @@ every variant is production-ready.
 ## Build and use
 
 - [Build instructions](docs/development/BUILDING.md)
-- [Install Peare](docs/user/INSTALLING.md)
+- [Run Peare](docs/user/RUNNING.md)
 - [GUI guide](docs/user/GUI.md)
 - [AI agent use](docs/agents/AI_AGENT_USAGE.md)
 - [Test guide](docs/testing/TESTING.md)
