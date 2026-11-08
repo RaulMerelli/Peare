@@ -120,7 +120,11 @@ struct Table {
 };
 
 Table readTable(const std::uint8_t* p) {
-    return {readLe32(p), readLe32(p + 4), readLe32(p + 8)};
+    Table table;
+    table.offset = readLe32(p);
+    table.count = readLe32(p + 4);
+    table.entrySize = readLe32(p + 8);
+    return table;
 }
 
 bool validTable(const Table& table, std::uint32_t tablesSize,
@@ -294,7 +298,11 @@ bool parseMetadata(const ByteStorePtr& source, const Geometry& geometry,
                 }
             }
             if (!valid) break;
-            parsed.push_back({name, attributes, std::make_shared<ConcatStore>(std::move(parts))});
+            AndroidLogicalPartition logicalPartition;
+            logicalPartition.name = name;
+            logicalPartition.attributes = attributes;
+            logicalPartition.content = std::make_shared<ConcatStore>(std::move(parts));
+            parsed.push_back(std::move(logicalPartition));
         }
         if (valid) {
             *partitions = std::move(parsed);

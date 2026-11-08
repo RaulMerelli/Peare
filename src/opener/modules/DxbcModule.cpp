@@ -117,8 +117,12 @@ ModulePtr DxbcModule::open(const fs::ByteStorePtr& source, const QString& source
             module->info_.error = QStringLiteral("DXBC chunk extends beyond the container");
             return ModulePtr(std::move(module));
         }
-        chunks.push_back({offset, size,
-            QByteArray(reinterpret_cast<const char*>(chunkHeader), 4), i});
+        Chunk chunk;
+        chunk.offset = offset;
+        chunk.size = size;
+        chunk.type = QByteArray(reinterpret_cast<const char*>(chunkHeader), 4);
+        chunk.index = i;
+        chunks.push_back(std::move(chunk));
         ranges.emplace_back(offset, end);
     }
 
