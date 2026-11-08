@@ -1,4 +1,4 @@
-#include "Lzx_frontends.h"
+#include "lzx_frontends.h"
 
 #include <algorithm>
 #include <cstddef>

@@ -1,7 +1,7 @@
 #include "XexModule.h"
 
 #include "Crypto.h"
-#include "peare/Lzx_frontends.h"
+#include "peare/lzx_frontends.h"
 
 #include <QFile>
 #include <QCryptographicHash>

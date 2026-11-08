@@ -1,7 +1,7 @@
 #include "ChmModule.h"
 
 #include "Compat.h"
-#include "../compression/peare/Lzx_frontends.h"
+#include "../compression/peare/lzx_frontends.h"
 #include "../fs/DiscStore.h"
 #include "../fs/QFileByteStore.h"
 

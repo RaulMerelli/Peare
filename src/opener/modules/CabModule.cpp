@@ -3,7 +3,7 @@
 #include "DeflateDecoder.h"
 #include "../compression/QuantumCabDecoder.h"
 
-#include "peare/Lzx_frontends.h"
+#include "peare/lzx_frontends.h"
 #include "../fs/QFileByteStore.h"
 
 #include <QStringList>
