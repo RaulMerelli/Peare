@@ -103,6 +103,7 @@ peare_container_format toCFormat(peare::ModuleFormat f)
     case peare::ModuleFormat::WIM: return PEARE_CONTAINER_WIM;
     case peare::ModuleFormat::FAT: return PEARE_CONTAINER_FAT;
     case peare::ModuleFormat::UDF: return PEARE_CONTAINER_UDF;
+    case peare::ModuleFormat::UFS: return PEARE_CONTAINER_UFS;
     case peare::ModuleFormat::EXFAT: return PEARE_CONTAINER_EXFAT;
     case peare::ModuleFormat::VMDK: return PEARE_CONTAINER_VMDK;
     case peare::ModuleFormat::VHD: return PEARE_CONTAINER_VHD;
@@ -128,6 +129,13 @@ peare_container_format toCFormat(peare::ModuleFormat f)
     case peare::ModuleFormat::BOOTCONFIG: return PEARE_CONTAINER_BOOTCONFIG;
     case peare::ModuleFormat::CAB: return PEARE_CONTAINER_CAB;
     case peare::ModuleFormat::RAW_DISK: return PEARE_CONTAINER_RAW_DISK;
+    case peare::ModuleFormat::ANDROID_SPARSE: return PEARE_CONTAINER_ANDROID_SPARSE;
+    case peare::ModuleFormat::ANDROID_SUPER: return PEARE_CONTAINER_ANDROID_SUPER;
+    case peare::ModuleFormat::XNB: return PEARE_CONTAINER_XNB;
+    case peare::ModuleFormat::DXBC: return PEARE_CONTAINER_DXBC;
+    case peare::ModuleFormat::NUP: return PEARE_CONTAINER_NUP;
+    case peare::ModuleFormat::XDBF: return PEARE_CONTAINER_XDBF;
+    case peare::ModuleFormat::ANDROID_APK: return PEARE_CONTAINER_ANDROID_APK;
     case peare::ModuleFormat::ZIP: return PEARE_CONTAINER_ZIP;
     case peare::ModuleFormat::TAR: return PEARE_CONTAINER_TAR;
     case peare::ModuleFormat::ASAR: return PEARE_CONTAINER_ASAR;

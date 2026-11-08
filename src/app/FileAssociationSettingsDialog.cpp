@@ -22,7 +22,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 
-#ifdef Q_OS_LINUX
+#if (defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID)) || defined(Q_OS_MACOS)
 #include <QMimeDatabase>
 #include <QMimeType>
 #include <QSet>
@@ -32,9 +32,14 @@
 #define NOMINMAX
 #include <windows.h>
 #include <shellapi.h>
+#include <shlwapi.h>
 #include <shlobj.h>
 #include <string>
 #include <vector>
+#endif
+
+#ifdef Q_OS_MACOS
+#include <CoreServices/CoreServices.h>
 #endif
 
 namespace {
@@ -168,7 +173,16 @@ bool registerWindowsProgId(const Category& category) {
 }
 
 bool hasWindowsAssociation(const Category& category, const QString& extension) {
-    return registryString(windowsCapabilitiesKey(), QStringLiteral(".") + extension) ==
+    const std::wstring fileExtension = (QStringLiteral(".") + extension).toStdWString();
+    DWORD characterCount = 0;
+    const HRESULT sizeResult = AssocQueryStringW(ASSOCF_NONE, ASSOCSTR_PROGID,
+        fileExtension.c_str(), nullptr, nullptr, &characterCount);
+    if (sizeResult != S_FALSE || characterCount == 0)
+        return false;
+    std::vector<wchar_t> progId(characterCount, L'\0');
+    const HRESULT queryResult = AssocQueryStringW(ASSOCF_NONE, ASSOCSTR_PROGID,
+        fileExtension.c_str(), nullptr, progId.data(), &characterCount);
+    return SUCCEEDED(queryResult) && QString::fromWCharArray(progId.data()) ==
         windowsProgId(category);
 }
 
@@ -178,7 +192,6 @@ int applyWindowsAssociations(const QList<QPair<const Category*, QListWidget*>>& 
     for (const auto& entry : lists) {
         const Category& category = *entry.first;
         QListWidget* list = entry.second;
-        bool categoryUsed = false;
         for (int i = 0; i < list->count(); ++i) {
             QListWidgetItem* item = list->item(i);
             const QString extension = item->data(Qt::UserRole).toString();
@@ -191,17 +204,9 @@ int applyWindowsAssociations(const QList<QPair<const Category*, QListWidget*>>& 
                     continue;
                 }
                 ++selected;
-                categoryUsed = true;
             } else if (!deleteRegistryValue(windowsCapabilitiesKey(), keyName)) {
                 ++failures;
             }
-        }
-        if (!categoryUsed) {
-            const std::wstring classKey = (QStringLiteral("Software\\Classes\\") +
-                windowsProgId(category)).toStdWString();
-            const LONG result = RegDeleteTreeW(HKEY_CURRENT_USER, classKey.c_str());
-            if (result != ERROR_SUCCESS && result != ERROR_FILE_NOT_FOUND)
-                ++failures;
         }
     }
     if (selected) {
@@ -261,14 +266,14 @@ QString mimePreferenceKey(const QString& mime) {
     return key;
 }
 
-bool hasLinuxDefault(const Category& category, const QString& extension) {
+bool hasLinuxDefault(const QString& extension) {
     const QString mime = mimeForExtension(extension);
     if (mime.isEmpty())
         return false;
     QSettings mimeApps(mimeAppsFile(), QSettings::IniFormat);
     mimeApps.beginGroup(QStringLiteral("Default Applications"));
     return mimeApps.value(mime).toString().split(QLatin1Char(';'), Qt::SkipEmptyParts)
-        .contains(linuxDesktopId);
+        .value(0) == linuxDesktopId;
 }
 
 bool writeDesktopFile(const QStringList& mimeTypes) {
@@ -348,6 +353,110 @@ int applyLinuxAssociations(const QList<QPair<const Category*, QListWidget*>>& li
     return selected.size();
 }
 #endif
+
+#ifdef Q_OS_MACOS
+const QString macBundleId = QStringLiteral("org.peare.app");
+
+CFStringRef toCFString(const QString& value) {
+    return CFStringCreateWithCharacters(kCFAllocatorDefault,
+        reinterpret_cast<const UniChar*>(value.utf16()), CFIndex(value.size()));
+}
+
+QString utiForExtension(const QString& extension) {
+    CFStringRef tag = toCFString(extension);
+    if (!tag)
+        return {};
+    CFStringRef uti = UTTypeCreatePreferredIdentifierForTag(
+        kUTTagClassFilenameExtension, tag, nullptr);
+    CFRelease(tag);
+    if (!uti)
+        return {};
+    const CFIndex length = CFStringGetLength(uti);
+    QString value(length, Qt::Uninitialized);
+    CFStringGetCharacters(uti, CFRangeMake(0, length),
+        reinterpret_cast<UniChar*>(value.data()));
+    CFRelease(uti);
+    return value;
+}
+
+QString macDefaultHandler(const QString& uti) {
+    CFStringRef contentType = toCFString(uti);
+    if (!contentType)
+        return {};
+    CFStringRef handler = LSCopyDefaultRoleHandlerForContentType(
+        contentType, kLSRolesAll);
+    CFRelease(contentType);
+    if (!handler)
+        return {};
+    const CFIndex length = CFStringGetLength(handler);
+    QString value(length, Qt::Uninitialized);
+    CFStringGetCharacters(handler, CFRangeMake(0, length),
+        reinterpret_cast<UniChar*>(value.data()));
+    CFRelease(handler);
+    return value;
+}
+
+bool hasMacDefault(const QString& extension) {
+    const QString uti = utiForExtension(extension);
+    return !uti.isEmpty() && macDefaultHandler(uti) == macBundleId;
+}
+
+bool setMacDefault(const QString& uti, const QString& handlerId) {
+    CFStringRef contentType = toCFString(uti);
+    CFStringRef handler = toCFString(handlerId);
+    if (!contentType || !handler) {
+        if (contentType) CFRelease(contentType);
+        if (handler) CFRelease(handler);
+        return false;
+    }
+    const OSStatus status = LSSetDefaultRoleHandlerForContentType(
+        contentType, kLSRolesAll, handler);
+    CFRelease(contentType);
+    CFRelease(handler);
+    return status == noErr;
+}
+
+int applyMacAssociations(const QList<QPair<const Category*, QListWidget*>>& lists) {
+    QSet<QString> selected;
+    for (const auto& entry : lists) {
+        for (int i = 0; i < entry.second->count(); ++i) {
+            const QListWidgetItem* item = entry.second->item(i);
+            if (item->checkState() == Qt::Checked) {
+                const QString uti = utiForExtension(item->data(Qt::UserRole).toString());
+                if (!uti.isEmpty())
+                    selected.insert(uti);
+            }
+        }
+    }
+
+    QSettings state(applicationConfigFile(), QSettings::IniFormat);
+    state.beginGroup(QStringLiteral("macPreviousHandlers"));
+    const QStringList previousTypes = state.childKeys();
+    int failures = 0;
+    for (const QString& uti : selected) {
+        if (!previousTypes.contains(uti)) {
+            const QString current = macDefaultHandler(uti);
+            if (!current.isEmpty() && current != macBundleId)
+                state.setValue(uti, current);
+        }
+        if (!setMacDefault(uti, macBundleId))
+            ++failures;
+    }
+    for (const QString& uti : previousTypes) {
+        if (selected.contains(uti))
+            continue;
+        const QString current = macDefaultHandler(uti);
+        const QString previous = state.value(uti).toString();
+        if (current == macBundleId && !previous.isEmpty() &&
+            !setMacDefault(uti, previous))
+            ++failures;
+        state.remove(uti);
+    }
+    state.endGroup();
+    state.sync();
+    return failures ? -1 : selected.size();
+}
+#endif
 }
 
 FileAssociationSettingsDialog::FileAssociationSettingsDialog(QWidget* parent) : QDialog(parent) {
@@ -384,7 +493,12 @@ FileAssociationSettingsDialog::FileAssociationSettingsDialog(QWidget* parent) : 
             item->setCheckState(hasWindowsAssociation(category, extension)
                 ? Qt::Checked : Qt::Unchecked);
 #elif defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID)
-            item->setCheckState(hasLinuxDefault(category, extension)
+            item->setCheckState(hasLinuxDefault(extension)
+                ? Qt::Checked : Qt::Unchecked);
+            if (mimeForExtension(extension).isEmpty())
+                item->setFlags(item->flags() & ~Qt::ItemIsEnabled);
+#elif defined(Q_OS_MACOS)
+            item->setCheckState(hasMacDefault(extension)
                 ? Qt::Checked : Qt::Unchecked);
 #else
             item->setCheckState(Qt::Unchecked);
@@ -413,14 +527,17 @@ FileAssociationSettingsDialog::FileAssociationSettingsDialog(QWidget* parent) : 
     layout->addWidget(status);
 #if defined(Q_OS_ANDROID)
     status->setText(QStringLiteral(
-        "Android controls file handlers. Set defaults in Android system settings."));
+        "Android does not provide an API for apps to assign file defaults. Open files with Peare from the system file picker."));
 #elif defined(Q_OS_WIN)
     status->setText(QStringLiteral(
-        "Select file types, then choose Peare in Windows Default Apps. Open with lists stay unchanged."));
+        "Windows requires you to confirm defaults in system Settings. Peare does not change Open with lists."));
 #elif defined(Q_OS_LINUX)
     status->setText(QStringLiteral(
         "Selected file types become your per-user defaults. Clearing a type restores its previous default."));
-#elif !defined(Q_OS_WIN) && !defined(Q_OS_LINUX)
+#elif defined(Q_OS_MACOS)
+    status->setText(QStringLiteral(
+        "Selected file types become your defaults. Clearing a type restores its previous handler when known."));
+#else
     status->setText(QStringLiteral(
         "This platform does not provide file-default management in Peare."));
 #endif
@@ -435,7 +552,7 @@ FileAssociationSettingsDialog::FileAssociationSettingsDialog(QWidget* parent) : 
             const int failures = applyWindowsAssociations(lists);
             status->setText(failures
                 ? QStringLiteral("Some file types could not be registered.")
-                : QStringLiteral("Peare is available in Windows Default Apps. Open with lists were not changed."));
+                : QStringLiteral("Peare is registered for the selected types. Confirm each default in Windows Settings. Open with lists were not changed."));
             if (!failures)
                 openWindowsDefaultApps();
 #elif defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID)
@@ -445,7 +562,12 @@ FileAssociationSettingsDialog::FileAssociationSettingsDialog(QWidget* parent) : 
                 : QStringLiteral("Default applications updated for %1 MIME types.").arg(applied));
 #elif defined(Q_OS_ANDROID)
             status->setText(QStringLiteral(
-                "Android manages file handlers in system settings. Peare cannot change defaults directly."));
+                "Android manages file handlers in the system. Open files with Peare from the system file picker."));
+#elif defined(Q_OS_MACOS)
+            const int applied = applyMacAssociations(lists);
+            status->setText(applied < 0
+                ? QStringLiteral("Could not update some macOS file defaults.")
+                : QStringLiteral("Default handlers updated for %1 file types.").arg(applied));
 #else
             Q_UNUSED(lists)
 #endif

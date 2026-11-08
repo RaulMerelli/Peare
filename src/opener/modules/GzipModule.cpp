@@ -204,6 +204,7 @@ std::unique_ptr<GzipModule> GzipModule::open(std::vector<std::uint8_t> data,
     entry.isEmbeddedFile = true;
     entry.content = std::make_shared<fs::MemoryStore>(std::move(decoded));
     module->resources_.push_back(std::move(entry));
+    module->memberCount_ = memberCount;
     return module;
 }
 

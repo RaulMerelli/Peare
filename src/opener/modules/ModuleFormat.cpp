@@ -14,6 +14,10 @@
 #include "UuencodeModule.h"
 #include "IhexModule.h"
 #include "LhaModule.h"
+#include "../fs/QFileByteStore.h"
+#include "../fs/PartitionTable.h"
+#include "../fs/UfsReader.h"
+#include "../fs/AndroidSuperStore.h"
 
 #include <cstring>
 #include <limits>
@@ -806,6 +810,46 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
     if (!file.open(QIODevice::ReadOnly)) {
         return {ModuleFormat::Unknown, 0, {}, file.errorString()};
     }
+    char amigaBoot[12];
+    if (file.read(amigaBoot, sizeof(amigaBoot)) == sizeof(amigaBoot) &&
+        std::memcmp(amigaBoot, "DOS", 3) == 0 &&
+        (static_cast<unsigned char>(amigaBoot[3]) & 0xF8) == 0 &&
+        file.size() >= 901120 && file.size() % 512 == 0) {
+        file.seek(0);
+        return {ModuleFormat::FLOPPY_IMAGE, 0, QStringLiteral("Amiga ADF floppy image"), {}};
+    }
+    file.seek(0);
+    const QByteArray xnbHeader = file.read(10);
+    if (xnbHeader.startsWith("XDBF"))
+        return {ModuleFormat::XDBF, 0, QStringLiteral("Xbox 360 Database (XDBF/GPD)"), {}};
+    if (xnbHeader.startsWith("NUP\x01"))
+        return {ModuleFormat::NUP, 0, QStringLiteral("Nintendo Switch NUP container"), {}};
+    if (xnbHeader.startsWith("DXBC"))
+        return {ModuleFormat::DXBC, 0, QStringLiteral("DirectX Shader Container"), {}};
+    if (xnbHeader.size() == 10 && xnbHeader.startsWith("XNB") &&
+        (uchar(xnbHeader[4]) == 4 || uchar(xnbHeader[4]) == 5) &&
+        (uchar(xnbHeader[5]) & ~0xc1u) == 0 &&
+        (uchar(xnbHeader[5]) & 0xc0u) != 0xc0u &&
+        readLe32(xnbHeader, 6) == quint64(file.size()))
+        return {ModuleFormat::XNB, 0, QStringLiteral("XNA / MonoGame compiled content"), {}};
+    file.seek(0);
+    char sparseMagic[4];
+    if (file.read(sparseMagic, sizeof(sparseMagic)) == sizeof(sparseMagic) &&
+        static_cast<unsigned char>(sparseMagic[0]) == 0x3a &&
+        static_cast<unsigned char>(sparseMagic[1]) == 0xff &&
+        static_cast<unsigned char>(sparseMagic[2]) == 0x26 &&
+        static_cast<unsigned char>(sparseMagic[3]) == 0xed) {
+        file.seek(0);
+        return {ModuleFormat::ANDROID_SPARSE, 0,
+                QStringLiteral("Android sparse disk image"), {}};
+    }
+    file.seek(0);
+    const fs::ByteStorePtr ufsStore = std::make_shared<fs::QFileByteStore>(filePath);
+    if (fs::AndroidSuperStore::detect(ufsStore))
+        return {ModuleFormat::ANDROID_SUPER, 0,
+                QStringLiteral("Android dynamic-partition super image"), {}};
+    if (fs::UfsReader::detect(*ufsStore))
+        return {ModuleFormat::UFS, 0, QStringLiteral("Unix File System (UFS)"), {}};
     if (file.size() >= 512 + 28) {
         const qint64 scanLimit = qMin<qint64>(file.size() - 28, 64 * 1024 * 1024);
         for (qint64 offset = 0; offset <= scanLimit; offset += 512) {
@@ -921,6 +965,8 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         if (named == ModuleFormat::APPX || named == ModuleFormat::MSIX ||
             named == ModuleFormat::APPXBUNDLE || named == ModuleFormat::XAP)
             return {named, 0, formatName(named), {}};
+        if (named == ModuleFormat::ANDROID_APK)
+            return {named, 0, formatName(named), {}};
         return {ModuleFormat::ZIP, 0, QStringLiteral("ZIP archive"), {}};
     }
 
@@ -1009,8 +1055,9 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
 
     if (file.size() >= 12) {
         const QByteArray wadHead = file.read(12); file.seek(0);
-        if (wadHead.startsWith("IWAD") || wadHead.startsWith("PWAD"))
-            return {ModuleFormat::WAD, 0, QStringLiteral("Doom WAD archive"), {}};
+        if (wadHead.startsWith("IWAD") || wadHead.startsWith("PWAD") ||
+            wadHead.startsWith("WAD2") || wadHead.startsWith("WAD3"))
+            return {ModuleFormat::WAD, 0, QStringLiteral("WAD archive"), {}};
     }
 
     // SCE PUP magic is authoritative and must precede loose firmware probes.
@@ -1368,6 +1415,7 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         char mbr[512];
         if (file.seek(0) && file.read(mbr, 512) == 512 &&
             (looksPartitionedRawDisk(QByteArray(mbr, 512), file.size()) ||
+             fs::hasMbrOrGptPartitionTable(ufsStore) ||
              hasAuthoritativeOs2Layout(QByteArray(mbr, 512), file.size()))) {
             file.seek(0);
             return {ModuleFormat::RAW_DISK, 0, QStringLiteral("Raw disk image"), {}};
@@ -1715,6 +1763,31 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
 
 ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
 {
+    if (data.size() >= 24 && data.startsWith("XDBF"))
+        return {ModuleFormat::XDBF, 0, QStringLiteral("Xbox 360 Database (XDBF/GPD)"), {}};
+    if (data.startsWith("NUP\x01"))
+        return {ModuleFormat::NUP, 0, QStringLiteral("Nintendo Switch NUP container"), {}};
+    if (data.size() >= 32 && data.startsWith("DXBC"))
+        return {ModuleFormat::DXBC, 0, QStringLiteral("DirectX Shader Container"), {}};
+    if (data.size() >= 10 && data.startsWith("XNB") &&
+        (uchar(data[4]) == 4 || uchar(data[4]) == 5) &&
+        (uchar(data[5]) & ~0xc1u) == 0 && (uchar(data[5]) & 0xc0u) != 0xc0u)
+        return {ModuleFormat::XNB, 0, QStringLiteral("XNA / MonoGame compiled content"), {}};
+    if (data.size() >= 4 &&
+        static_cast<unsigned char>(data[0]) == 0x3a &&
+        static_cast<unsigned char>(data[1]) == 0xff &&
+        static_cast<unsigned char>(data[2]) == 0x26 &&
+        static_cast<unsigned char>(data[3]) == 0xed)
+        return {ModuleFormat::ANDROID_SPARSE, 0,
+                QStringLiteral("Android sparse disk image"), {}};
+    const auto* raw = reinterpret_cast<const std::uint8_t*>(data.constData());
+    if (fs::AndroidSuperStore::detect(raw, static_cast<std::size_t>(data.size())))
+        return {ModuleFormat::ANDROID_SUPER, 0,
+                QStringLiteral("Android dynamic-partition super image"), {}};
+    if (fs::UfsReader::detect(
+            reinterpret_cast<const std::uint8_t*>(data.constData()),
+            static_cast<std::size_t>(data.size())))
+        return {ModuleFormat::UFS, 0, QStringLiteral("Unix File System (UFS)"), {}};
     if (data.size() >= 28) {
         const quint32 offset = nsisHeaderOffset(data);
         if (offset != std::numeric_limits<quint32>::max())
@@ -1807,8 +1880,9 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
     if (data.size() >= 52 && data.startsWith("TAPE") && readLe64(data, 20) == 0)
         return {ModuleFormat::MTF, 0, QStringLiteral("Microsoft Tape Format / NTBackup BKF"), {}};
 
-    if (data.startsWith("IWAD") || data.startsWith("PWAD"))
-        return {ModuleFormat::WAD, 0, QStringLiteral("Doom WAD archive"), {}};
+    if (data.startsWith("IWAD") || data.startsWith("PWAD") ||
+        data.startsWith("WAD2") || data.startsWith("WAD3"))
+        return {ModuleFormat::WAD, 0, QStringLiteral("WAD archive"), {}};
 
     if (hasPs3PupMagic(data))
         return {ModuleFormat::PS3_PUP, 0,
@@ -1854,6 +1928,13 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
     if (data.size() >= 8 && data.left(8) == QByteArray("AFCWGPSM", 8))
         return {ModuleFormat::XBCOMPRESS, 0, QStringLiteral("Microsoft XBCOMPRESS file"), {}};
 
+    if (data.size() >= 12 && data.startsWith("DOS") &&
+        (static_cast<unsigned char>(data[3]) & 0xF8) == 0) {
+        const std::uint32_t root = readBe32(data, 8);
+        if (root == 0 || root >= 880)
+            return {ModuleFormat::FLOPPY_IMAGE, 0,
+                    QStringLiteral("Amiga ADF floppy image"), {}};
+    }
     if (isZipHeader(data))
         return {ModuleFormat::ZIP, 0, QStringLiteral("ZIP archive"), {}};
 
@@ -1937,6 +2018,9 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
 
     if (data.size() >= 512 &&
         (looksPartitionedRawDisk(data, data.size()) ||
+         fs::hasMbrOrGptPartitionTable(std::make_shared<fs::MemoryStore>(
+             reinterpret_cast<const std::uint8_t*>(data.constData()),
+             std::size_t(data.size()))) ||
          hasAuthoritativeOs2Layout(data, data.size()) ||
          hasRecoverableJfsPartition(data, data.size())))
         return {ModuleFormat::RAW_DISK, 0, QStringLiteral("Raw disk image"), {}};
@@ -2055,11 +2139,36 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
          (data.size() >= 85 && std::memcmp(data.constData() + 82, "FAT", 3) == 0)))
         return {ModuleFormat::FAT, 0, QStringLiteral("FAT volume"), {}};
 
+    if (data.size() >= 12 && data.startsWith("DOS") &&
+        (static_cast<unsigned char>(data[3]) & 0xF8) == 0) {
+        const std::uint32_t root =
+            (std::uint32_t(static_cast<unsigned char>(data[8])) << 24) |
+            (std::uint32_t(static_cast<unsigned char>(data[9])) << 16) |
+            (std::uint32_t(static_cast<unsigned char>(data[10])) << 8) |
+            std::uint32_t(static_cast<unsigned char>(data[11]));
+        if (root == 0 || root >= 880)
+            return {ModuleFormat::FLOPPY_IMAGE, 0, QStringLiteral("Amiga ADF floppy image"), {}};
+    }
+
     return {ModuleFormat::Unknown, 0, {}, QStringLiteral("No recognised header")};
 }
 
 ModuleFormatInfo ModuleFormatDetector::detectNestedBuffer(const QByteArray& data)
 {
+    if (data.size() >= 24 && data.startsWith("XDBF"))
+        return {ModuleFormat::XDBF, 0, QStringLiteral("Xbox 360 Database (XDBF/GPD)"), {}};
+    if (data.startsWith("NUP\x01"))
+        return {ModuleFormat::NUP, 0, QStringLiteral("Nintendo Switch NUP container"), {}};
+    if (data.size() >= 32 && data.startsWith("DXBC"))
+        return {ModuleFormat::DXBC, 0, QStringLiteral("DirectX Shader Container"), {}};
+    if (data.size() >= 10 && data.startsWith("XNB") &&
+        (uchar(data[4]) == 4 || uchar(data[4]) == 5) &&
+        (uchar(data[5]) & ~0xc1u) == 0 && (uchar(data[5]) & 0xc0u) != 0xc0u)
+        return {ModuleFormat::XNB, 0, QStringLiteral("XNA / MonoGame compiled content"), {}};
+    if (fs::UfsReader::detect(
+            reinterpret_cast<const std::uint8_t*>(data.constData()),
+            static_cast<std::size_t>(data.size())))
+        return {ModuleFormat::UFS, 0, QStringLiteral("Unix File System (UFS)"), {}};
     if (data.size() >= 28) {
         const quint32 offset = nsisHeaderOffset(data);
         if (offset != std::numeric_limits<quint32>::max())
@@ -2256,6 +2365,7 @@ ModuleFormat ModuleFormatDetector::zipPackageFormatForName(const QString& fileNa
     if (suffix == QStringLiteral("msix")) return ModuleFormat::MSIX;
     if (suffix == QStringLiteral("appxbundle")) return ModuleFormat::APPXBUNDLE;
     if (suffix == QStringLiteral("xap")) return ModuleFormat::XAP;
+    if (suffix == QStringLiteral("apk")) return ModuleFormat::ANDROID_APK;
     return ModuleFormat::Unknown;
 }
 
@@ -2277,6 +2387,13 @@ QString ModuleFormatDetector::formatName(ModuleFormat format)
     case ModuleFormat::KWAJ: return QStringLiteral("KWAJ");
     case ModuleFormat::XBCOMPRESS: return QStringLiteral("XBCOMPRESS");
     case ModuleFormat::NSIS: return QStringLiteral("NSIS");
+    case ModuleFormat::ANDROID_SPARSE: return QStringLiteral("Android sparse");
+    case ModuleFormat::ANDROID_SUPER: return QStringLiteral("Android super");
+    case ModuleFormat::XNB: return QStringLiteral("XNA / MonoGame XNB");
+    case ModuleFormat::DXBC: return QStringLiteral("DirectX Shader Container");
+    case ModuleFormat::NUP: return QStringLiteral("Nintendo Switch NUP");
+    case ModuleFormat::XDBF: return QStringLiteral("Xbox 360 Database (XDBF/GPD)");
+    case ModuleFormat::ANDROID_APK: return QStringLiteral("Android APK");
     case ModuleFormat::GZIP: return QStringLiteral("GZIP");
     case ModuleFormat::XZ: return QStringLiteral("XZ");
     case ModuleFormat::BZIP2: return QStringLiteral("BZIP2");
@@ -2305,6 +2422,7 @@ QString ModuleFormatDetector::formatName(ModuleFormat format)
     case ModuleFormat::WIM: return QStringLiteral("WIM");
     case ModuleFormat::FAT: return QStringLiteral("FAT");
     case ModuleFormat::UDF: return QStringLiteral("UDF");
+    case ModuleFormat::UFS: return QStringLiteral("UFS");
     case ModuleFormat::EXFAT: return QStringLiteral("exFAT");
     case ModuleFormat::VMDK: return QStringLiteral("VMDK");
     case ModuleFormat::VHD: return QStringLiteral("VHD");

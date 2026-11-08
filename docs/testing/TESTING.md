@@ -34,6 +34,9 @@ sample evidence.
 | `tests/test_gzip_multi_member_abi.py` | Checks concatenated GZIP members through the Opener ABI against both source payloads. |
 | `tests/test_tar_compressed_variants_abi.py` | Compares `.tgz`, `.tbz`, and `.tbz2` payloads with their TAR source, opens each nested TAR, and checks a `.taz` alias of an upstream `.tar.Z` sample. |
 | `tests/test_wad_decode_abi.py` | Opens and decodes sprites and textures from the external Doom IWAD archive when available. |
+| `tests/test_amiga_adf_abi.py` | Checks OFS and FFS directory trees, file payloads, unusual names, and a GZIP-compressed ADZ sample through the Opener ABI and GUI. Set `PEARE_AMIGA_ADF_DIR` to the local sample directory. |
+| `tests/test_android_apk_abi.py` | Checks APK entries, v2/v3/v3.1 signer metadata, and Android binary XML previews through the ABI and GUI. It does not verify APK signatures. Set `PEARE_ANDROID_SAMPLE` and `PEARE_ANDROID_V31_SAMPLE` to the local APK samples. |
+| `tests/test_wim_swm_abi.py` | Opens both parts of a split WIM set and checks every payload hash through the Opener ABI. `tests/formats/wim/gui-preview-cases.json` checks the same parts in the GUI. |
 | `tests/test_uue_samples_abi.py` | Compares upstream libarchive classic UUencode samples with their `.Z` payloads and checks the RFC 6873 Base64 envelope through the Opener ABI. |
 | `tests/test_chm_samples_abi.py` | Compares CHM members with independent 7-Zip extractions through the Opener ABI. Set `PEARE_CHM_ITSF2_SAMPLE` and `PEARE_CHM_ITSF2_ORACLE` to enable the optional ITSF v2 sample case. |
 | `tests/test_lzip_samples_abi.py` | Opens GNU Lzip test samples through the Opener ABI and compares the decoded payload with the upstream source file. |

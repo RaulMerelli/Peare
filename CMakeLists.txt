@@ -424,6 +424,10 @@ add_library(PeareOpener SHARED
     src/opener/modules/PeResources.h
     src/opener/modules/PeResources.cpp
     src/opener/fs/DiscStore.h
+    src/opener/fs/AndroidSparseStore.h
+    src/opener/fs/AndroidSparseStore.cpp
+    src/opener/fs/AndroidSuperStore.h
+    src/opener/fs/AndroidSuperStore.cpp
     src/opener/fs/BlockDecompressor.h
     src/opener/fs/DiscFileSystem.h
     src/opener/fs/Iso9660Reader.h
@@ -434,10 +438,14 @@ add_library(PeareOpener SHARED
     src/opener/fs/WimReader.cpp
     src/opener/fs/FatReader.h
     src/opener/fs/FatReader.cpp
+    src/opener/fs/AmigaFsReader.h
+    src/opener/fs/AmigaFsReader.cpp
     src/opener/fs/FloppyImage.h
     src/opener/fs/FloppyImage.cpp
     src/opener/fs/UdfReader.h
     src/opener/fs/UdfReader.cpp
+    src/opener/fs/UfsReader.h
+    src/opener/fs/UfsReader.cpp
     src/opener/fs/ExFatReader.h
     src/opener/fs/ExFatReader.cpp
     src/opener/fs/VmdkDisk.h
@@ -489,6 +497,8 @@ add_library(PeareOpener SHARED
     src/opener/modules/FatModule.cpp
     src/opener/modules/UdfModule.h
     src/opener/modules/UdfModule.cpp
+    src/opener/modules/UfsModule.h
+    src/opener/modules/UfsModule.cpp
     src/opener/modules/ExFatModule.h
     src/opener/modules/ExFatModule.cpp
     src/opener/modules/VmdkModule.h
@@ -555,8 +565,20 @@ add_library(PeareOpener SHARED
     src/opener/modules/CabModule.cpp
     src/opener/modules/RawDiskModule.h
     src/opener/modules/RawDiskModule.cpp
+    src/opener/modules/AndroidSuperModule.h
+    src/opener/modules/AndroidSuperModule.cpp
+    src/opener/modules/XnbModule.h
+    src/opener/modules/XnbModule.cpp
+    src/opener/modules/DxbcModule.h
+    src/opener/modules/DxbcModule.cpp
+    src/opener/modules/NupModule.h
+    src/opener/modules/NupModule.cpp
+    src/opener/modules/XdbfModule.h
+    src/opener/modules/XdbfModule.cpp
     src/opener/modules/FloppyImageModule.h
     src/opener/modules/FloppyImageModule.cpp
+    src/opener/modules/AdzModule.h
+    src/opener/modules/AdzModule.cpp
     src/opener/modules/ImzModule.h
     src/opener/modules/ImzModule.cpp
     src/opener/modules/FfuModule.h
@@ -677,6 +699,8 @@ add_library(PeareDecoder SHARED
     src/decoder/resources/ResourceResolver.h
     src/decoder/resources/ModuleResources.h
     src/decoder/resources/ModuleResources.cpp
+    src/decoder/resources/AndroidBinaryXml.h
+    src/decoder/resources/AndroidBinaryXml.cpp
     src/decoder/resources/RawDetect.h
     src/decoder/resources/RawDetect.cpp
     src/decoder/resources/WAD/WadImageDecoder.h
@@ -919,6 +943,15 @@ if(WIN32)
     target_sources(Peare PRIVATE resources/peare.rc)
 endif()
 
+if(APPLE AND NOT ANDROID)
+    set_target_properties(Peare PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_GUI_IDENTIFIER "org.peare.app"
+        MACOSX_BUNDLE_BUNDLE_NAME "Peare"
+    )
+    target_link_libraries(Peare PRIVATE "-framework CoreServices")
+endif()
+
 target_include_directories(Peare PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/api
@@ -927,7 +960,7 @@ target_include_directories(Peare PRIVATE
 )
 target_link_libraries(Peare PRIVATE PeareOpener PeareDecoder PeareWriter ${PEARE_QT_WIDGETS})
 if(WIN32)
-    target_link_libraries(Peare PRIVATE shell32 advapi32)
+    target_link_libraries(Peare PRIVATE shell32 shlwapi advapi32)
 endif()
 
 add_custom_command(TARGET Peare POST_BUILD

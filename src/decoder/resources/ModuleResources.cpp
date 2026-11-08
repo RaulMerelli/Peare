@@ -24,6 +24,7 @@
 #include "SIEMENS_MWIMAGE/SiemensMwImage.h"
 #include "SIEMENS_ADONIS/SiemensAdonis.h"
 #include "RawDetect.h"
+#include "AndroidBinaryXml.h"
 #include "../DecoderRoute.h"
 
 namespace peare { namespace resources {
@@ -31,6 +32,9 @@ namespace peare { namespace resources {
 ResourcePreview ModuleResources::preview(const ResourceEntry& entry,
                                          const IResourceResolver& resolver)
 {
+    if (recognizesAndroidBinaryXml(entry.data))
+        return decodeAndroidBinaryXml(entry);
+
     ResourcePreview declared;
     bool attemptedDeclaredDecoder = true;
 

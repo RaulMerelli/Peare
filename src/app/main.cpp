@@ -10,6 +10,8 @@
 #include <QFileInfo>
 #include <QIcon>
 #include <QLabel>
+#include <QMenu>
+#include <QMenuBar>
 #include <QPlainTextEdit>
 #include <QPixmap>
 #include <QJsonArray>
@@ -18,6 +20,7 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QToolButton>
+#include <QToolBar>
 #include <QListWidget>
 #include <QTimer>
 
@@ -52,8 +55,17 @@ static int runFileAssociationTest(MainWindow& window, QApplication& app,
                                   const QString& screenshotPath)
 {
     QAction* action = window.findChild<QAction*>(QStringLiteral("fileAssociationsAction"));
-    if (!action) {
-        std::fprintf(stderr, "File associations toolbar action was not found.\n");
+    QMenu* settingsMenu = nullptr;
+    for (QAction* menuAction : window.menuBar()->actions()) {
+        if (menuAction->menu() && menuAction->text().remove(QLatin1Char('&')) ==
+                QStringLiteral("Settings")) {
+            settingsMenu = menuAction->menu();
+            break;
+        }
+    }
+    if (!action || !settingsMenu || !settingsMenu->actions().contains(action) ||
+        window.findChild<QToolBar*>(QStringLiteral("mainToolbar"))) {
+        std::fprintf(stderr, "File associations action is not in Settings or a toolbar remains.\n");
         return 3;
     }
     QPixmap screenshot;

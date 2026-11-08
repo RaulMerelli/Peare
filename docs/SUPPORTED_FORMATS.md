@@ -39,6 +39,8 @@ package-specific limits on ZIP-based files.
 | CramFS file system | Little-endian and big-endian images, 512-byte boot padding, and validated 64-byte U-Boot prefixes | Yes | No |
 | HFS+ / HFSX file system | HFS+ and HFSX | Yes | No |
 | UDF file system | UDF Type 1 partitions | Yes | No |
+| UFS1 file system | Traditional UFS1 layout, including Solaris/SPARC big-endian volumes | Yes | No |
+| UFS2 / FFS2 file system | BSD disklabel and GPT volumes, including FreeBSD UFS2 | Yes | No |
 | Linux swap | Versions 1 and 2 | Yes | No |
 | Linux LVM2 | Single-PV linear and striped volumes | Yes | No |
 | Linux MD RAID | RAID1, metadata versions 0.90 and 1.x | Yes | No |
@@ -78,6 +80,10 @@ package-specific limits on ZIP-based files.
 
 | Format | Description | Read | Write |
 |---|---|---:|---:|
+| Android sparse image | Version 1.0 RAW, FILL, DONT_CARE, and CRC32 chunks | Yes | No |
+| Android dynamic-partition super image | LP metadata versions 10.0-10.2; one backing block device; linear and zero extents | Yes | No |
+| Amiga ADF floppy image | 880 KiB OFS and FFS volumes, including international and directory-cache variants | Yes | No |
+| Amiga ADZ compressed floppy image | Single-member GZIP stream containing an 880 KiB ADF with a valid Amiga DOS file system | Yes | No |
 | Raw floppy IMG/IMA/VFD | Standard raw floppy images | Yes | Yes |
 | WinImage IMZ | Unencrypted ZIP-compatible image with one standard-capacity `.ima` or `.img` member | Yes | No |
 | OS/2 XDF floppy DSK | 3.5-inch, 1.84 MiB XDF | Yes | Yes |
@@ -93,15 +99,17 @@ package-specific limits on ZIP-based files.
 
 | Format | Description | Read | Write |
 |---|---|---:|---:|
-| ZIP | Store, Shrink, Reduce, Implode, Deflate, Deflate64, BZip2, LZMA, DCL Implode, and ZIP64 | Yes | Yes |
+| ZIP | Store, Shrink, Reduce, Implode, Deflate, Deflate64, BZip2, LZMA, DCL Implode, and ZIP64; `.zapXX` files use the same ZIP reader | Yes | Yes |
 | ZIPX | WinZip extensions: XZ, Zstandard, PPMd, WavPack, MP3, and JPEG compression | Yes | Yes |
 | 7-Zip (7z) | 7z archives | Yes | No |
 | NSIS | Nullsoft Scriptable Install System installers | Yes | No |
 | RAR4 | RAR4 archives | Yes | No |
 | RAR5 | RAR5 archive format, algorithm version 0 | Yes | No |
 | RAR7 | RAR5 archive format, algorithm version 1 | Yes | No |
+| Nintendo Switch NUP | NUP v1 base, update, and add-on trees; raw and Zstandard file payloads | Yes | No |
 | Java JAR / WAR / EAR / AAR | Java and Android ZIP archives | Yes | Yes |
-| Android APK / APKS / AAB | Android ZIP package containers | Yes | Yes |
+| Android APK | ZIP package contents and v2/v3/v3.1 signer leaf-certificate metadata | Yes | Yes |
+| Android APKS / AAB | ZIP package contents | Yes | Yes |
 | EPUB | EPUB ZIP container | Yes | Yes |
 | Office Open XML | DOCX, XLSX, and PPTX packages | Yes | Yes |
 | OpenDocument | ODT, ODS, and ODP packages | Yes | Yes |
@@ -112,7 +120,6 @@ package-specific limits on ZIP-based files.
 | Visual Studio extension | VSIX package | Yes | Yes |
 | Comic book ZIP | CBZ archive | Yes | Yes |
 | Google Earth KMZ | KMZ archive | Yes | Yes |
-| TIA Portal ZAP | ZIP container for `.zapXX` archives | Yes | Yes |
 | TAR | V7 and USTAR | Yes | Yes |
 | OS/2 WarpIN (WPI) | Raw revision 3 and 4 packages; stored and bzip2-compressed payloads. Self-extracting EXE packages are not included. | Yes | No |
 | RPM | RPM v3/v4 packages with CPIO payloads | Yes | No |
@@ -135,6 +142,8 @@ package-specific limits on ZIP-based files.
 | Debian package | `.deb` and `.udeb`, version 2.0; raw or gzip/xz/zstd control TAR, plus raw/gzip/xz/zstd/bzip2/lzma data TAR | Yes | No |
 | LHA / LZH | LHA and LZH archives | Yes | No |
 | Doom WAD | IWAD and PWAD archives | Yes | No |
+| Quake WAD2 | WAD2 archives | Yes | No |
+| Half-Life WAD3 | WAD3 archives | Yes | No |
 | APPX / MSIX | Windows application ZIP packages | Yes | Yes |
 | Encrypted APPX / MSIX | EAPPX and EMSIX envelopes | Yes | No |
 | APPXBUNDLE | Windows application ZIP bundle | Yes | Yes |
@@ -160,6 +169,9 @@ package-specific limits on ZIP-based files.
 | OS/2 LX executable | OS/2 LX | Yes | No |
 | Xbox XBE executable | Original Xbox XBE | Yes | No |
 | Xbox 360 XEX executable | XEX1 and XEX2 | Yes | No |
+| DirectX Shader Container (DXBC) | Version 1 containers; validated chunk table and lazy raw chunk access | Yes | No |
+| Xbox 360 database (XDBF/GPD) | Version 1.0 records, title string, and image records | Yes | No |
+| XNA / MonoGame XNB | Versions 4 and 5; uncompressed, LZX, and raw LZ4; metadata and serialized root asset, with Color Texture2D preview | Yes | No |
 | .NET RESX | .NET XML resource files | Yes | No |
 | Windows Installer CFB | MSI, MSM, MSP, MST, PCP, and CUB files | Yes | No |
 | Outlook MSG | Outlook MSG files | Yes | No |
@@ -207,6 +219,12 @@ types, see [Resource compatibility](formats/RESOURCE_COMPATIBILITY.md).
 | Doom wall texture definitions (`TEXTURE1`, `TEXTURE2`) | Composite textures built from `WAD_TEXTUREX`, `PNAMES`, and Doom patch lumps |
 | Siemens / Microwindows `MWIMAGEHDR` | Raw indexed and true-color images, 1, 2, 4, 8, 16, 24, and 32 bpp |
 | Xbox `XBE_LOGO_RLE` | Raw run-length encoded Xbox logo image |
+
+### Structured data
+
+| Format | Description |
+|---|---|
+| Android Binary XML (AXML) | Compiled Android XML resources, including `AndroidManifest.xml` |
 
 ### Fonts
 

@@ -26,11 +26,13 @@ fs::ByteStorePtr storeForFile(const QString& path) {
 
 }  // namespace
 
-ModulePtr RawDiskModule::open(const fs::ByteStorePtr& disk, const QString& sourceName) {
+ModulePtr RawDiskModule::open(const fs::ByteStorePtr& disk, const QString& sourceName,
+                              ModuleFormat format) {
     auto module = peare::makeUnique<RawDiskModule>();
     module->info_.filePath = sourceName;
-    module->info_.format = ModuleFormat::RAW_DISK;
-    module->info_.description = QStringLiteral("Raw disk image");
+    module->info_.format = format;
+    module->info_.description = format == ModuleFormat::ANDROID_SPARSE
+        ? QStringLiteral("Android sparse disk image") : QStringLiteral("Raw disk image");
     if (!disk) {
         module->info_.error = QStringLiteral("Cannot open raw disk image");
         return ModulePtr(std::move(module));

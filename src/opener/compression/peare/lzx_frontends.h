@@ -45,6 +45,13 @@ peare_lzx_status peare_lzx_cab_decompress(peare_lzx_cab_decoder *decoder,
                                           size_t compressed_size,
                                           void *uncompressed_data,
                                           size_t uncompressed_size);
+peare_lzx_status peare_lzx_cab_decompress_frame(peare_lzx_cab_decoder *decoder,
+                                                const void *compressed_frame,
+                                                size_t compressed_size,
+                                                void *uncompressed_data,
+                                                size_t output_capacity,
+                                                size_t frame_output_size,
+                                                int reset, int finish);
 void peare_lzx_cab_destroy(peare_lzx_cab_decoder *decoder);
 
 

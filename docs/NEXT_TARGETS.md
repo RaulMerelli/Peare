@@ -10,9 +10,6 @@ Add reader support first. Plan writer support after real-sample reader coverage.
 ### Industrial automation projects
 
 - TIA Portal projects: versioned `.apXX` project files and their project folders.
-- TIA Portal project archives: versioned `.zapXX` files.
-- Compressed `.zapXX` archives are ZIP-compatible. Peare already opens them through generic ZIP support.
-- Add TIA-aware project recognition and browsing. Do not add another ZIP reader.
 - Browse project files and HMI assets as a read-only project tree. Do not claim that Peare can validate or run PLC logic.
 - SIMATIC WinCC Classic projects: `.MCP` project files and their project folders.
 - Browse documented project content such as `GraCS`, `CommonArchiving`, `.MDF`, and `RT.MDF` files. Treat database files as opaque payloads until their formats are understood.
@@ -22,20 +19,19 @@ Add reader support first. Plan writer support after real-sample reader coverage.
 ### File systems and disk images
 
 - Microsoft ReFS, with version-specific samples and feature coverage.
-- Solaris UFS and BSD UFS1 / FFS and UFS2 / FFS2, tracked as separate on-disk families.
+- Broader UFS1/FFS and UFS2/FFS2 coverage beyond the verified Solaris and BSD samples.
 - ZFS pools and datasets, including feature flags and pool-version differences.
+- Classic HFS (Mac OS Standard), in addition to the supported HFS+ and HFSX variants.
 - APFS containers and volumes, including snapshots and encryption where keys are available.
 - F2FS, Minix, ReiserFS, BeFS, and other Unix file systems found in local images.
 - JFFS2 and UBIFS images, including their flash and UBI layer requirements. Treat EROFS as a read-only target unless its format defines a safe write workflow.
 - Early NTFS v1.x volumes from Windows NT 3.1 and 3.5.
 - Cisco ASDM `.img` files.
-- Amiga floppy images: ADF and ADZ.
 - Apple floppy images: DC42 and DART.
 - DMS Amiga disk images.
 - VDI and Parallels HDD variants, including differencing and snapshot layouts.
 - QCOW and QCOW2 writing, including backing files and external data files.
 - VHD and VHDX differencing chains and snapshot layouts.
-- Android sparse images and dynamic-partition `super` images.
 - LUKS1 and LUKS2 block-encryption containers. Define key handling before adding unlock or write support. Never infer the inner file system from encrypted data.
 - Additional file-system write support beyond FAT and Ext.
 - Btrfs Zstandard compression.
@@ -47,7 +43,6 @@ Add reader support first. Plan writer support after real-sample reader coverage.
 
 - Acronis TIB and TIBX.
 - Veeam VBK, VIM, and VRB.
-- Microsoft split WIM files (`.swm`).
 
 ### Firmware and executable images
 
@@ -63,21 +58,15 @@ Add reader support first. Plan writer support after real-sample reader coverage.
 
 - The Sims 3 packages (`.Sims3Pack`).
 - Symbian SIS and SISX application packages.
-- Android APK-specific package validation and signing metadata. Generic ZIP
-  browsing and container updates are already supported.
-- Nintendo Switch NUP containers (`.nup`) for unencrypted package dumps. The
-  version 1.0 draft stores base, update, and add-on packages with ExeFS and
-  RomFS trees. It supports raw and Zstandard file extents.
+- Android APK signature verification. Peare reports v2/v3/v3.1 signer metadata
+  and the v3 certificate lineage but does not verify signatures.
+- Android Binary XML manifest decoding is supported.
 - Reduce memory use and decode time for very large archive members.
 - 7z archive files and decoded members larger than the Qt 5 `QByteArray` limit.
 - Identify the `.tpz` extension shown by 7-Zip from a real sample before planning support.
 
 ### Executables, games, and graphics
 
-- XNA XNB.
-- XDBF (Xbox Data Base File).
-- DXBC (DirectX Container).
-- Quake and Half-Life WAD2/WAD3. These are different formats from Doom WAD.
 - Console WAD variants with compressed lumps, including Atari Jaguar Doom and Doom 64.
 - UPX-compressed executables.
 - .NET resources embedded in PE files.

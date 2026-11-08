@@ -28,6 +28,7 @@ enum class ModuleFormat {
     WIM,
     FAT,
     UDF,
+    UFS,
     EXFAT,
     VMDK,
     VHD,
@@ -102,7 +103,14 @@ enum class ModuleFormat {
     CHM,
     KWAJ,
     XBCOMPRESS,
-    NSIS
+    NSIS,
+    ANDROID_SPARSE,
+    ANDROID_SUPER,
+    XNB,
+    DXBC,
+    NUP,
+    XDBF,
+    ANDROID_APK
 };
 
 struct ModuleFormatInfo {

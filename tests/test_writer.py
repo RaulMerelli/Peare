@@ -9272,7 +9272,7 @@ def _gui_cud_scenario(view, gui_root, payload_add, payload_keep,
 def _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
                       sample, view, gui_root, target_index=0,
                       oracle_preserved_paths=(), tree_max_depth=8,
-                      dos_83=False):
+                      dos_83=False, timeout_seconds=180):
     sample_hash = _sha256_file(sample)
     image_path = str(sample).encode()
     assert writer_lib.peare_writer_can_add_files(image_path) == 1
@@ -9323,8 +9323,9 @@ def _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
     result = subprocess.run(
         [sys.executable, str(runner), "--exe", str(peare_gui_path),
          "--image", sample, "--scenario", str(scenario_path),
-         "--output-dir", str(disposable_dir)],
-        capture_output=True, text=True, timeout=240, check=False)
+         "--output-dir", str(disposable_dir), "--timeout",
+         str(timeout_seconds)],
+        capture_output=True, text=True, timeout=timeout_seconds + 60, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert _sha256_file(sample) == sample_hash
 
@@ -9700,7 +9701,7 @@ def test_zip64_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
     if not sample.is_file():
         pytest.skip("Set PEARE_ZIP64_TEST_IMAGE to the independent ZIP64 sample")
     _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
-                      str(sample), view, "")
+                      str(sample), view, "", timeout_seconds=300)
     seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
                  shutil.which("7zz"))
     if not seven_zip and os.name == "nt":

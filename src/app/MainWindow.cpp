@@ -564,20 +564,18 @@ void MainWindow::buildMenus() {
     viewMenu->addAction(expandAction);
     viewMenu->addAction(collapseAction);
 
+    QMenu* settingsMenu = applicationMenuBar->addMenu(QStringLiteral("&Settings"));
+    QAction* associationsAction = settingsMenu->addAction(
+        QStringLiteral("File associations..."));
+    associationsAction->setObjectName(QStringLiteral("fileAssociationsAction"));
+    connect(associationsAction, &QAction::triggered,
+            this, &MainWindow::showFileAssociationSettings);
+
     QMenu* helpMenu = applicationMenuBar->addMenu(QStringLiteral("&Help"));
     helpMenu->addAction(issueAction);
     helpMenu->addSeparator();
     helpMenu->addAction(aboutAction);
 
-    QToolBar* toolbar = addToolBar(QStringLiteral("Main"));
-    toolbar->setObjectName(QStringLiteral("mainToolbar"));
-    QAction* associationsAction = toolbar->addAction(
-        style()->standardIcon(QStyle::SP_FileDialogDetailedView),
-        QStringLiteral("File associations"));
-    associationsAction->setObjectName(QStringLiteral("fileAssociationsAction"));
-    associationsAction->setToolTip(QStringLiteral("Manage file associations"));
-    connect(associationsAction, &QAction::triggered,
-            this, &MainWindow::showFileAssociationSettings);
 }
 
 void MainWindow::showFileAssociationSettings() {
@@ -2123,9 +2121,13 @@ void MainWindow::showModuleSummary(const QString& filePath,
 
     const peare_container_format format = currentSession_.containerFormat();
     const QByteArray filePathUtf8 = filePath.toUtf8();
-    const bool canAddFiles = peare_writer_can_add_files(filePathUtf8.constData()) != 0;
+    const bool writerCheckApplicable = format != PEARE_CONTAINER_UFS;
+    const bool canAddFiles = writerCheckApplicable &&
+        peare_writer_can_add_files(filePathUtf8.constData()) != 0;
     peare_writer_update_capabilities writerCapabilities = 0;
-    peare_writer_get_update_capabilities(filePathUtf8.constData(), 0, &writerCapabilities);
+    if (writerCheckApplicable)
+        peare_writer_get_update_capabilities(filePathUtf8.constData(), 0,
+                                              &writerCapabilities);
     size_t totalResources = 0;
     for (size_t f = 0; f < currentSession_.folderCount(); ++f)
         totalResources += currentSession_.resourceCount(f);

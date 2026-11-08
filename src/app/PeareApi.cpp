@@ -72,6 +72,7 @@ QString containerName(peare_container_format format)
     case PEARE_CONTAINER_WIM: return QStringLiteral("WIM");
     case PEARE_CONTAINER_FAT: return QStringLiteral("FAT");
     case PEARE_CONTAINER_UDF: return QStringLiteral("UDF");
+    case PEARE_CONTAINER_UFS: return QStringLiteral("UFS");
     case PEARE_CONTAINER_EXFAT: return QStringLiteral("exFAT");
     case PEARE_CONTAINER_VMDK: return QStringLiteral("VMDK");
     case PEARE_CONTAINER_VHD: return QStringLiteral("VHD");

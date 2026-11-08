@@ -41,7 +41,13 @@
 #include "CueBinModule.h"
 #include "CabModule.h"
 #include "RawDiskModule.h"
+#include "AndroidSuperModule.h"
+#include "XnbModule.h"
+#include "DxbcModule.h"
+#include "NupModule.h"
+#include "XdbfModule.h"
 #include "FloppyImageModule.h"
+#include "AdzModule.h"
 #include "ImzModule.h"
 #include "FfuModule.h"
 #include "ZipModule.h"
@@ -68,6 +74,7 @@
 #include "WimModule.h"
 #include "FatModule.h"
 #include "UdfModule.h"
+#include "UfsModule.h"
 #include "ExFatModule.h"
 #include "VmdkModule.h"
 #include "VhdModule.h"
@@ -93,6 +100,8 @@
 #include "RegistryModule.h"
 #include "BootConfigModule.h"
 
+#include "../fs/AndroidSparseStore.h"
+#include "../fs/AndroidSuperStore.h"
 #include "../fs/LinuxRaid.h"
 #include "../fs/DynamicDisk.h"
 #include "../fs/FloppyImage.h"
@@ -143,7 +152,7 @@ bool isZipFamily(ModuleFormat format)
 {
     return format == ModuleFormat::ZIP || format == ModuleFormat::APPX ||
            format == ModuleFormat::MSIX || format == ModuleFormat::APPXBUNDLE ||
-           format == ModuleFormat::XAP;
+           format == ModuleFormat::XAP || format == ModuleFormat::ANDROID_APK;
 }
 
 bool usesPositionedArchiveReader(ModuleFormat format)
@@ -160,6 +169,10 @@ bool usesPositionedArchiveReader(ModuleFormat format)
         format == ModuleFormat::ZSTD ||
         format == ModuleFormat::RPM ||
         format == ModuleFormat::WAD || format == ModuleFormat::WPI ||
+        format == ModuleFormat::XNB ||
+        format == ModuleFormat::DXBC ||
+        format == ModuleFormat::NUP ||
+        format == ModuleFormat::XDBF ||
         format == ModuleFormat::FLOPPY_IMAGE ||
         isZipFamily(format) || isEncryptedAppFamily(format);
 }
@@ -169,6 +182,12 @@ bool isPlayReadyXapFile(const QString& path)
     QFile file(path);
     return file.open(QIODevice::ReadOnly) &&
            PlayReadyXapModule::isHeader(file.read(0x20));
+}
+
+bool hasAdzExtension(const QString& sourceName)
+{
+    return QFileInfo(sourceName).suffix().compare(QStringLiteral("adz"),
+                                                  Qt::CaseInsensitive) == 0;
 }
 
 } // namespace
@@ -186,6 +205,23 @@ ModulePtr ModuleFactory::openWithPassword(const QString& filePath, const QString
     ModuleInfo info = detect(filePath);
     if (info.format == ModuleFormat::RPM) return RpmModule::open(filePath);
     if (info.format == ModuleFormat::CHM) return ChmModule::open(filePath);
+    if (info.format == ModuleFormat::GZIP && hasAdzExtension(filePath))
+        return AdzModule::open(std::make_shared<fs::QFileByteStore>(filePath), filePath);
+    if (info.format == ModuleFormat::ANDROID_SPARSE) {
+        fs::ByteStorePtr source = std::make_shared<fs::QFileByteStore>(filePath);
+        std::string error;
+        fs::ByteStorePtr image = fs::AndroidSparseStore::open(source, &error);
+        if (!image) {
+            info.error = QString::fromStdString(error);
+            return peare::makeUnique<DetectedModule>(std::move(info));
+        }
+        ModulePtr super = AndroidSuperModule::open(image, filePath);
+        if (super->info().isValid()) return super;
+        return RawDiskModule::open(image, filePath, ModuleFormat::ANDROID_SPARSE);
+    }
+    if (info.format == ModuleFormat::ANDROID_SUPER)
+        return AndroidSuperModule::open(std::make_shared<fs::QFileByteStore>(filePath),
+                                        filePath);
     if (info.format == ModuleFormat::Unknown && LzmaModule::hasExtension(filePath))
         return LzmaModule::open(filePath);
     if (!info.isValid()) return peare::makeUnique<DetectedModule>(std::move(info));
@@ -213,6 +249,7 @@ ModulePtr ModuleFactory::openWithPassword(const QString& filePath, const QString
     if (info.format == ModuleFormat::LE) return LeModule::open(filePath);
     if (info.format == ModuleFormat::LX) return LxModule::open(filePath);
     if (info.format == ModuleFormat::XEX) return XexModule::open(filePath);
+    if (info.format == ModuleFormat::XDBF) return XdbfModule::open(filePath);
     if (info.format == ModuleFormat::XBE) return XbeModule::open(filePath);
     if (info.format == ModuleFormat::XUIZ) return XuizModule::open(filePath);
     if (info.format == ModuleFormat::LIVE_PIRS) return LivePirsModule::open(filePath);
@@ -272,6 +309,7 @@ ModulePtr ModuleFactory::openWithPassword(const QString& filePath, const QString
     if (info.format == ModuleFormat::WIM) return WimModule::open(filePath);
     if (info.format == ModuleFormat::FAT) return FatModule::open(filePath);
     if (info.format == ModuleFormat::UDF) return UdfModule::open(filePath);
+    if (info.format == ModuleFormat::UFS) return UfsModule::open(filePath);
     if (info.format == ModuleFormat::EXFAT) return ExFatModule::open(filePath);
     if (info.format == ModuleFormat::VMDK) return VmdkModule::open(filePath);
     if (info.format == ModuleFormat::VHD) return VhdModule::open(filePath);
@@ -315,6 +353,8 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
         return RpmModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
     if (detected.format == ModuleFormat::CHM)
         return ChmModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
+    if (detected.format == ModuleFormat::GZIP && hasAdzExtension(logicalName))
+        return AdzModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
     if (detected.format == ModuleFormat::Unknown && LzmaModule::hasExtension(logicalName))
         return LzmaModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
     if (QFileInfo(logicalName).suffix().compare(QStringLiteral("imz"), Qt::CaseInsensitive) == 0 &&
@@ -486,6 +526,12 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
         info.error = QStringLiteral("Null byte source");
         return peare::makeUnique<DetectedModule>(std::move(info));
     }
+    if (disc->capacity() >= 901120 && disc->capacity() % 512 == 0) {
+        const std::vector<std::uint8_t> boot = disc->readRange(0, 12);
+        if (boot.size() == 12 && std::memcmp(boot.data(), "DOS", 3) == 0 &&
+            (boot[3] & 0xF8) == 0)
+            return FloppyImageModule::open(disc, sourceName, subPath);
+    }
     if (RpmModule::hasSupportedExtension(sourceName)) return RpmModule::open(disc, sourceName);
     if (DebModule::hasSupportedExtension(sourceName)) return DebModule::open(disc, sourceName);
     // Cheap header peek (covers ISO's descriptor at 0x8001, and the UDF volume
@@ -496,6 +542,33 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
     ModuleFormatInfo detected = ModuleFormatDetector::detectBuffer(header);
     if (detected.format == ModuleFormat::RPM) return RpmModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::CHM) return ChmModule::open(disc, sourceName);
+    if (detected.format == ModuleFormat::GZIP && hasAdzExtension(sourceName))
+        return AdzModule::open(disc, sourceName, subPath);
+    if (detected.format == ModuleFormat::ANDROID_SPARSE) {
+        std::string error;
+        fs::ByteStorePtr image = fs::AndroidSparseStore::open(disc, &error);
+        if (!image) {
+            ModuleInfo info;
+            info.filePath = sourceName;
+            info.format = ModuleFormat::ANDROID_SPARSE;
+            info.description = detected.description;
+            info.error = QString::fromStdString(error);
+            return peare::makeUnique<DetectedModule>(std::move(info));
+        }
+        ModulePtr super = AndroidSuperModule::open(image, sourceName);
+        if (super->info().isValid()) return super;
+        return RawDiskModule::open(image, sourceName, ModuleFormat::ANDROID_SPARSE);
+    }
+    if (detected.format == ModuleFormat::ANDROID_SUPER)
+        return AndroidSuperModule::open(disc, sourceName);
+    if (detected.format == ModuleFormat::XNB)
+        return XnbModule::open(disc, sourceName);
+    if (detected.format == ModuleFormat::DXBC)
+        return DxbcModule::open(disc, sourceName);
+    if (detected.format == ModuleFormat::NUP)
+        return NupModule::open(disc, sourceName, subPath);
+    if (detected.format == ModuleFormat::XDBF)
+        return XdbfModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::Unknown && LzmaModule::hasExtension(sourceName))
         return LzmaModule::open(disc, sourceName);
     if (QFileInfo(sourceName).suffix().compare(QStringLiteral("imz"), Qt::CaseInsensitive) == 0 &&
@@ -614,6 +687,7 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
     if (detected.format == ModuleFormat::WIM) return WimModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::FAT) return FatModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::UDF) return UdfModule::open(disc, sourceName, subPath);
+    if (detected.format == ModuleFormat::UFS) return UfsModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::EXFAT) return ExFatModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::VMDK) return VmdkModule::open(disc, sourceName);
     if (isEncryptedAppFamily(detected.format)) return EAppxModule::open(disc, sourceName);
@@ -698,6 +772,19 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
 ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName,
                               const QString& password)
 {
+    if (hasAdzExtension(logicalName) && data.size() >= 2 &&
+        static_cast<unsigned char>(data[0]) == 0x1F &&
+        static_cast<unsigned char>(data[1]) == 0x8B) {
+        const fs::ByteStorePtr source = std::make_shared<fs::MemoryStore>(
+            reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size()));
+        return AdzModule::open(source, logicalName);
+    }
+    if (data.size() >= 901120 && data.size() % 512 == 0 && data.startsWith("DOS") &&
+        (static_cast<unsigned char>(data[3]) & 0xF8) == 0) {
+        const fs::ByteStorePtr image = std::make_shared<fs::MemoryStore>(
+            reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size()));
+        return FloppyImageModule::open(image, logicalName);
+    }
     if (RpmModule::hasSupportedExtension(logicalName)) return RpmModule::open(data, logicalName);
     if (DebModule::hasSupportedExtension(logicalName)) return DebModule::open(data, logicalName);
     // A Siemens common-file IMG may start with B000FF; its footer is the outer
@@ -737,6 +824,22 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
     // common path for an archive stored in a PE resource and avoids a temporary
     // file plus a second complete read.
     const ModuleFormatInfo direct = ModuleFormatDetector::detectNestedBuffer(data.left(0x14000));
+    if (direct.format == ModuleFormat::XNB)
+        return XnbModule::open(std::make_shared<fs::MemoryStore>(
+            reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size())),
+            logicalName);
+    if (direct.format == ModuleFormat::DXBC)
+        return DxbcModule::open(std::make_shared<fs::MemoryStore>(
+            reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size())),
+            logicalName);
+    if (direct.format == ModuleFormat::NUP)
+        return NupModule::open(std::make_shared<fs::MemoryStore>(
+            reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size())),
+            logicalName);
+    if (direct.format == ModuleFormat::XDBF)
+        return XdbfModule::open(std::make_shared<fs::MemoryStore>(
+            reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size())),
+            logicalName);
     if (direct.format == ModuleFormat::RPM) return RpmModule::open(data, logicalName);
     if (direct.format == ModuleFormat::CHM) return ChmModule::open(data, logicalName);
     if (direct.format == ModuleFormat::Unknown && LzmaModule::hasExtension(logicalName))
@@ -757,6 +860,10 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
     }
     if (direct.format == ModuleFormat::FFU)
         return FfuModule::open(std::make_shared<fs::MemoryStore>(
+            reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size())),
+            logicalName);
+    if (direct.format == ModuleFormat::UFS)
+        return UfsModule::open(std::make_shared<fs::MemoryStore>(
             reinterpret_cast<const std::uint8_t*>(data.constData()), std::size_t(data.size())),
             logicalName);
     if (direct.format == ModuleFormat::XAP && PlayReadyXapModule::isHeader(data.left(0x20)))

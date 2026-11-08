@@ -42,6 +42,12 @@ QString lumpName(const std::uint8_t* p) {
     if (z >= 0) a.truncate(z);
     return QString::fromLatin1(a).trimmed();
 }
+QString wad2LumpName(const std::uint8_t* p) {
+    QByteArray a(reinterpret_cast<const char*>(p), 16);
+    int z = a.indexOf('\0');
+    if (z >= 0) a.truncate(z);
+    return QString::fromLatin1(a).trimmed();
+}
 NamespaceMarker namespaceMarker(const QString& name) {
     NamespaceMarker marker;
     const QString upperName = name.toUpper();
@@ -90,12 +96,20 @@ ModulePtr WadModule::open(const fs::ByteStorePtr& f, const QString& n) {
         return ModulePtr(std::move(m));
     }
     auto h = f->readRange(0, 12);
-    if (h.size() != 12 || (std::memcmp(h.data(), "IWAD", 4) && std::memcmp(h.data(), "PWAD", 4))) {
+    if (h.size() != 12) {
+        m->info_.error = "Truncated WAD header";
+        return ModulePtr(std::move(m));
+    }
+    const bool wad2 = std::memcmp(h.data(), "WAD2", 4) == 0;
+    const bool wad3 = std::memcmp(h.data(), "WAD3", 4) == 0;
+    const bool quakeWad = wad2 || wad3;
+    if (!quakeWad && std::memcmp(h.data(), "IWAD", 4) && std::memcmp(h.data(), "PWAD", 4)) {
         m->info_.error = "Invalid WAD signature";
         return ModulePtr(std::move(m));
     }
     quint32 count = le32(h.data() + 4), dir = le32(h.data() + 8);
-    quint64 bytes = quint64(count) * 16;
+    const quint32 entrySize = quakeWad ? 32u : 16u;
+    quint64 bytes = quint64(count) * entrySize;
     if (count > 1000000 || dir > quint64(f->capacity()) || bytes > quint64(f->capacity()) - dir) {
         m->info_.error = "Invalid WAD directory";
         return ModulePtr(std::move(m));
@@ -114,14 +128,26 @@ ModulePtr WadModule::open(const fs::ByteStorePtr& f, const QString& n) {
     offsets.reserve(int(count));
     sizes.reserve(int(count));
     for (quint32 i = 0; i < count; ++i) {
-        const auto* e = table.data() + i * 16;
+        const auto* e = table.data() + i * entrySize;
         quint32 off = le32(e), sz = le32(e + 4);
         if (off > quint64(f->capacity()) || sz > quint64(f->capacity()) - off) {
             m->info_.error = QStringLiteral("Invalid WAD lump %1").arg(i);
             m->resources_.clear();
             return ModulePtr(std::move(m));
         }
-        names.push_back(lumpName(e + 8));
+        if (quakeWad) {
+            const quint32 unpackedSize = le32(e + 8);
+            const std::uint8_t compression = e[13];
+            if (unpackedSize > quint64(f->capacity()) || compression > 1 ||
+                (compression == 0 && unpackedSize != sz)) {
+                m->info_.error = QStringLiteral("Invalid Quake WAD lump %1").arg(i);
+                m->resources_.clear();
+                return ModulePtr(std::move(m));
+            }
+            names.push_back(wad2LumpName(e + 16));
+        } else {
+            names.push_back(lumpName(e + 8));
+        }
         upperNames.push_back(names.last().toUpper());
         offsets.push_back(off);
         sizes.push_back(sz);
@@ -184,6 +210,23 @@ ModulePtr WadModule::open(const fs::ByteStorePtr& f, const QString& n) {
     for (quint32 i = 0; i < count; ++i) {
         ResourceEntry r;
         r.name = names.at(int(i));
+        if (quakeWad) {
+            const auto* e = table.data() + i * entrySize;
+            const std::uint8_t type = e[12];
+            const std::uint8_t compression = e[13];
+            const QString prefix = wad2 ? QStringLiteral("WAD2") : QStringLiteral("WAD3");
+            r.type = prefix + (compression == 1 ? QStringLiteral("_LZSS_LUMP")
+                                                 : QStringLiteral("_LUMP"));
+            r.type += QStringLiteral("_TYPE_%1").arg(type);
+            r.dataOffset = offsets.at(int(i));
+            r.dataSize = sizes.at(int(i));
+            r.baseId = int(i);
+            r.format = ModuleFormat::WAD;
+            r.isEmbeddedFile = r.dataSize > 0;
+            r.content = std::make_shared<fs::SubStore>(f, r.dataOffset, r.dataSize);
+            m->resources_.push_back(std::move(r));
+            continue;
+        }
         const QString& upperName = upperNames.at(int(i));
         const NamespaceMarker marker = namespaceMarker(upperName);
         QString detectedNamespace;
@@ -212,10 +255,15 @@ ModulePtr WadModule::open(const fs::ByteStorePtr& f, const QString& n) {
         r.content = std::make_shared<fs::SubStore>(f, r.dataOffset, r.dataSize);
         m->resources_.push_back(std::move(r));
     }
-    m->info_.description = QStringLiteral("%1 — %2 lumps")
-                               .arg(std::memcmp(h.data(), "IWAD", 4) ? "Doom patch WAD (PWAD)"
-                                                                     : "Doom internal WAD (IWAD)")
-                               .arg(count);
+    if (quakeWad) {
+        m->info_.description = QStringLiteral("Quake WAD%1 archive — %2 lumps")
+            .arg(wad2 ? 2 : 3).arg(count);
+    } else {
+        m->info_.description = QStringLiteral("%1 — %2 lumps")
+            .arg(std::memcmp(h.data(), "IWAD", 4) ? "Doom patch WAD (PWAD)"
+                                                  : "Doom internal WAD (IWAD)")
+            .arg(count);
+    }
     return ModulePtr(std::move(m));
 }
 } // namespace peare

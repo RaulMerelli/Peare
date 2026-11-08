@@ -508,6 +508,64 @@ std::vector<PartitionInfo> readApm(const ByteStorePtr& disk) {
     return out;
 }
 
+std::vector<PartitionInfo> readBsdDisklabel(const ByteStorePtr& disk) {
+    if (!disk || disk->capacity() < 512 + 148)
+        return {};
+    const std::vector<std::uint8_t> label = disk->readRange(512, 512);
+    if (label.size() != 512)
+        return {};
+    const bool bigEndian = le32(label.data()) != 0x82564557U &&
+                           be32(label.data()) == 0x82564557U;
+    const auto read16 = [bigEndian](const std::uint8_t* p) {
+        return bigEndian ? be16(p) : std::uint16_t(p[0] | (std::uint16_t(p[1]) << 8));
+    };
+    const auto read32 = [bigEndian](const std::uint8_t* p) {
+        return bigEndian ? be32(p) : le32(p);
+    };
+    if (read32(label.data()) != 0x82564557U ||
+        read32(label.data() + 132) != 0x82564557U)
+        return {};
+    const std::uint32_t sectorSize = read32(label.data() + 40);
+    const std::uint16_t partitionCount = read16(label.data() + 138);
+    if (!isPowerOfTwo(sectorSize) || sectorSize < 512 || sectorSize > 4096 ||
+        partitionCount == 0 || partitionCount > 20 ||
+        148 + std::size_t(partitionCount) * 16 > label.size())
+        return {};
+    std::uint16_t checksum = 0;
+    const std::size_t checksumSize = 148 + std::size_t(partitionCount) * 16;
+    for (std::size_t i = 0; i < checksumSize; i += 2)
+        checksum ^= read16(label.data() + i);
+    if (checksum != 0)
+        return {};
+
+    const std::uint64_t diskSectors =
+        static_cast<std::uint64_t>(disk->capacity()) / sectorSize;
+    std::vector<PartitionInfo> out;
+    for (std::uint16_t i = 0; i < partitionCount; ++i) {
+        const std::uint8_t* entry = label.data() + 148 + std::size_t(i) * 16;
+        const std::uint64_t sectors = read32(entry);
+        const std::uint64_t start = read32(entry + 4);
+        const std::uint8_t fileSystemType = entry[12];
+        if (sectors == 0 || start == 0 || start >= diskSectors ||
+            sectors > diskSectors - start)
+            continue;
+        if (start > static_cast<std::uint64_t>(INT64_MAX) / sectorSize ||
+            sectors > static_cast<std::uint64_t>(INT64_MAX) / sectorSize)
+            continue;
+        std::string type = "BSD disklabel partition";
+        if (fileSystemType == 1)
+            type = "BSD swap";
+        else if (fileSystemType == 7)
+            type = "BSD FFS/UFS";
+        PartitionInfo partition;
+        partition.typeName = type;
+        partition.offset = static_cast<std::int64_t>(start * sectorSize);
+        partition.length = static_cast<std::int64_t>(sectors * sectorSize);
+        out.push_back(std::move(partition));
+    }
+    return out;
+}
+
 ByteStorePtr partitionStore(const ByteStorePtr& disk, const PartitionInfo& p,
                             std::int64_t usableLength = -1) {
     if (!disk || p.offset < 0 || p.length <= 0 || p.offset >= disk->capacity())
@@ -721,6 +779,8 @@ std::vector<PartitionInfo> readPartitionTable(const ByteStorePtr& disk,
     if (logicalSectorSize != 512 && logicalSectorSize != 4096) return {};
     std::vector<PartitionInfo> apm = readApm(disk);
     if (!apm.empty()) return apm;
+    std::vector<PartitionInfo> bsd = readBsdDisklabel(disk);
+    if (!bsd.empty()) return bsd;
 
     std::vector<std::uint8_t> mbr = disk->readRange(0, 512);
     if (mbr.size() < 512 || mbr[510] != 0x55 || mbr[511] != 0xAA)

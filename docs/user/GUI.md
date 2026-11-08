@@ -119,8 +119,8 @@ The Writer converts a streamOptimized disk to monolithicSparse during an update.
 
 The Writer does not support parented disks, VMFS or device-backed extents, or
 compressed VMDK layouts other than streamOptimized. It does not support VHD or
-VHDX differencing disks, extended MBR partitions, VDI, or QCOW. ZIP members keep
-the Opener's 512 MiB uncompressed-size limit.
+VHDX differencing disks, extended MBR partitions, VDI, or QCOW. The Writer
+limits each new ZIP member to 512 MiB.
 Multi-disk ZIP and unsupported TAR variants are not supported.
 
 ## Local folder operations
@@ -138,16 +138,20 @@ Use **View > Navigation pane** and **View > Preview pane** to show or hide eithe
 
 ## File associations
 
-Use **File associations** on the toolbar to manage extensions by category.
-On Linux, selected types become per-user defaults. Clearing a type restores its
-previous default.
+Use **Settings > File associations...** to manage extensions by category.
+On Linux, Peare sets selected MIME types as per-user defaults. Clearing a type
+restores its previous default when one was saved. Peare does not change the
+**Added Associations** list.
 
-On Windows, Peare registers the selected types in Windows Default Apps and opens
-that system page. Select Peare there to change the defaults. Peare does not edit
-the Open with lists.
+On macOS, Peare sets selected default handlers. Clearing a type restores its
+previous handler when one was saved.
 
-Android controls file handlers through system settings. Android does not let an
-app assign itself as the default handler. Other platforms need native support.
+On Windows, Peare registers the selected types and opens Windows Settings.
+Confirm each default there. Windows does not allow apps to change defaults
+directly. Peare does not edit **Open with** lists.
+
+On Android, open files with Peare from the system file picker. Android does not
+provide an API for Peare to assign file defaults from this menu.
 
 ## Native application menu
 

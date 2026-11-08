@@ -2,6 +2,7 @@
 #include "Compat.h"
 #include "FsLevel.h"
 
+#include "../fs/AmigaFsReader.h"
 #include "../fs/FatReader.h"
 #include "../fs/FloppyImage.h"
 
@@ -47,7 +48,7 @@ bool FloppyImageModule::hasSupportedExtension(const QString& sourceName)
 {
     const QString suffix = QFileInfo(sourceName).suffix().toLower();
     return suffix == QStringLiteral("img") || suffix == QStringLiteral("ima") ||
-           suffix == QStringLiteral("vfd");
+           suffix == QStringLiteral("vfd") || suffix == QStringLiteral("adf");
 }
 
 ModulePtr FloppyImageModule::open(const fs::ByteStorePtr& image,
@@ -62,6 +63,19 @@ ModulePtr FloppyImageModule::open(const fs::ByteStorePtr& image,
         return ModulePtr(std::move(module));
     }
 
+    module->image_ = image;
+
+    auto amiga = std::make_shared<fs::AmigaFsReader>(image);
+    if (amiga->valid()) {
+        module->fs_ = amiga;
+        module->info_.description = QStringLiteral("Amiga ADF floppy image — %1")
+                                       .arg(QString::fromStdString(amiga->friendlyName()));
+        buildFsLevel(*amiga, image, subPath.toStdString(), ModuleFormat::FLOPPY_IMAGE,
+                     QStringLiteral("AMIGA_FILE"), QStringLiteral("AMIGA_DIR"),
+                     module->resources_);
+        return ModulePtr(std::move(module));
+    }
+
     const fs::FloppyGeometry geometry = fs::floppyGeometryForCapacity(image->capacity());
     if (!geometry.valid()) {
         module->info_.error = QStringLiteral("Unsupported raw floppy image capacity: %1 bytes")
@@ -69,7 +83,6 @@ ModulePtr FloppyImageModule::open(const fs::ByteStorePtr& image,
         return ModulePtr(std::move(module));
     }
 
-    module->image_ = image;
     module->info_.description = geometryDescription(geometry);
 
     auto fat = std::make_shared<fs::FatReader>(image);

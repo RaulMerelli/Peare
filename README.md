@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/RaulMerelli/Peare/releases/download/ci-latest/peare-windows-x64.zip"><img alt="Latest portable Windows build" src="https://img.shields.io/badge/Portable-Windows-527fa2?style=for-the-badge"></a>
+  <a href="https://github.com/RaulMerelli/Peare/releases/download/ci-latest/peare-windows-x64.zip"><img alt="Latest Windows CI build" src="https://img.shields.io/badge/Latest_CI-Windows-527fa2?style=for-the-badge"></a>
   <a href="https://github.com/RaulMerelli/Peare/releases/download/ci-latest/peare-linux-x64.tar.gz"><img alt="Latest Linux CI build" src="https://img.shields.io/badge/Latest_CI-Linux-4b7d52?style=for-the-badge"></a>
   <a href="https://github.com/RaulMerelli/Peare/releases/download/ci-latest/peare-android-arm64.apk"><img alt="Latest Android CI build" src="https://img.shields.io/badge/Latest_CI-Android-3c8b52?style=for-the-badge"></a>
 </p>

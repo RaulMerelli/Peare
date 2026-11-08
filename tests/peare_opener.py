@@ -249,9 +249,9 @@ class Opener:
                     self._L.peare_resource_context_free(C.byref(ctx))
                     folder_path = self.folder_type(folder)
                     folder_parts = folder_path.split("\x1f") if folder_path else []
-                    is_resource_type = lambda part: (
-                        part.replace("_", "").isalnum() and part.isupper())
-                    if folder_parts and not all(is_resource_type(part) for part in folder_parts):
+                    if folder_parts and folder_parts[-1] == resource_type:
+                        folder_parts.pop()
+                    if folder_parts:
                         name = "/".join(folder_parts + [name])
                     path = f"{prefix}/{name}" if prefix else name
 

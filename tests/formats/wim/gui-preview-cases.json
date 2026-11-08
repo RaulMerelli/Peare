@@ -2,11 +2,17 @@
   {
     "name": "wim-swm-first-part",
     "source": "tests/formats/wim/fixtures/test.swm",
-    "tree_path": "payload-3.bin"
+    "tree_path": "payload-3.bin",
+    "expected_size": 409600,
+    "expected_sha256": "e2a11780fc95d24db4867636e676048f69b8094b85db89a2d58e3b9d83aedfb4",
+    "expect_no_images": true
   },
   {
     "name": "wim-swm-numbered-part",
     "source": "tests/formats/wim/fixtures/test2.swm",
-    "tree_path": "payload-4.bin"
+    "tree_path": "payload-4.bin",
+    "expected_size": 409600,
+    "expected_sha256": "a4ba7b8c701671de76fad7f13ca46560c1484e47c1c2e090b288d772e87848ac",
+    "expect_no_images": true
   }
 ]

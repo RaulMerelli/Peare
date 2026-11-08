@@ -17,10 +17,12 @@ public:
 
     const ModuleInfo& info() const noexcept override { return info_; }
     const QVector<ResourceEntry>& resources() const noexcept override { return resources_; }
+    std::size_t memberCount() const noexcept { return memberCount_; }
 
 private:
     ModuleInfo info_;
     QVector<ResourceEntry> resources_;
+    std::size_t memberCount_ = 0;
 };
 
 } // namespace peare

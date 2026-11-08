@@ -43,6 +43,7 @@ ResourcePlatform platformFor(const ResourceEntry& entry)
         return ResourcePlatform::Windows;
     case ModuleFormat::XEX:
     case ModuleFormat::XBE:
+    case ModuleFormat::XDBF:
     case ModuleFormat::XUIZ:
     case ModuleFormat::LIVE_PIRS:
     case ModuleFormat::CON:
@@ -71,6 +72,7 @@ ResourcePlatform platformFor(const ResourceEntry& entry)
     case ModuleFormat::CAB:
     case ModuleFormat::SEVEN_ZIP:
     case ModuleFormat::ZIP:
+    case ModuleFormat::ANDROID_APK:
     case ModuleFormat::TAR:
     case ModuleFormat::ASAR:
     case ModuleFormat::SIEMENS_IMG:
@@ -83,6 +85,10 @@ ResourcePlatform platformFor(const ResourceEntry& entry)
     case ModuleFormat::EXFAT:
     case ModuleFormat::VMDK:
     case ModuleFormat::RAW_DISK:
+    case ModuleFormat::ANDROID_SPARSE:
+    case ModuleFormat::ANDROID_SUPER:
+    case ModuleFormat::DXBC:
+    case ModuleFormat::NUP:
     case ModuleFormat::FLOPPY_IMAGE:
     case ModuleFormat::VHD:
     case ModuleFormat::VDI:
@@ -431,7 +437,9 @@ void OpenerSession::rebuildFolders()
     for (int resourceIndex = 0; resourceIndex < entries.size(); ++resourceIndex) {
         const ResourceEntry& entry = entries.at(resourceIndex);
         QStringList path = entry.hierarchyPath;
-        const bool pathIncludesEntry = !path.isEmpty() && path.last() == entry.name;
+        const bool pathIncludesEntry = entry.type != QStringLiteral("ZIP_FILE") &&
+            entry.type != QStringLiteral("APK_FILE") &&
+            !path.isEmpty() && path.last() == entry.name;
         if (pathIncludesEntry)
             path.removeLast();
         const bool selectableContainer =
@@ -480,6 +488,7 @@ void OpenerSession::rebuildFolders()
             entry.type == QStringLiteral("CUE_AUDIO_TRACK") ||
             entry.type == QStringLiteral("CAB_FILE") ||
             entry.type == QStringLiteral("ZIP_FILE") ||
+            entry.type == QStringLiteral("APK_FILE") ||
             entry.type == QStringLiteral("APP_PACKAGE_FILE") ||
             entry.type == QStringLiteral("APP_BUNDLE_FILE") ||
             entry.type == QStringLiteral("XAP_FILE") ||
@@ -509,6 +518,7 @@ void OpenerSession::rebuildFolders()
             entry.type == QStringLiteral("WIM_FILE") ||
             entry.type == QStringLiteral("FAT_FILE") ||
             entry.type == QStringLiteral("UDF_FILE") ||
+            entry.type == QStringLiteral("UFS_FILE") ||
             entry.type == QStringLiteral("EXFAT_FILE") ||
             entry.type == QStringLiteral("EXT_FILE") ||
             entry.type == QStringLiteral("NTFS_FILE") ||

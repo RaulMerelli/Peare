@@ -2,6 +2,7 @@
 build/
 build-*/
 out/
+/$out/
 cmake-build-*/
 
 # CMake (in-source leftovers)

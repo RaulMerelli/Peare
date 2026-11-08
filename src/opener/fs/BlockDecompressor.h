@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <memory>
 
-#include "peare/lzx_frontends.h"
+#include "peare/Lzx_frontends.h"
 
 namespace peare {
 namespace fs {

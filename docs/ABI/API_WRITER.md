@@ -203,8 +203,7 @@ also removes all members below that path. Existing archive comments remain.
 Existing Store, Shrink, and Deflate data remains readable after updates. New
 members use Store. New archive-level ZIP64 records are written when entry counts
 or offsets require them. Multi-disk archives and unsafe new entry names are
-rejected. New or opened member payloads remain subject to the Opener's 512 MiB
-uncompressed-size limit.
+rejected. The Writer limits each new ZIP member to 512 MiB.
 
 The TAR backend writes USTAR regular-file and directory entries. It creates a
 new archive or updates an existing archive. Updates preserve untouched payload
@@ -340,7 +339,7 @@ New entries use UTF-8 names and the ZIP `stored` method. File input is streamed.
 The Writer does not need to hold an entire file in memory.
 New entries use ZIP32 size fields when possible.
 ZIP64 fields store offsets and archive records when required.
-New member payloads are limited to 512 MiB to match the Opener.
+New member payloads are limited to 512 MiB.
 
 Entry names use `/` separators. Absolute paths, drive-prefixed paths, `.` and
 `..` path segments, empty names, and duplicate normalized names are rejected.

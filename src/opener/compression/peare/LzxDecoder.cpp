@@ -1,4 +1,4 @@
-#include "lzx_frontends.h"
+#include "Lzx_frontends.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -318,27 +318,47 @@ public:
         : windowSize_(windowSize), kind_(kind), slotCount_(positionSlotCount(windowSize)),
           mainLengths_(kLiteralCount + slotCount_ * 8, 0),
           lengthLengths_(kLengthSymbols, 0), e8Used_(false), classicE8FileSize_(0),
-          classicE8Start_(std::numeric_limits<std::size_t>::max())
+          classicE8Start_(std::numeric_limits<std::size_t>::max()),
+          blockRemaining_(0), blockLength_(0), blockType_(0), streamOutputSize_(0)
     {
         recent_[0] = recent_[1] = recent_[2] = 1;
     }
 
     bool decode(const void *input, std::size_t inputSize, void *output, std::size_t outputSize)
     {
-        if (!input || !output || inputSize == 0 || outputSize == 0 || slotCount_ == 0)
+        return decodeFrame(input, inputSize, output, outputSize, outputSize, true, true);
+    }
+
+    bool decodeFrame(const void *input, std::size_t inputSize, void *output,
+                     std::size_t outputCapacity, std::size_t frameOutputSize,
+                     bool reset, bool finish)
+    {
+        if (!input || !output || inputSize == 0 || frameOutputSize == 0 || slotCount_ == 0)
             return false;
-        if (kind_ == StreamWim && outputSize > windowSize_)
+        const std::size_t startPosition = reset ? 0 : streamOutputSize_;
+        if (frameOutputSize > outputCapacity ||
+            startPosition > outputCapacity - frameOutputSize)
+            return false;
+        if (kind_ == StreamWim && frameOutputSize > windowSize_)
             return false;
 
-        std::fill(mainLengths_.begin(), mainLengths_.end(), 0);
-        std::fill(lengthLengths_.begin(), lengthLengths_.end(), 0);
-        recent_[0] = recent_[1] = recent_[2] = 1;
-        e8Used_ = false;
-        classicE8FileSize_ = 0;
-        classicE8Start_ = std::numeric_limits<std::size_t>::max();
+        if (reset) {
+            std::fill(mainLengths_.begin(), mainLengths_.end(), 0);
+            std::fill(lengthLengths_.begin(), lengthLengths_.end(), 0);
+            recent_[0] = recent_[1] = recent_[2] = 1;
+            e8Used_ = false;
+            classicE8FileSize_ = 0;
+            classicE8Start_ = std::numeric_limits<std::size_t>::max();
+            blockRemaining_ = 0;
+            blockLength_ = 0;
+            blockType_ = 0;
+            streamOutputSize_ = 0;
+        } else if (streamOutputSize_ == 0) {
+            return false;
+        }
 
         WordBitReader reader(input, inputSize);
-        if (kind_ == StreamClassic) {
+        if (reset && kind_ == StreamClassic) {
             std::uint32_t enabled;
             if (!reader.readBit(enabled))
                 return false;
@@ -351,39 +371,46 @@ public:
         }
 
         std::uint8_t *out = static_cast<std::uint8_t *>(output);
-        std::size_t outPos = 0;
-        while (outPos < outputSize) {
-            unsigned type;
-            std::size_t blockSize;
-            if (!readBlockHeader(reader, type, blockSize))
-                return false;
-            if (blockSize == 0 || blockSize > outputSize - outPos)
-                return false;
+        std::size_t outPos = streamOutputSize_;
+        const std::size_t frameEnd = outPos + frameOutputSize;
+        while (outPos < frameEnd) {
+            if (blockRemaining_ == 0) {
+                if (blockType_ == BlockUncompressed && (blockLength_ & 1u) != 0 &&
+                    reader.bytesRemaining() != 0 && !reader.skipRaw(1))
+                    return false;
+                if (!readBlockHeader(reader, blockType_, blockRemaining_) ||
+                    blockRemaining_ == 0)
+                    return false;
+                blockLength_ = blockRemaining_;
+            }
+            const std::size_t blockSize = std::min(blockRemaining_, frameEnd - outPos);
             if (kind_ == StreamClassic && classicE8FileSize_ != 0 &&
-                (type == BlockUncompressed || mainLengths_[0xe8] != 0)) {
+                (blockType_ == BlockUncompressed || mainLengths_[0xe8] != 0)) {
                 e8Used_ = true;
                 classicE8Start_ = std::min(classicE8Start_, (outPos / kFrameSize) * kFrameSize);
             }
 
-            if (type == BlockUncompressed) {
-                if (!decodeUncompressed(reader, out, outPos, blockSize))
+            if (blockType_ == BlockUncompressed) {
+                if (!decodeUncompressed(reader, out, outPos, blockSize,
+                                        blockSize == blockRemaining_))
                     return false;
                 if (kind_ == StreamWim)
                     e8Used_ = true;
             } else {
-                if (!decodeCompressed(reader, type, out, outPos, blockSize, outputSize))
+                if (!decodeCompressed(reader, blockType_, out, outPos, blockSize, frameEnd))
                     return false;
                 if (kind_ == StreamWim && mainLengths_[0xe8] != 0)
                     e8Used_ = true;
             }
+            blockRemaining_ -= blockSize;
         }
+        streamOutputSize_ = frameEnd;
 
-        if (e8Used_) {
+        if (finish && e8Used_) {
             if (kind_ == StreamClassic)
-                undoClassicE8(out, outputSize, static_cast<std::int32_t>(classicE8FileSize_),
-                              classicE8Start_);
+                undoClassicE8(out, frameEnd, static_cast<std::int32_t>(classicE8FileSize_), 0);
             else
-                undoWimE8(out, outputSize);
+                undoWimE8(out, frameEnd);
         }
         return true;
     }
@@ -514,13 +541,12 @@ private:
     }
 
     bool decodeUncompressed(WordBitReader &reader, std::uint8_t *out,
-                            std::size_t &outPos, std::size_t blockSize)
+                            std::size_t &outPos, std::size_t blockSize, bool blockEnd)
     {
         if (!reader.readRaw(out + outPos, blockSize))
             return false;
         outPos += blockSize;
-        if ((blockSize & 1) != 0 && reader.bytesRemaining() != 0 && !reader.skipRaw(1))
-            return false;
+        (void)blockEnd;
         return true;
     }
 
@@ -601,6 +627,10 @@ private:
     bool e8Used_;
     std::uint32_t classicE8FileSize_;
     std::size_t classicE8Start_;
+    std::size_t blockRemaining_;
+    std::size_t blockLength_;
+    unsigned blockType_;
+    std::size_t streamOutputSize_;
 };
 
 peare_lzx_status decodeWith(LzxDecoder &decoder, const void *compressedData,
@@ -723,6 +753,27 @@ extern "C" peare_lzx_status peare_lzx_cab_decompress(
         return PEARE_LZX_INVALID_ARGUMENT;
     return decodeWith(decoder->engine, compressedStream, compressedSize,
                       uncompressedData, uncompressedSize);
+}
+
+extern "C" peare_lzx_status peare_lzx_cab_decompress_frame(
+    peare_lzx_cab_decoder *decoder, const void *compressedFrame,
+    std::size_t compressedSize, void *uncompressedData,
+    std::size_t outputCapacity, std::size_t frameOutputSize,
+    int reset, int finish)
+{
+    if (!decoder || !compressedFrame || !uncompressedData || compressedSize == 0 ||
+        outputCapacity == 0 || frameOutputSize == 0 ||
+        frameOutputSize > outputCapacity)
+        return PEARE_LZX_INVALID_ARGUMENT;
+    try {
+        return decoder->engine.decodeFrame(compressedFrame, compressedSize,
+            uncompressedData, outputCapacity, frameOutputSize, reset != 0, finish != 0)
+            ? PEARE_LZX_OK : PEARE_LZX_CORRUPT_STREAM;
+    } catch (const std::bad_alloc &) {
+        return PEARE_LZX_OUT_OF_MEMORY;
+    } catch (...) {
+        return PEARE_LZX_CORRUPT_STREAM;
+    }
 }
 
 extern "C" void peare_lzx_cab_destroy(peare_lzx_cab_decoder *decoder)

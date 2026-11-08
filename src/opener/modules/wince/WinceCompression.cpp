@@ -2,7 +2,7 @@
 // CERF is MIT-licensed; see CERF-LICENSE.txt.
 #include "WinceCompression.h"
 
-#include <peare/lzx_frontends.h>
+#include <peare/Lzx_frontends.h>
 
 #include <algorithm>
 #include <cstdint>

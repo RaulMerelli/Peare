@@ -15,6 +15,7 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <QCryptographicHash>
 #include <QStringList>
 #include <QXmlStreamReader>
 #include <algorithm>
@@ -111,6 +112,343 @@ quint32 le32(const std::uint8_t* p) {
 
 quint64 le64(const std::uint8_t* p) {
     return quint64(le32(p)) | (quint64(le32(p + 4)) << 32);
+}
+
+bool readExact(const fs::IByteStore& store, std::int64_t offset,
+               std::uint8_t* dst, int count);
+QByteArray readArray(const fs::IByteStore& store, std::int64_t offset,
+                     std::int64_t count);
+
+bool takeLengthPrefixed(const QByteArray& data, int* offset, int end,
+                        int* valueOffset, int* valueSize) {
+    if (*offset < 0 || end < *offset || end - *offset < 4) return false;
+    const quint32 size = le32(reinterpret_cast<const std::uint8_t*>(data.constData() + *offset));
+    *offset += 4;
+    if (size > quint32(end - *offset)) return false;
+    *valueOffset = *offset;
+    *valueSize = int(size);
+    *offset += int(size);
+    return true;
+}
+
+bool takeDerField(const QByteArray& data, int* offset, int end, quint8 expectedTag,
+                 int* valueOffset, int* valueSize) {
+    if (*offset < 0 || end - *offset < 2 || quint8(data.at(*offset)) != expectedTag)
+        return false;
+    ++*offset;
+    const quint8 firstLength = quint8(data.at(*offset));
+    ++*offset;
+    quint64 length = firstLength;
+    if (firstLength & 0x80) {
+        const int lengthBytes = firstLength & 0x7f;
+        if (lengthBytes == 0 || lengthBytes > 4 || end - *offset < lengthBytes)
+            return false;
+        length = 0;
+        for (int i = 0; i < lengthBytes; ++i)
+            length = (length << 8) | quint8(data.at((*offset)++));
+    }
+    if (length > quint64(end - *offset)) return false;
+    *valueOffset = *offset;
+    *valueSize = int(length);
+    *offset += int(length);
+    return true;
+}
+
+QString certificateCommonName(const QByteArray& certificate) {
+    int offset = 0;
+    int certificateOffset = 0;
+    int certificateSize = 0;
+    if (!takeDerField(certificate, &offset, certificate.size(), 0x30,
+                      &certificateOffset, &certificateSize)) return {};
+    const int certificateEnd = certificateOffset + certificateSize;
+    offset = certificateOffset;
+    int tbsOffset = 0;
+    int tbsSize = 0;
+    if (!takeDerField(certificate, &offset, certificateEnd, 0x30, &tbsOffset, &tbsSize))
+        return {};
+    const int tbsEnd = tbsOffset + tbsSize;
+    offset = tbsOffset;
+    if (offset < tbsEnd && quint8(certificate.at(offset)) == 0xa0) {
+        int ignoredOffset = 0;
+        int ignoredSize = 0;
+        if (!takeDerField(certificate, &offset, tbsEnd, 0xa0,
+                          &ignoredOffset, &ignoredSize)) return {};
+    }
+    for (int field = 0; field < 2; ++field) {
+        int ignoredOffset = 0;
+        int ignoredSize = 0;
+        if (!takeDerField(certificate, &offset, tbsEnd,
+                          field == 0 ? 0x02 : 0x30, &ignoredOffset, &ignoredSize)) return {};
+    }
+    int issuerOffset = 0;
+    int issuerSize = 0;
+    if (!takeDerField(certificate, &offset, tbsEnd, 0x30, &issuerOffset, &issuerSize))
+        return {};
+    int validityOffset = 0;
+    int validitySize = 0;
+    if (!takeDerField(certificate, &offset, tbsEnd, 0x30,
+                      &validityOffset, &validitySize)) return {};
+    int subjectOffset = 0;
+    int subjectSize = 0;
+    if (!takeDerField(certificate, &offset, tbsEnd, 0x30,
+                      &subjectOffset, &subjectSize)) return {};
+
+    int nameCursor = subjectOffset;
+    const int nameEnd = subjectOffset + subjectSize;
+    while (nameCursor < nameEnd) {
+        int setOffset = 0;
+        int setSize = 0;
+        if (!takeDerField(certificate, &nameCursor, nameEnd, 0x31, &setOffset, &setSize))
+            return {};
+        int sequenceCursor = setOffset;
+        const int setEnd = setOffset + setSize;
+        while (sequenceCursor < setEnd) {
+            int attributeOffset = 0;
+            int attributeSize = 0;
+            if (!takeDerField(certificate, &sequenceCursor, setEnd, 0x30,
+                              &attributeOffset, &attributeSize)) return {};
+            int attributeCursor = attributeOffset;
+            const int attributeEnd = attributeOffset + attributeSize;
+            int oidOffset = 0;
+            int oidSize = 0;
+            if (!takeDerField(certificate, &attributeCursor, attributeEnd, 0x06,
+                              &oidOffset, &oidSize)) return {};
+            int valueOffset = 0;
+            int valueSize = 0;
+            if (attributeCursor >= attributeEnd) return {};
+            const quint8 valueTag = quint8(certificate.at(attributeCursor));
+            if (!takeDerField(certificate, &attributeCursor, attributeEnd, valueTag,
+                              &valueOffset, &valueSize)) return {};
+            static const char commonNameOid[] = {0x55, 0x04, 0x03};
+            if (oidSize != int(sizeof(commonNameOid)) ||
+                std::memcmp(certificate.constData() + oidOffset, commonNameOid,
+                            sizeof(commonNameOid)) != 0) continue;
+            const QByteArray value = certificate.mid(valueOffset, valueSize);
+            if (valueTag == 0x0c) return QString::fromUtf8(value);
+            if (valueTag == 0x1e && value.size() % 2 == 0) {
+                QVector<ushort> chars;
+                chars.reserve(value.size() / 2);
+                for (int i = 0; i < value.size(); i += 2)
+                    chars.push_back((quint8(value.at(i)) << 8) | quint8(value.at(i + 1)));
+                return QString::fromUtf16(chars.constData(), chars.size());
+            }
+            if (valueTag == 0x12 || valueTag == 0x13 || valueTag == 0x14 || valueTag == 0x16)
+                return QString::fromLatin1(value);
+            return {};
+        }
+    }
+    return {};
+}
+
+bool appendApkRotationLineage(const QByteArray& data, QStringList* lineage) {
+    if (data.size() < 4 || le32(reinterpret_cast<const std::uint8_t*>(data.constData())) != 1)
+        return false;
+    int offset = 4;
+    while (offset < data.size()) {
+        int nodeOffset = 0;
+        int nodeSize = 0;
+        if (!takeLengthPrefixed(data, &offset, data.size(), &nodeOffset, &nodeSize))
+            return false;
+        const int nodeEnd = nodeOffset + nodeSize;
+        int cursor = nodeOffset;
+        int signedOffset = 0;
+        int signedSize = 0;
+        if (!takeLengthPrefixed(data, &cursor, nodeEnd, &signedOffset, &signedSize))
+            return false;
+        const int signedEnd = signedOffset + signedSize;
+        int certificateOffset = 0;
+        int certificateSize = 0;
+        if (!takeLengthPrefixed(data, &signedOffset, signedEnd,
+                                &certificateOffset, &certificateSize) ||
+            signedEnd - signedOffset != 4) return false;
+        const QByteArray certificate = data.mid(certificateOffset, certificateSize);
+        if (certificate.isEmpty() || quint8(certificate.at(0)) != 0x30) return false;
+        signedOffset += 4;
+        if (nodeEnd - cursor < 8) return false;
+        const quint32 flags = le32(reinterpret_cast<const std::uint8_t*>(data.constData() + cursor));
+        cursor += 8;
+        int signatureOffset = 0;
+        int signatureSize = 0;
+        if (!takeLengthPrefixed(data, &cursor, nodeEnd, &signatureOffset, &signatureSize) ||
+            cursor != nodeEnd) return false;
+        QString description = certificateCommonName(certificate);
+        if (description.isEmpty()) description = QStringLiteral("certificate");
+        description += QStringLiteral(" [SHA-256 ") + QString::fromLatin1(
+            QCryptographicHash::hash(certificate, QCryptographicHash::Sha256).toHex());
+        description += QStringLiteral(", flags 0x%1]").arg(flags, 0, 16);
+        lineage->push_back(description);
+    }
+    return !lineage->isEmpty();
+}
+
+bool appendApkSignerFingerprints(const QByteArray& scheme, int schemeVersion,
+                                QStringList* fingerprints, QStringList* lineage) {
+    int offset = 0;
+    int signersOffset = 0;
+    int signersSize = 0;
+    if (!takeLengthPrefixed(scheme, &offset, scheme.size(), &signersOffset, &signersSize) ||
+        offset != scheme.size()) return false;
+
+    const int signersEnd = signersOffset + signersSize;
+    offset = signersOffset;
+    while (offset < signersEnd) {
+        int signerOffset = 0;
+        int signerSize = 0;
+        if (!takeLengthPrefixed(scheme, &offset, signersEnd, &signerOffset, &signerSize))
+            return false;
+        const int signerEnd = signerOffset + signerSize;
+        int cursor = signerOffset;
+        int signedDataOffset = 0;
+        int signedDataSize = 0;
+        if (!takeLengthPrefixed(scheme, &cursor, signerEnd,
+                                &signedDataOffset, &signedDataSize)) return false;
+        quint32 signerMinSdk = 0;
+        quint32 signerMaxSdk = 0;
+        if (schemeVersion >= 3) {
+            if (signerEnd - cursor < 8) return false;
+            signerMinSdk = le32(reinterpret_cast<const std::uint8_t*>(scheme.constData() + cursor));
+            signerMaxSdk = le32(reinterpret_cast<const std::uint8_t*>(scheme.constData() + cursor + 4));
+            cursor += 8;
+        }
+        int signaturesOffset = 0;
+        int signaturesSize = 0;
+        if (!takeLengthPrefixed(scheme, &cursor, signerEnd,
+                                &signaturesOffset, &signaturesSize)) return false;
+        int publicKeyOffset = 0;
+        int publicKeySize = 0;
+        if (!takeLengthPrefixed(scheme, &cursor, signerEnd,
+                                &publicKeyOffset, &publicKeySize) || cursor != signerEnd)
+            return false;
+
+        int signedCursor = signedDataOffset;
+        const int signedEnd = signedDataOffset + signedDataSize;
+        int ignoredOffset = 0;
+        int ignoredSize = 0;
+        if (!takeLengthPrefixed(scheme, &signedCursor, signedEnd,
+                                &ignoredOffset, &ignoredSize)) return false;
+        int certificatesOffset = 0;
+        int certificatesSize = 0;
+        if (!takeLengthPrefixed(scheme, &signedCursor, signedEnd,
+                                &certificatesOffset, &certificatesSize)) return false;
+
+        const int certificatesEnd = certificatesOffset + certificatesSize;
+        int certificateCursor = certificatesOffset;
+        bool foundCertificate = false;
+        while (certificateCursor < certificatesEnd) {
+            int certificateOffset = 0;
+            int certificateSize = 0;
+            if (!takeLengthPrefixed(scheme, &certificateCursor, certificatesEnd,
+                                    &certificateOffset, &certificateSize)) return false;
+            if (!foundCertificate) {
+                const QByteArray certificate = scheme.mid(certificateOffset, certificateSize);
+                if (certificate.isEmpty() || quint8(certificate.at(0)) != 0x30) return false;
+                QString fingerprint = QString::fromLatin1(
+                    QCryptographicHash::hash(certificate, QCryptographicHash::Sha256).toHex());
+                const QString commonName = certificateCommonName(certificate);
+                if (!commonName.isEmpty()) fingerprint += QStringLiteral(" (CN=%1)").arg(commonName);
+                if (schemeVersion >= 3)
+                    fingerprint += QStringLiteral(" (SDK %1-%2)")
+                        .arg(signerMinSdk).arg(signerMaxSdk);
+                fingerprints->push_back(fingerprint);
+                foundCertificate = true;
+            }
+        }
+        if (!foundCertificate) return false;
+        if (schemeVersion >= 3) {
+            if (signedEnd - signedCursor < 8) return false;
+            const quint32 signedMinSdk = le32(
+                reinterpret_cast<const std::uint8_t*>(scheme.constData() + signedCursor));
+            const quint32 signedMaxSdk = le32(
+                reinterpret_cast<const std::uint8_t*>(scheme.constData() + signedCursor + 4));
+            if (signedMinSdk != signerMinSdk || signedMaxSdk != signerMaxSdk)
+                return false;
+            signedCursor += 8;
+        }
+        int attributesOffset = 0;
+        int attributesSize = 0;
+        if (!takeLengthPrefixed(scheme, &signedCursor, signedEnd,
+                                &attributesOffset, &attributesSize)) return false;
+        const int attributesEnd = attributesOffset + attributesSize;
+        int attributeCursor = attributesOffset;
+        while (attributeCursor < attributesEnd) {
+            int attributeOffset = 0;
+            int attributeSize = 0;
+            if (!takeLengthPrefixed(scheme, &attributeCursor, attributesEnd,
+                                    &attributeOffset, &attributeSize) || attributeSize < 4)
+                return false;
+            const quint32 attributeId = le32(
+                reinterpret_cast<const std::uint8_t*>(scheme.constData() + attributeOffset));
+            if (attributeId == 0x3ba06f8cu &&
+                !appendApkRotationLineage(
+                    scheme.mid(attributeOffset + 4, attributeSize - 4), lineage)) return false;
+        }
+    }
+    return offset == signersEnd && !fingerprints->isEmpty();
+}
+
+QString apkSigningDescription(const fs::IByteStore& file, quint64 centralDirectoryOffset) {
+    static const char magic[] = "APK Sig Block 42";
+    if (centralDirectoryOffset < 24 || centralDirectoryOffset > quint64(file.capacity()))
+        return QStringLiteral("APK signing block: unavailable");
+    std::uint8_t trailer[24];
+    const std::int64_t trailerOffset = std::int64_t(centralDirectoryOffset - sizeof(trailer));
+    if (!readExact(file, trailerOffset, trailer, sizeof(trailer)) ||
+        std::memcmp(trailer + 8, magic, 16) != 0)
+        return QStringLiteral("APK signing block: not present");
+
+    const quint64 blockSize = le64(trailer);
+    if (blockSize < 24 || blockSize > centralDirectoryOffset - 8 ||
+        blockSize > quint64(std::numeric_limits<int>::max()))
+        return QStringLiteral("APK signing block: malformed");
+    const quint64 blockOffset = centralDirectoryOffset - blockSize - 8;
+    std::uint8_t firstSize[8];
+    if (!readExact(file, std::int64_t(blockOffset), firstSize, sizeof(firstSize)) ||
+        le64(firstSize) != blockSize)
+        return QStringLiteral("APK signing block: malformed");
+
+    const QByteArray pairs = readArray(file, std::int64_t(blockOffset + 8),
+                                       std::int64_t(blockSize - 24));
+    if (pairs.size() != int(blockSize - 24))
+        return QStringLiteral("APK signing block: malformed");
+    QStringList schemes;
+    QStringList fingerprints;
+    QStringList lineages;
+    int offset = 0;
+    while (offset < pairs.size()) {
+        if (pairs.size() - offset < 8) return QStringLiteral("APK signing block: malformed");
+        const quint64 pairSize = le64(reinterpret_cast<const std::uint8_t*>(pairs.constData() + offset));
+        offset += 8;
+        if (pairSize < 4 || pairSize > quint64(pairs.size() - offset))
+            return QStringLiteral("APK signing block: malformed");
+        const quint32 id = le32(reinterpret_cast<const std::uint8_t*>(pairs.constData() + offset));
+        const int valueSize = int(pairSize - 4);
+        if (id == 0x7109871au || id == 0xf05368c0u || id == 0x1b93ad61u) {
+            QStringList signerFingerprints;
+            const int schemeVersion = id == 0x7109871au ? 2 : 3;
+            if (!appendApkSignerFingerprints(pairs.mid(offset + 4, valueSize),
+                                             schemeVersion,
+                                             &signerFingerprints, &lineages))
+                return QStringLiteral("APK signing block: malformed v%1 data")
+                    .arg(id == 0x7109871au ? QStringLiteral("2")
+                        : id == 0xf05368c0u ? QStringLiteral("3") : QStringLiteral("3.1"));
+            schemes.push_back(QStringLiteral("v%1 (%2 signer%3)")
+                .arg(id == 0x7109871au ? QStringLiteral("2")
+                    : id == 0xf05368c0u ? QStringLiteral("3") : QStringLiteral("3.1"))
+                .arg(signerFingerprints.size())
+                .arg(signerFingerprints.size() == 1 ? QString() : QStringLiteral("s")));
+            fingerprints.append(signerFingerprints);
+        }
+        offset += 4 + valueSize;
+    }
+    if (schemes.isEmpty())
+        return QStringLiteral("APK signing block: no supported v2/v3/v3.1 signer data");
+    fingerprints.removeDuplicates();
+    QString description = QStringLiteral(
+        "Android APK, APK Signature Scheme %1, signer leaf certificates: %2")
+        .arg(schemes.join(QStringLiteral(", ")), fingerprints.join(QStringLiteral(", ")));
+    if (!lineages.isEmpty())
+        description += QStringLiteral(", v3 key lineage: ") + lineages.join(QStringLiteral(" -> "));
+    return description;
 }
 
 bool resolveZip64Extra(const QByteArray& extra, bool needUncompressed,
@@ -844,6 +1182,10 @@ void appendMetadata(QStringList* values, const QString& label, const QString& va
 
 ModuleFormat classifyPackage(const QVector<ResourceEntry>& resources,
                              const QString& sourceName) {
+    if (ModuleFormatDetector::zipPackageFormatForName(sourceName) ==
+            ModuleFormat::ANDROID_APK &&
+        hasResource(resources, QStringLiteral("AndroidManifest.xml")))
+        return ModuleFormat::ANDROID_APK;
     if (hasResource(resources, QStringLiteral("AppxMetadata/AppxBundleManifest.xml")))
         return ModuleFormat::APPXBUNDLE;
     if (hasResource(resources, QStringLiteral("AppxManifest.xml")) &&
@@ -963,6 +1305,8 @@ QString invalidPackageError(ModuleFormat expected) {
         return QStringLiteral("Invalid APPXBUNDLE package: AppxMetadata/AppxBundleManifest.xml is missing");
     case ModuleFormat::XAP:
         return QStringLiteral("Invalid XAP package: AppManifest.xaml or WMAppManifest.xml is missing");
+    case ModuleFormat::ANDROID_APK:
+        return QStringLiteral("Invalid Android APK: AndroidManifest.xml is missing");
     default:
         return QString();
     }
@@ -1231,6 +1575,8 @@ ModulePtr ZipModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
     }
 
     module->info_.format = actual;
+    if (actual == ModuleFormat::ANDROID_APK)
+        module->info_.description = apkSigningDescription(*file, cdOffset);
     if (actual == ModuleFormat::APPX || actual == ModuleFormat::MSIX)
         module->info_.description = appPackageDescription(module->resources_, actual);
     else if (actual == ModuleFormat::APPXBUNDLE)
@@ -1244,6 +1590,8 @@ ModulePtr ZipModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
             ? QStringLiteral("APP_PACKAGE_FILE")
             : actual == ModuleFormat::XAP
                 ? QStringLiteral("XAP_FILE")
+                : actual == ModuleFormat::ANDROID_APK
+                    ? QStringLiteral("APK_FILE")
                 : QStringLiteral("ZIP_FILE");
     for (ResourceEntry& entry : module->resources_) {
         entry.type = resourceType;

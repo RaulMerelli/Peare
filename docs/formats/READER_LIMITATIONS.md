@@ -3,6 +3,44 @@
 This document describes archive features that Peare does not support. The
 format matrix lists the supported formats.
 
+## Nintendo Switch NUP
+
+Peare reads unencrypted NUP version 1 package trees with raw and Zstandard file
+payloads. It skips unknown metadata TLVs. It does not decrypt game content.
+The public draft and its reference packer use different IDs for text metadata
+TLVs. Peare reads both numberings.
+
+## XNA / MonoGame XNB
+
+Peare reads XNB versions 4 and 5 with uncompressed, LZX, and raw LZ4 content.
+It reports the content-reader table and preserves the serialized root asset.
+It previews Color Texture2D assets. It does not deserialize other root asset
+types into their game-level structures.
+
+## DirectX Shader Container
+
+Peare validates the DXBC header, chunk offsets, sizes, and non-overlap. It
+exposes raw chunks and does not validate the container checksum or decode shader
+instructions.
+
+## Quake WAD2
+
+The reader lists lumps and returns their stored bytes. It does not decompress
+lumps marked with the WAD2 LZSS flag. The distributed Quake 1.06 sample uses
+uncompressed lumps.
+
+## Half-Life WAD3
+
+The reader lists lumps and returns their stored bytes. It does not decompress
+lumps marked with the WAD3 LZSS flag. The tested `decals.wad` sample uses
+uncompressed lumps.
+
+## Xbox 360 XDBF/GPD
+
+Peare reads XDBF version 1.0 record tables, shows the GPD title string, and
+previews image records. Other record payloads remain raw. Peare does not decode
+achievement, setting, or synchronization record structures.
+
 ## Microsoft WIM
 
 Peare reads split WIM sets when all parts are in one directory. The files must
@@ -48,6 +86,23 @@ for method names and IDs.
 Peare reads an unencrypted ZIP-compatible IMZ that contains one standard-capacity
 raw floppy image named with the `.ima` or `.img` suffix. Encrypted images and
 archives with multiple floppy images are not supported.
+
+## Amiga ADF
+
+The Reader supports 880 KiB OFS and FFS floppy images, including images with
+international and directory-cache flags. It reads directory hash chains and
+does not use directory-cache blocks. Amiga file and directory links are not
+listed as resources.
+
+ADZ support is limited to one GZIP member that contains a standard 880 KiB ADF
+with a valid Amiga DOS file system. Extended ADF images and multi-member ADZ
+streams are not supported.
+
+## Android APK signing metadata
+
+Peare reports APK Signature Scheme v2, v3, and v3.1 signer counts,
+leaf-certificate SHA-256 fingerprints, common names, and v3 key lineage. It does
+not verify APK signatures. APKS and AAB files use generic ZIP browsing.
 
 ## RAR
 
