@@ -162,6 +162,10 @@ struct WadEntry {
     QByteArray name;
     quint64 size = 0;
     qint64 dataOffset = 0;
+
+    WadEntry() = default;
+    WadEntry(QByteArray entryName, quint64 entrySize, qint64 entryOffset)
+        : name(std::move(entryName)), size(entrySize), dataOffset(entryOffset) {}
 };
 
 struct DebEntry {
@@ -175,6 +179,12 @@ struct RpmEntry {
     quint32 size = 0;
     quint32 modified = 0;
     QByteArray digest;
+
+    RpmEntry() = default;
+    RpmEntry(QString stagedPath, QByteArray entryName, quint32 entrySize,
+             quint32 modifiedTime, QByteArray fileDigest)
+        : sourcePath(std::move(stagedPath)), name(std::move(entryName)),
+          size(entrySize), modified(modifiedTime), digest(std::move(fileDigest)) {}
 };
 
 struct RpmTag {
@@ -182,6 +192,10 @@ struct RpmTag {
     quint32 type = 0;
     quint32 count = 0;
     QByteArray value;
+
+    RpmTag() = default;
+    RpmTag(quint32 tagId, quint32 dataType, quint32 itemCount, QByteArray data)
+        : tag(tagId), type(dataType), count(itemCount), value(std::move(data)) {}
 };
 
 struct XarEntry {
@@ -3517,6 +3531,9 @@ bool writeZipPackMp3Payload(QIODevice* output, Read read, quint32* crc,
 struct WavPackWriterOutput {
     QIODevice* device;
     bool failed = false;
+
+    WavPackWriterOutput(QIODevice* outputDevice, bool hasFailed)
+        : device(outputDevice), failed(hasFailed) {}
 };
 
 int writeWavPackBlock(void* context, void* data, int32_t size) {
@@ -5057,10 +5074,10 @@ bool xarCompressFile(const QString& sourcePath, const QString& destinationPath,
             }
         } else if (useBzip) {
             bzip.next_in = in.data();
-            bzip.avail_in = unsigned int(count);
+            bzip.avail_in = static_cast<unsigned int>(count);
             while (bzip.avail_in) {
                 bzip.next_out = out.data();
-                bzip.avail_out = unsigned int(out.size());
+                bzip.avail_out = static_cast<unsigned int>(out.size());
                 const int status = BZ2_bzCompress(&bzip, BZ_RUN);
                 const qint64 produced = qint64(out.size() - bzip.avail_out);
                 if (status != BZ_RUN_OK ||
@@ -5091,7 +5108,7 @@ bool xarCompressFile(const QString& sourcePath, const QString& destinationPath,
         int status = BZ_RUN_OK;
         while (status != BZ_STREAM_END) {
             bzip.next_out = out.data();
-            bzip.avail_out = unsigned int(out.size());
+            bzip.avail_out = static_cast<unsigned int>(out.size());
             status = BZ2_bzCompress(&bzip, BZ_FINISH);
             const qint64 produced = qint64(out.size() - bzip.avail_out);
             if ((status != BZ_FINISH_OK && status != BZ_STREAM_END) ||
