@@ -2804,10 +2804,13 @@ QString MainWindow::writerEntryPath(QTreeWidgetItem* item) const {
         const QString ownerType = owner->data(0, TypeRole).toString();
         pearegui::Session* parentSession = sessionOf(owner);
         if (!parentSession || parentSession == itemSession) return {};
-        const bool gzipTarWrapper = ownerType == QStringLiteral("GZIP_FILE") &&
-            itemSession->containerFormat() == PEARE_CONTAINER_TAR &&
-            parentSession->containerFormat() == PEARE_CONTAINER_GZIP;
-        if (gzipTarWrapper) {
+        const bool compressedTarWrapper =
+            ((ownerType == QStringLiteral("GZIP_FILE") &&
+              parentSession->containerFormat() == PEARE_CONTAINER_GZIP) ||
+             (ownerType == QStringLiteral("BZIP2_FILE") &&
+              parentSession->containerFormat() == PEARE_CONTAINER_BZIP2)) &&
+            itemSession->containerFormat() == PEARE_CONTAINER_TAR;
+        if (compressedTarWrapper) {
             transparentOwners.push_back(owner);
         } else if (ownerType != QStringLiteral("DISK_PARTITION") &&
             !ownerType.endsWith(QStringLiteral("_DIR"), Qt::CaseInsensitive)) {

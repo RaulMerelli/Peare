@@ -122,6 +122,7 @@ package-specific limits on ZIP-based files.
 | Google Earth KMZ | KMZ archive | Yes | Yes |
 | TAR | V7 and USTAR | Yes | Yes |
 | TAR.GZ / TGZ | USTAR archive in an RFC 1952 GZIP stream | Yes | Yes |
+| TAR.BZ2 / TBZ / TBZ2 | USTAR archive in a BZIP2 stream; compression levels 1-9 | Yes | Yes |
 | OS/2 WarpIN (WPI) | Raw revision 3 and 4 packages; stored and bzip2-compressed payloads. Self-extracting EXE packages are not included. | Yes | No |
 | RPM | RPM v3/v4 packages with CPIO payloads | Yes | No |
 | Microsoft Cabinet | Uncompressed, MSZIP, LZX (window sizes 15 to 21), and Quantum (window sizes 10 to 21) | Yes | No |
