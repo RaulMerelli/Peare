@@ -89,9 +89,10 @@ It does not update existing XAR archives or create Apple package signatures.
 
 ISO creation writes a new 2048-byte-sector image with a primary volume
 descriptor and a Joliet supplementary descriptor. Joliet names use BMP Unicode
-and can contain up to 64 UTF-16 code units. The primary tree uses generated
-short aliases. Each file must fit in one 32-bit ISO extent. The Writer does
-not update existing ISO images.
+and can contain up to 62 UTF-16 code units for file names and 64 for directory
+names. The primary tree uses generated short aliases. Each file must fit in one
+32-bit ISO extent. The Writer creates new images and does not update existing
+ISO images.
 
 GZIP creation writes one RFC 1952 member per selected input file. The GZIP
 stream is not an archive with independently editable entries.
