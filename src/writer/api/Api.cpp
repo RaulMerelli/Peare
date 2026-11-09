@@ -35,6 +35,7 @@
 #include <map>
 #include <mutex>
 #include <new>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -200,6 +201,8 @@ struct peare_writer_handle_s {
     int bzip2Level = 9;
     int zstdLevel = 3;
     int lzmaLevel = 5;
+    int unixCompressMaxBits = 16;
+    bool unixCompressBlockMode = true;
     unsigned xzCheckId = XZ_CHECK_CRC64;
     qint64 cpioOpaqueOffset = 0;
     qint64 cpioOpaqueSize = 0;
@@ -215,7 +218,7 @@ struct peare_writer_handle_s {
     bool archiveDirty = false;
     bool fatTargetSpecified = false;
     size_t fatTargetIndex = 0;
-    enum class Mode { None, ZipCreate, ZipUpdate, GzipCreate, Bzip2Create, ZstdCreate, XzCreate, LzmaAloneCreate, TarCreate, TarUpdate, CpioCreate,
+    enum class Mode { None, ZipCreate, ZipUpdate, GzipCreate, Bzip2Create, ZstdCreate, XzCreate, LzmaAloneCreate, UnixCompressCreate, TarCreate, TarUpdate, CpioCreate,
                       CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate,
                       FatCreate, DiskUpdate } mode = Mode::None;
 };
@@ -3390,6 +3393,129 @@ bool writeZipLzmaPayload(QIODevice* output, Read read, quint32* crc,
     return true;
 }
 
+class UnixCompressBitWriter {
+public:
+    explicit UnixCompressBitWriter(QIODevice* output) : output_(output) {}
+
+    bool writeCode(quint32 code, unsigned width) {
+        buffer_ |= quint64(code) << bitCount_;
+        bitCount_ += width;
+        while (bitCount_ >= 8) {
+            if (!writeByte(char(buffer_ & 0xff))) return false;
+            buffer_ >>= 8;
+            bitCount_ -= 8;
+        }
+        return true;
+    }
+
+    bool flushClearBoundary(unsigned width) {
+        if (bitCount_) {
+            if (!writeByte(char(buffer_ & 0xff))) return false;
+            buffer_ = 0;
+            bitCount_ = 0;
+        }
+        const qint64 remainder = sectionBytes_ % qint64(width);
+        const qint64 padding = (qint64(width) - remainder) % qint64(width);
+        for (qint64 i = 0; i < padding; ++i)
+            if (!writeByte('\0')) return false;
+        return true;
+    }
+
+    void beginWidthSection() { sectionBytes_ = 0; }
+
+    bool finish() {
+        if (!bitCount_) return true;
+        if (!writeByte(char(buffer_ & 0xff))) return false;
+        buffer_ = 0;
+        bitCount_ = 0;
+        return true;
+    }
+
+private:
+    bool writeByte(char value) {
+        if (!output_ || output_->write(&value, 1) != 1) return false;
+        ++sectionBytes_;
+        return true;
+    }
+
+    QIODevice* output_;
+    quint64 buffer_ = 0;
+    unsigned bitCount_ = 0;
+    qint64 sectionBytes_ = 0;
+};
+
+peare_writer_status writeUnixCompressMember(peare_writer_handle_s* writer,
+                                            const char* sourcePathUtf8,
+                                            const char* entryNameUtf8) {
+    if (writer->output->pos() != 0)
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("Unix compress output accepts one input file."));
+    if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("A Unix compress source and name are required."));
+    QByteArray safeName;
+    if (!normalizedEntryName(entryNameUtf8, false, &safeName))
+        return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                    QStringLiteral("The Unix compress input name is invalid or unsafe."));
+
+    QFile input(QString::fromUtf8(sourcePathUtf8));
+    if (!input.open(QIODevice::ReadOnly))
+        return fail(writer, PEARE_WRITER_IO_ERROR, input.errorString());
+    const quint8 flags = quint8(writer->unixCompressMaxBits |
+        (writer->unixCompressBlockMode ? 0x80 : 0));
+    const char header[] = {char(0x1f), char(0x9d), char(flags)};
+    if (!writeAll(writer->output.get(), header, sizeof(header)))
+        return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+
+    const int maxBits = writer->unixCompressMaxBits;
+    const quint32 maxCodes = quint32(1) << maxBits;
+    quint32 nextCode = writer->unixCompressBlockMode ? 257u : 256u;
+    unsigned codeWidth = 9;
+    std::unordered_map<quint32, quint32> dictionary;
+    dictionary.reserve(size_t(maxCodes));
+    UnixCompressBitWriter bits(writer->output.get());
+    char byte = 0;
+    if (!input.getChar(&byte)) {
+        if (input.error() != QFileDevice::NoError)
+            return fail(writer, PEARE_WRITER_IO_ERROR, input.errorString());
+        return PEARE_WRITER_OK;
+    }
+    quint32 phrase = quint8(byte);
+    while (input.getChar(&byte)) {
+        const quint8 value = quint8(byte);
+        const quint32 key = (phrase << 8) | value;
+        const auto found = dictionary.find(key);
+        if (found != dictionary.end()) {
+            phrase = found->second;
+            continue;
+        }
+        if (!bits.writeCode(phrase, codeWidth))
+            return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+        if (nextCode < maxCodes) {
+            dictionary.emplace(key, nextCode++);
+            if (codeWidth < unsigned(maxBits) && nextCode > (quint32(1) << codeWidth)) {
+                if (!bits.flushClearBoundary(codeWidth))
+                    return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+                ++codeWidth;
+                bits.beginWidthSection();
+            }
+        } else if (writer->unixCompressBlockMode) {
+            if (!bits.writeCode(256, codeWidth) || !bits.flushClearBoundary(codeWidth))
+                return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+            dictionary.clear();
+            nextCode = 257;
+            codeWidth = 9;
+            bits.beginWidthSection();
+        }
+        phrase = value;
+    }
+    if (input.error() != QFileDevice::NoError)
+        return fail(writer, PEARE_WRITER_IO_ERROR, input.errorString());
+    if (!bits.writeCode(phrase, codeWidth) || !bits.finish())
+        return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+    return PEARE_WRITER_OK;
+}
+
 peare_writer_status writeLzmaAloneMember(peare_writer_handle_s* writer,
                                          const char* sourcePathUtf8,
                                          const char* entryNameUtf8) {
@@ -3962,7 +4088,7 @@ peare_writer_status peare_writer_create(peare_writer_handle* outWriter) {
     }
 }
 
-size_t peare_writer_create_format_count(void) { return 15; }
+size_t peare_writer_create_format_count(void) { return 17; }
 
 peare_writer_status peare_writer_get_create_format(size_t index,
                                                     peare_writer_format* outFormat) {
@@ -3983,7 +4109,8 @@ peare_writer_status peare_writer_get_create_format(size_t index,
         {"vhd", "VHD virtual disk", "vhd"},
         {"vhdx", "VHDX virtual disk", "vhdx"},
         {"vmdk", "VMDK virtual disk", "vmdk"},
-        {"wad", "Doom WAD archive", "wad"}
+        {"wad", "Doom WAD archive", "wad"},
+        {"unix-compress", "Unix compress stream", "Z"}
     };
     if (index >= sizeof(formats) / sizeof(formats[0]))
         return PEARE_WRITER_INVALID_ARGUMENT;
@@ -3999,6 +4126,7 @@ size_t peare_writer_create_variant_count(const char* formatIdUtf8) {
     if (std::strcmp(formatIdUtf8, "zstd") == 0) return 27;
     if (std::strcmp(formatIdUtf8, "xz") == 0) return 4;
     if (std::strcmp(formatIdUtf8, "lzma") == 0) return 9;
+    if (std::strcmp(formatIdUtf8, "unix-compress") == 0) return 16;
     if (std::strcmp(formatIdUtf8, "tar") == 0) return 1;
     if (std::strcmp(formatIdUtf8, "cpio") == 0) return 6;
     if (std::strcmp(formatIdUtf8, "ar") == 0) return 2;
@@ -4062,6 +4190,24 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
         {"level-5", "Level 5"}, {"level-6", "Level 6"},
         {"level-7", "Level 7"}, {"level-8", "Level 8"},
         {"level-9", "Level 9"}
+    };
+    static const peare_writer_variant unixCompressVariants[] = {
+        {"block-9", "Block mode, 9 bits"},
+        {"block-10", "Block mode, 10 bits"},
+        {"block-11", "Block mode, 11 bits"},
+        {"block-12", "Block mode, 12 bits"},
+        {"block-13", "Block mode, 13 bits"},
+        {"block-14", "Block mode, 14 bits"},
+        {"block-15", "Block mode, 15 bits"},
+        {"block-16", "Block mode, 16 bits"},
+        {"legacy-9", "Non-block mode, 9 bits"},
+        {"legacy-10", "Non-block mode, 10 bits"},
+        {"legacy-11", "Non-block mode, 11 bits"},
+        {"legacy-12", "Non-block mode, 12 bits"},
+        {"legacy-13", "Non-block mode, 13 bits"},
+        {"legacy-14", "Non-block mode, 14 bits"},
+        {"legacy-15", "Non-block mode, 15 bits"},
+        {"legacy-16", "Non-block mode, 16 bits"}
     };
     static const peare_writer_variant tarVariants[] = { {"ustar", "USTAR"} };
     static const peare_writer_variant cpioVariants[] = {
@@ -4129,6 +4275,10 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
     }
     if (std::strcmp(formatIdUtf8, "lzma") == 0 && index < 9) {
         *outVariant = lzmaVariants[index];
+        return PEARE_WRITER_OK;
+    }
+    if (std::strcmp(formatIdUtf8, "unix-compress") == 0 && index < 16) {
+        *outVariant = unixCompressVariants[index];
         return PEARE_WRITER_OK;
     }
     if (std::strcmp(formatIdUtf8, "tar") == 0 && index == 0) {
@@ -4441,6 +4591,42 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
             writer->active = true;
             writer->updateMode = false;
             writer->mode = peare_writer_handle_s::Mode::LzmaAloneCreate;
+            return PEARE_WRITER_OK;
+        });
+    }
+    if (std::strcmp(formatIdUtf8, "unix-compress") == 0) {
+        if (!variant)
+            return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                        QStringLiteral("A Unix compress width and mode are required."), false);
+        const bool blockMode = std::strncmp(variant, "block-", 6) == 0;
+        const bool legacyMode = std::strncmp(variant, "legacy-", 7) == 0;
+        const char* widthText = blockMode ? variant + 6 : legacyMode ? variant + 7 : nullptr;
+        if (!widthText || !*widthText)
+            return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                        QStringLiteral("The Unix compress mode is invalid."), false);
+        char* end = nullptr;
+        const long maxBits = std::strtol(widthText, &end, 10);
+        if (!end || *end || maxBits < 9 || maxBits > 16)
+            return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                        QStringLiteral("The Unix compress code width is invalid."), false);
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (writer->active)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("A writer operation is already active."), false);
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            writer->output.reset(new (std::nothrow) QSaveFile(QString::fromUtf8(outputPathUtf8)));
+            if (!writer->output || !writer->output->open(QIODevice::WriteOnly)) {
+                const QString error = writer->output ? writer->output->errorString()
+                    : QStringLiteral("Could not allocate the Unix compress output.");
+                writer->output.reset();
+                return fail(writer, PEARE_WRITER_IO_ERROR, error, false);
+            }
+            writer->unixCompressMaxBits = int(maxBits);
+            writer->unixCompressBlockMode = blockMode;
+            writer->active = true;
+            writer->updateMode = false;
+            writer->mode = peare_writer_handle_s::Mode::UnixCompressCreate;
             return PEARE_WRITER_OK;
         });
     }
@@ -5064,6 +5250,10 @@ peare_writer_status peare_writer_add_file(peare_writer_handle writer,
     if (writer->mode == peare_writer_handle_s::Mode::LzmaAloneCreate)
         return cBoundary(writer, [&] {
             return writeLzmaAloneMember(writer, sourcePathUtf8, entryNameUtf8);
+        });
+    if (writer->mode == peare_writer_handle_s::Mode::UnixCompressCreate)
+        return cBoundary(writer, [&] {
+            return writeUnixCompressMember(writer, sourcePathUtf8, entryNameUtf8);
         });
     if (writer->mode == peare_writer_handle_s::Mode::ZipCreate ||
         writer->mode == peare_writer_handle_s::Mode::ZipUpdate)
@@ -5858,7 +6048,8 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
             writer->errorUtf8.clear();
             return PEARE_WRITER_OK;
         });
-    if (writer->mode == peare_writer_handle_s::Mode::LzmaAloneCreate)
+    if (writer->mode == peare_writer_handle_s::Mode::LzmaAloneCreate ||
+        writer->mode == peare_writer_handle_s::Mode::UnixCompressCreate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             if (!writer->output->commit())
                 return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());

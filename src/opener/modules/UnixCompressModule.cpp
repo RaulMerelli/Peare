@@ -51,7 +51,17 @@ public:
         return true;
     }
 
-    void beginNewWidthSection() { bytesInSection_ = 0; }
+    bool beginNewWidthSection(int width)
+    {
+        bitBuffer_ = 0;
+        availableBits_ = 0;
+        const std::uint64_t remainder = bytesInSection_ % std::uint64_t(width);
+        const std::size_t skip = std::size_t((std::uint64_t(width) - remainder) % width);
+        if (skip > size_ - position_) return false;
+        position_ += skip;
+        bytesInSection_ = 0;
+        return true;
+    }
 
 private:
     const std::uint8_t* data_;
@@ -132,9 +142,9 @@ bool decompressUnixCompress(const std::vector<std::uint8_t>& input,
             suffixes[std::size_t(nextCode)] = firstByte;
             ++nextCode;
             if (nextCode > sectionEnd && codeWidth < maxBits) {
+                if (!reader.beginNewWidthSection(codeWidth)) return false;
                 ++codeWidth;
                 sectionEnd = codeWidth == maxBits ? maxCodes : (1 << codeWidth) - 1;
-                reader.beginNewWidthSection();
             }
         }
         previousCode = inputCode;

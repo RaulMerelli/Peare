@@ -52,7 +52,7 @@ peare_writer_status peare_writer_add_file(
 peare_writer_status peare_writer_finish(peare_writer_handle writer);
 ```
 
-The create backends are ZIP, GZIP, BZIP2, LZMA-alone, XZ, Zstandard, TAR, GNU and BSD ar, Doom IWAD and PWAD, all six CPIO variants (`newc`, CRC, `odc`, afio
+The create backends are ZIP, GZIP, BZIP2, Unix compress, LZMA-alone, XZ, Zstandard, TAR, GNU and BSD ar, Doom IWAD and PWAD, all six CPIO variants (`newc`, CRC, `odc`, afio
 large ASCII, binary little-endian, and binary big-endian), standalone FAT, floppy images,
 raw MBR/GPT disks, VHD, VHDX, and VMDK. Format descriptors and their strings remain valid
 for the process lifetime. Floppy images support the 12 geometries in the Writer
@@ -77,6 +77,9 @@ concatenated streams and supports no check, CRC32, CRC64, or SHA-256 checks.
 
 LZMA-alone creation writes one stream for one selected input file and supports
 compression levels 1 through 9.
+
+Unix compress creation writes one `.Z` stream for one input file. It supports
+block and non-block modes with code widths from 9 through 16 bits.
 
 The ar Writer creates GNU long-name tables or BSD extended-name records. Ar
 members are flat files, so the Writer does not create directory entries. Symbol

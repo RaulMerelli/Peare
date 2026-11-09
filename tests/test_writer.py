@@ -6005,6 +6005,63 @@ def test_lzma_alone_writer_levels_single_stream_and_7zip(
     assert gui_check.returncode == 0, gui_check.stdout + gui_check.stderr
 
 
+def test_unix_compress_writer_modes_widths_and_7zip(
+        writer_lib, peare_lib, peare_gui_path, tmp_path):
+    seven_zip = _seven_zip_executable()
+    source = ROOT / "src" / "writer" / "third_party" / "zstd" / "compress" / "zstd_compress.c"
+    expected = source.read_bytes()
+    expected_hash = hashlib.sha256(expected).hexdigest()
+    variants = []
+    for index in range(writer_lib.peare_writer_create_variant_count(b"unix-compress")):
+        item = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"unix-compress", index, C.byref(item)) == 0
+        variants.append(item.id.decode())
+    assert variants == [
+        *(f"block-{width}" for width in range(9, 17)),
+        *(f"legacy-{width}" for width in range(9, 17))]
+
+    input_file = _WriterInputFile(str(source).encode(), source.name.encode())
+    gui_stream = None
+    for variant in variants:
+        stream_path = tmp_path / f"peare-{variant}.Z"
+        options = _WriterCreateOptions(b"unix-compress", variant.encode(), None)
+        writer = _HANDLE()
+        assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+        try:
+            status = writer_lib.peare_writer_add_files_to_ex(
+                writer, str(stream_path).encode(), C.byref(options), 0,
+                C.byref(input_file), 1)
+            assert status == 0, writer_lib.peare_writer_last_error(writer)
+        finally:
+            writer_lib.peare_writer_destroy(writer)
+        if variant == "block-16":
+            gui_stream = stream_path
+
+        encoded = stream_path.read_bytes()
+        bits = int(variant.rsplit("-", 1)[1])
+        block_mode = variant.startswith("block-")
+        assert encoded[:3] == bytes((0x1f, 0x9d, bits | (0x80 if block_mode else 0)))
+        with peare_lib.open_file(str(stream_path)) as opener:
+            rows = opener.normalized_tree()
+            assert len(rows) == 1
+            assert rows[0]["sha256"] == expected_hash
+        if seven_zip:
+            external_extract = subprocess.run(
+                [seven_zip, "x", "-so", str(stream_path)], capture_output=True,
+                timeout=60, check=False)
+            assert external_extract.returncode == 0, external_extract.stdout + external_extract.stderr
+            assert external_extract.stdout == expected
+
+    gui_output = tmp_path / "unix-compress-gui-preview"
+    gui_check = subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "run_gui_preview_tests.py"),
+         "--exe", str(peare_gui_path), "--case", "unix-compress-writer-block16",
+         str(gui_stream), "peare-block-16", "--output-dir", str(gui_output)],
+        capture_output=True, text=True, timeout=120, check=False)
+    assert gui_check.returncode == 0, gui_check.stdout + gui_check.stderr
+
+
 @pytest.mark.parametrize("view", ["tree", "details"])
 def test_zipx_wavpack_gui_cud_offscreen(
         writer_lib, peare_lib, peare_gui_path, tmp_path, view):
