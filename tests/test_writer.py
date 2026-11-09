@@ -2,6 +2,8 @@ import ctypes as C
 
 import hashlib
 
+import bz2
+
 import gzip
 
 import json
@@ -34,11 +36,27 @@ import zipfile
 
 import zlib
 
+import lzma
+
 import pytest
 
 import peare_opener as po
 
 ROOT = Path(__file__).resolve().parent.parent
+
+def _seven_zip_executable():
+    configured = os.environ.get("PEARE_7ZIP_EXE")
+    if configured and Path(configured).is_file():
+        return configured
+    executable = shutil.which("7z.exe") or shutil.which("7z") or shutil.which("7zz")
+    if executable:
+        return executable
+    if os.name == "nt":
+        candidate = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
+            "7-Zip" / "7z.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return None
 
 class _ProcessIoCounters(C.Structure):
     _fields_ = [(name, C.c_ulonglong) for name in (
@@ -4427,6 +4445,27 @@ def test_tar_cud_with_archive_created_by_external_tool(
         capture_output=True, text=True, timeout=30)
     assert creation.returncode == 0, creation.stdout + creation.stderr
     assert writer_lib.peare_writer_can_add_files(str(archive).encode()) == 1
+    capabilities = C.c_uint32()
+    assert writer_lib.peare_writer_get_update_capabilities(
+        str(archive).encode(), 0, C.byref(capabilities)) == 0
+    assert capabilities.value == 0x3b
+
+    batch_archive = tmp_path / f"batch-{variant}.a"
+    options = _WriterCreateOptions(b"ar", variant.encode(), None)
+    batch_input = _WriterInputFile(str(long_source).encode(),
+                                   b"batch member with long name.txt")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(batch_archive).encode(), C.byref(options), 0,
+            C.byref(batch_input), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    batch_names = subprocess.run([ar, "t", str(batch_archive)], check=True,
+                                 capture_output=True).stdout.decode().splitlines()
+    assert batch_names == ["batch member with long name.txt"]
     _assert_archive_duplicate_create_is_atomic(
         writer_lib, archive, original.name, tmp_path)
     assert writer_lib.peare_writer_update_target_count(str(archive).encode()) == 1
@@ -4962,6 +5001,1033 @@ def test_zip_add_files_and_cud_with_archive_created_by_7zip(
         assert "CUD-REMOVE/CHILD.TXT" not in rows
     finally:
         opener.close()
+
+
+def test_zip_deflate_create_works_with_both_archive_tools(
+        writer_lib, peare_lib, tmp_path):
+    seven_zip = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
+        "7-Zip" / "7z.exe"
+    winrar = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
+        "WinRAR" / "WinRAR.exe"
+    source = ROOT / "README.md"
+    archive = tmp_path / "peare-deflate.zip"
+    source_bytes = source.read_bytes()
+    assert writer_lib.peare_writer_create_variant_count(b"zip") == 18
+    variants = (_WriterVariant * 18)()
+    assert all(writer_lib.peare_writer_get_create_variant(
+        b"zip", index, C.byref(variants[index])) == 0 for index in range(18))
+    assert [(item.id, item.display_name) for item in variants] == [
+        (b"deflate", b"Deflate"), (b"bzip2", b"BZip2"),
+        (b"store", b"Store"), (b"lzma", b"LZMA"),
+        (b"xz", b"XZ (ZIPX)"), (b"zstd", b"Zstandard (ZIPX)"),
+        (b"ppmd", b"PPMd (ZIPX)"), (b"shrink", b"Shrink"),
+        (b"deflate64", b"Deflate64"), (b"mp3", b"MP3 (ZIPX)"),
+        (b"wavpack", b"WavPack (ZIPX)"), (b"implode", b"Implode"),
+        (b"dcl-implode", b"DCL Implode"),
+        (b"reduce-1", b"Reduce 1"), (b"reduce-2", b"Reduce 2"),
+        (b"reduce-3", b"Reduce 3"), (b"reduce-4", b"Reduce 4"),
+        (b"jpeg", b"JPEG (ZIPX)")]
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"zip", b"deflate", str(archive).encode()) == 0
+        assert writer_lib.peare_writer_zip_add_file(
+            writer, str(source).encode(), b"README.md") == 0
+        assert writer_lib.peare_writer_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with zipfile.ZipFile(archive) as created:
+        assert created.testzip() is None
+        assert created.getinfo("README.md").compress_type == zipfile.ZIP_DEFLATED
+        assert created.read("README.md") == source_bytes
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows["README.md"]["sha256"] == hashlib.sha256(source_bytes).hexdigest()
+
+    batch_archive = tmp_path / "peare-deflate-batch.zip"
+    options = _WriterCreateOptions(b"zip", b"deflate", None)
+    input_file = _WriterInputFile(str(source).encode(), b"README.md")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(batch_archive).encode(), C.byref(options), 0,
+            C.byref(input_file), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    with zipfile.ZipFile(batch_archive) as created:
+        assert created.getinfo("README.md").compress_type == zipfile.ZIP_DEFLATED
+        assert created.read("README.md") == source_bytes
+
+    assert seven_zip.is_file()
+    assert winrar.is_file()
+    for archive_path in (archive, batch_archive):
+        for tool in (seven_zip, winrar):
+            arguments = [str(tool), "t", "-ibck", str(archive_path)] \
+                if tool == winrar else [str(tool), "t", str(archive_path)]
+            result = subprocess.run(arguments, capture_output=True, text=True,
+                                    timeout=60)
+            assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(("variant", "method"), [
+    (b"implode", 6), (b"dcl-implode", 10),
+])
+def test_zip_legacy_implode_writer_roundtrip(
+        writer_lib, peare_lib, tmp_path, variant, method):
+    source = ROOT / "README.md"
+    source_bytes = source.read_bytes()
+    archive = tmp_path / f"peare-method{method}.zip"
+    options = _WriterCreateOptions(b"zip", variant, None)
+    input_file = _WriterInputFile(str(source).encode(), b"README.md")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            C.byref(input_file), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    with zipfile.ZipFile(archive) as created:
+        entry = created.getinfo("README.md")
+        assert entry.compress_type == method
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows["README.md"]["sha256"] == hashlib.sha256(
+            source_bytes).hexdigest()
+
+
+@pytest.mark.parametrize(("variant", "method"), [
+    (b"reduce-1", 2), (b"reduce-2", 3),
+    (b"reduce-3", 4), (b"reduce-4", 5),
+])
+def test_zip_reduce_writer_roundtrip(writer_lib, peare_lib, tmp_path, variant, method):
+    source = ROOT / "README.md"
+    source_bytes = source.read_bytes()
+    archive = tmp_path / f"peare-method{method}.zip"
+    options = _WriterCreateOptions(b"zip", variant, None)
+    input_file = _WriterInputFile(str(source).encode(), b"README.md")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            C.byref(input_file), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    with zipfile.ZipFile(archive) as created:
+        entry = created.getinfo("README.md")
+        assert entry.compress_type == method
+        assert entry.extract_version == 10
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows["README.md"]["sha256"] == hashlib.sha256(
+            source_bytes).hexdigest()
+    hwzip = os.environ.get("PEARE_HWZIP_PATH")
+    if hwzip:
+        extracted = tmp_path / f"hwzip-method{method}"
+        extracted.mkdir()
+        result = subprocess.run([hwzip, "extract", str(archive)], cwd=extracted,
+                                capture_output=True, text=True, timeout=60)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (extracted / "README.md").read_bytes() == source_bytes
+
+
+@pytest.mark.parametrize(("factor", "method"), [(1, 2), (2, 3), (3, 4), (4, 5)])
+def test_zip_reduce_reader_real_sample(peare_lib, factor, method):
+    archive_value = os.environ.get(f"PEARE_ZIP_REDUCE_FACTOR{factor}_SAMPLE")
+    if not archive_value:
+        pytest.skip("Set PEARE_ZIP_REDUCE_FACTOR*_SAMPLE to external Reduce ZIP samples")
+    archive = Path(archive_value)
+    assert archive.is_file()
+    with zipfile.ZipFile(archive) as external:
+        members = [info for info in external.infolist() if not info.is_dir()]
+    assert len(members) == 1
+    info = members[0]
+    assert info.compress_type == method
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows[info.filename]["sha256"] == hashlib.sha256(
+            (ROOT / "README.md").read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+@pytest.mark.parametrize(("variant", "method"), [
+    (b"reduce-1", 2), (b"reduce-2", 3),
+    (b"reduce-3", 4), (b"reduce-4", 5),
+])
+def test_zip_reduce_gui_cud_offscreen(
+        writer_lib, peare_lib, peare_gui_path, tmp_path,
+        variant, method, view):
+    source = ROOT / "README.md"
+    archive = tmp_path / f"gui-reduce-{method}.zip"
+    options = _WriterCreateOptions(b"zip", variant, None)
+    input_file = _WriterInputFile(str(source).encode(), b"README.md")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            C.byref(input_file), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      str(archive), view, "")
+    report = json.loads((tmp_path / "gui-writer" / view /
+                         "writer-test-report.json").read_text(encoding="utf-8"))
+    with peare_lib.open_file(report["image"]) as updated:
+        rows = {row["path"]: row for row in updated.normalized_tree()}
+        assert rows["README.md"]["sha256"] == hashlib.sha256(
+            source.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+@pytest.mark.parametrize(("variant", "method"), [
+    (b"implode", 6), (b"dcl-implode", 10),
+])
+def test_zip_legacy_implode_gui_cud_offscreen(
+        writer_lib, peare_lib, peare_gui_path, tmp_path,
+        variant, method, view):
+    source = ROOT / "README.md"
+    archive = tmp_path / f"gui-method{method}.zip"
+    options = _WriterCreateOptions(b"zip", variant, None)
+    input_file = _WriterInputFile(str(source).encode(), b"README.md")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            C.byref(input_file), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      str(archive), view, "")
+    report = json.loads((tmp_path / "gui-writer" / view /
+                         "writer-test-report.json").read_text(encoding="utf-8"))
+    with peare_lib.open_file(report["image"]) as updated:
+        rows = {row["path"]: row for row in updated.normalized_tree()}
+        assert rows["README.md"]["sha256"] == hashlib.sha256(
+            source.read_bytes()).hexdigest()
+
+
+def test_zip_bzip2_create_works_with_both_archive_tools(
+        writer_lib, peare_lib, tmp_path):
+    seven_zip = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
+        "7-Zip" / "7z.exe"
+    winrar = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
+        "WinRAR" / "WinRAR.exe"
+    source = ROOT / "README.md"
+    archive = tmp_path / "peare-bzip2.zip"
+    source_bytes = source.read_bytes()
+    options = _WriterCreateOptions(b"zip", b"bzip2", None)
+    input_file = _WriterInputFile(str(source).encode(), b"README.md")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            C.byref(input_file), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with zipfile.ZipFile(archive) as created:
+        assert created.testzip() is None
+        assert created.getinfo("README.md").compress_type == zipfile.ZIP_BZIP2
+        assert created.read("README.md") == source_bytes
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows["README.md"]["sha256"] == hashlib.sha256(
+            source_bytes).hexdigest()
+
+    assert seven_zip.is_file()
+    assert winrar.is_file()
+    for tool in (seven_zip, winrar):
+        arguments = [str(tool), "t", "-ibck", str(archive)] \
+            if tool == winrar else [str(tool), "t", str(archive)]
+        result = subprocess.run(arguments, capture_output=True, text=True,
+                                timeout=60)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_zip_lzma_create_works_with_both_archive_tools(
+        writer_lib, peare_lib, tmp_path):
+    seven_zip = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
+        "7-Zip" / "7z.exe"
+    winrar = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
+        "WinRAR" / "WinRAR.exe"
+    source = ROOT / "README.md"
+    archive = tmp_path / "peare-lzma.zip"
+    source_bytes = source.read_bytes()
+    options = _WriterCreateOptions(b"zip", b"lzma", None)
+    input_file = _WriterInputFile(str(source).encode(), b"README.md")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            C.byref(input_file), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with zipfile.ZipFile(archive) as created:
+        assert created.testzip() is None
+        assert created.getinfo("README.md").compress_type == zipfile.ZIP_LZMA
+        assert created.read("README.md") == source_bytes
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows["README.md"]["sha256"] == hashlib.sha256(
+            source_bytes).hexdigest()
+
+    buffer_archive = tmp_path / "peare-lzma-buffer.zip"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"zip", b"lzma", str(buffer_archive).encode()) == 0
+        assert writer_lib.peare_writer_zip_add_buffer(
+            writer, b"README.md", source_bytes, len(source_bytes)) == 0
+        assert writer_lib.peare_writer_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    with zipfile.ZipFile(buffer_archive) as created:
+        assert created.testzip() is None
+        assert created.read("README.md") == source_bytes
+
+    assert seven_zip.is_file()
+    assert winrar.is_file()
+    for archive_path in (archive, buffer_archive):
+        for tool in (seven_zip, winrar):
+            arguments = [str(tool), "t", "-ibck", str(archive_path)] \
+                if tool == winrar else [str(tool), "t", str(archive_path)]
+            result = subprocess.run(arguments, capture_output=True, text=True,
+                                    timeout=60)
+            assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_zipx_xz_create_works_with_peare_and_archive_tools(
+        writer_lib, peare_lib, tmp_path):
+    seven_zip = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
+        "7-Zip" / "7z.exe"
+    winrar = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
+        "WinRAR" / "WinRAR.exe"
+    source = ROOT / "README.md"
+    archive = tmp_path / "peare-xz.zipx"
+    source_bytes = source.read_bytes()
+    options = _WriterCreateOptions(b"zip", b"xz", None)
+    input_file = _WriterInputFile(str(source).encode(), b"README.md")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            C.byref(input_file), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with zipfile.ZipFile(archive) as created:
+        assert created.getinfo("README.md").compress_type == 95
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows["README.md"]["sha256"] == hashlib.sha256(
+            source_bytes).hexdigest()
+
+    for tool in (seven_zip, winrar):
+        assert tool.is_file()
+        arguments = [str(tool), "t", "-ibck", str(archive)] \
+            if tool == winrar else [str(tool), "t", str(archive)]
+        result = subprocess.run(arguments, capture_output=True, text=True,
+                                timeout=60)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_zipx_zstandard_create_works_with_peare_and_archive_tools(
+        writer_lib, peare_lib, tmp_path):
+    winrar = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
+        "WinRAR" / "WinRAR.exe"
+    source = ROOT / "README.md"
+    archive = tmp_path / "peare-zstandard.zipx"
+    source_bytes = source.read_bytes()
+    options = _WriterCreateOptions(b"zip", b"zstd", None)
+    input_file = _WriterInputFile(str(source).encode(), b"README.md")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            C.byref(input_file), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with zipfile.ZipFile(archive) as created:
+        assert created.getinfo("README.md").compress_type == 93
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows["README.md"]["sha256"] == hashlib.sha256(
+            source_bytes).hexdigest()
+
+    buffer_archive = tmp_path / "peare-zstandard-buffer.zipx"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"zip", b"zstd", str(buffer_archive).encode()) == 0
+        assert writer_lib.peare_writer_zip_add_buffer(
+            writer, b"README.md", source_bytes, len(source_bytes)) == 0
+        assert writer_lib.peare_writer_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    with zipfile.ZipFile(buffer_archive) as created:
+        assert created.getinfo("README.md").compress_type == 93
+    with peare_lib.open_file(str(buffer_archive)) as opener:
+        rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows["README.md"]["sha256"] == hashlib.sha256(
+            source_bytes).hexdigest()
+    assert winrar.is_file()
+    for archive_path in (archive, buffer_archive):
+        checked = subprocess.run([str(winrar), "t", "-ibck", str(archive_path)],
+                                 capture_output=True, text=True, timeout=60)
+        assert checked.returncode == 0, checked.stdout + checked.stderr
+        extracted = tmp_path / f"winrar-extracted-{archive_path.stem}"
+        extracted.mkdir()
+        unpacked = subprocess.run(
+            [str(winrar), "x", "-ibck", "-o+", str(archive_path),
+             str(extracted) + "\\"], capture_output=True, text=True,
+            timeout=60)
+        assert unpacked.returncode == 0, unpacked.stdout + unpacked.stderr
+        assert (extracted / "README.md").read_bytes() == source_bytes
+
+
+def test_zipx_ppmd_create_works_with_peare_and_winrar(
+        writer_lib, peare_lib, tmp_path):
+    winrar = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
+        "WinRAR" / "WinRAR.exe"
+    source = ROOT / "README.md"
+    source_bytes = source.read_bytes()
+    archive = tmp_path / "peare-ppmd.zipx"
+    options = _WriterCreateOptions(b"zip", b"ppmd", None)
+    input_file = _WriterInputFile(str(source).encode(), b"README.md")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            C.byref(input_file), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with zipfile.ZipFile(archive) as created:
+        assert created.getinfo("README.md").compress_type == 98
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows["README.md"]["sha256"] == hashlib.sha256(
+            source_bytes).hexdigest()
+
+    buffer_archive = tmp_path / "peare-ppmd-buffer.zipx"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"zip", b"ppmd", str(buffer_archive).encode()) == 0
+        assert writer_lib.peare_writer_zip_add_buffer(
+            writer, b"README.md", source_bytes, len(source_bytes)) == 0
+        assert writer_lib.peare_writer_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    with peare_lib.open_file(str(buffer_archive)) as opener:
+        rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows["README.md"]["sha256"] == hashlib.sha256(
+            source_bytes).hexdigest()
+
+    assert winrar.is_file()
+    for archive_path in (archive, buffer_archive):
+        checked = subprocess.run([str(winrar), "t", "-ibck", str(archive_path)],
+                                 capture_output=True, text=True, timeout=60)
+        assert checked.returncode == 0, checked.stdout + checked.stderr
+        extracted = tmp_path / f"winrar-{archive_path.stem}"
+        extracted.mkdir()
+        unpacked = subprocess.run(
+            [str(winrar), "x", "-ibck", "-o+", str(archive_path),
+             str(extracted) + "\\"], capture_output=True, text=True,
+            timeout=60)
+        assert unpacked.returncode == 0, unpacked.stdout + unpacked.stderr
+        assert (extracted / "README.md").read_bytes() == source_bytes
+
+
+def test_zip_shrink_writer_create_roundtrip(writer_lib, peare_lib, tmp_path):
+    seven_zip = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
+        "7-Zip" / "7z.exe"
+    source = ROOT / "build-windows" / "Release" / "PeareOpener.dll"
+    assert source.is_file()
+    source_bytes = source.read_bytes()
+    archive = tmp_path / "peare-shrink.zip"
+    options = _WriterCreateOptions(b"zip", b"shrink", None)
+    input_file = _WriterInputFile(str(source).encode(), b"PeareOpener.dll")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            C.byref(input_file), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with zipfile.ZipFile(archive) as created:
+        assert created.getinfo("PeareOpener.dll").compress_type == 1
+    with peare_lib.open_file(str(archive)) as opener:
+        resource = _HANDLE()
+        assert opener._L.peare_opener_open_resource_at(
+            opener._h, 0, 0, C.byref(resource)) == 0
+        try:
+            payload = po._Blob()
+            assert opener._L.peare_resource_get_payload(
+                resource, C.byref(payload)) == 0
+            try:
+                assert hashlib.sha256(payload.to_bytes()).digest() == \
+                    hashlib.sha256(source_bytes).digest()
+            finally:
+                opener._L.peare_blob_free(C.byref(payload))
+        finally:
+            opener._L.peare_resource_destroy(resource)
+    assert seven_zip.is_file()
+    result = subprocess.run([str(seven_zip), "t", str(archive)],
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _zipx_method94_sample(peare_lib, tmp_path):
+    archive = os.environ.get("PEARE_ZIPX_MP3_ARCHIVE", "")
+    if not archive or not Path(archive).is_file():
+        pytest.skip("Set PEARE_ZIPX_MP3_ARCHIVE to the WinZip method-94 sample")
+    with zipfile.ZipFile(archive) as source:
+        info = next(item for item in source.infolist() if item.compress_type == 94)
+        name = info.filename
+    raw_payload = _zip_raw_member_payload(archive, name)
+    with peare_lib.open_file(archive) as opener:
+        resource = _HANDLE()
+        assert opener._L.peare_opener_open_resource_at(
+            opener._h, 0, 0, C.byref(resource)) == 0
+        try:
+            payload = po._Blob()
+            assert opener._L.peare_resource_get_payload(
+                resource, C.byref(payload)) == 0
+            data = payload.to_bytes()
+            opener._L.peare_blob_free(C.byref(payload))
+        finally:
+            opener._L.peare_resource_destroy(resource)
+    sample = tmp_path / Path(name).name
+    sample.write_bytes(data)
+    return sample, name, raw_payload, data
+
+
+def test_zipx_mp3_writer_matches_winzip_payload(writer_lib, peare_lib, tmp_path):
+    sample, name, original_packed, source_bytes = _zipx_method94_sample(
+        peare_lib, tmp_path)
+    archive = tmp_path / "peare-method94.zip"
+    options = _WriterCreateOptions(b"zip", b"mp3", None)
+    input_file = _WriterInputFile(str(sample).encode(), name.encode())
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            C.byref(input_file), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with zipfile.ZipFile(archive) as created:
+        assert created.getinfo(name).compress_type == 94
+    assert _zip_raw_member_payload(archive, name) == original_packed
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows[name]["sha256"] == hashlib.sha256(source_bytes).hexdigest()
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_zipx_mp3_gui_cud_offscreen(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    sample, name, _, _ = _zipx_method94_sample(peare_lib, tmp_path)
+    archive = tmp_path / "gui-method94.zip"
+    options = _WriterCreateOptions(b"zip", b"mp3", None)
+    input_file = _WriterInputFile(str(sample).encode(), name.encode())
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            C.byref(input_file), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      str(archive), view, "")
+    report = json.loads((tmp_path / "gui-writer" / view /
+                         "writer-test-report.json").read_text(encoding="utf-8"))
+    with zipfile.ZipFile(report["image"]) as updated:
+        assert updated.getinfo(name).compress_type == 94
+
+
+def _zipx_method97_sample(peare_lib, tmp_path):
+    archive = os.environ.get("PEARE_ZIPX_WAVPACK_ARCHIVE", "")
+    if not archive or not Path(archive).is_file():
+        pytest.skip("Set PEARE_ZIPX_WAVPACK_ARCHIVE to the WinZip method-97 sample")
+    with peare_lib.open_file(archive) as opener:
+        candidates = []
+        for folder in range(opener.folder_count()):
+            for index in range(opener.resource_count(folder)):
+                resource = _HANDLE()
+                assert opener._L.peare_opener_open_resource_at(
+                    opener._h, folder, index, C.byref(resource)) == 0
+                try:
+                    context = po._Context()
+                    assert opener._L.peare_resource_get_context(
+                        resource, C.byref(context)) == 0
+                    name = context.identifier_utf8.to_bytes().decode(
+                        "utf-8", "replace")
+                    size = int(context.data_size)
+                    opener._L.peare_resource_context_free(C.byref(context))
+                    if name.lower().endswith(".wav"):
+                        candidates.append((size, folder, index, name))
+                finally:
+                    opener._L.peare_resource_destroy(resource)
+        assert candidates
+        _, folder, index, name = min(candidates)
+        resource = _HANDLE()
+        assert opener._L.peare_opener_open_resource_at(
+            opener._h, folder, index, C.byref(resource)) == 0
+        try:
+            payload = po._Blob()
+            assert opener._L.peare_resource_get_payload(
+                resource, C.byref(payload)) == 0
+            data = payload.to_bytes()
+            opener._L.peare_blob_free(C.byref(payload))
+        finally:
+            opener._L.peare_resource_destroy(resource)
+    sample = tmp_path / Path(name).name
+    sample.write_bytes(data)
+    return sample, name, data
+
+
+def test_zipx_wavpack_writer_roundtrip(writer_lib, peare_lib, tmp_path):
+    sample, name, source_bytes = _zipx_method97_sample(peare_lib, tmp_path)
+    archive = tmp_path / "peare-method97.zip"
+    options = _WriterCreateOptions(b"zip", b"wavpack", None)
+    input_file = _WriterInputFile(str(sample).encode(), name.encode())
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            C.byref(input_file), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    with zipfile.ZipFile(archive) as created:
+        assert created.getinfo(name).compress_type == 97
+    with peare_lib.open_file(str(archive)) as opener:
+        payload = None
+        for folder in range(opener.folder_count()):
+            for index in range(opener.resource_count(folder)):
+                resource = _HANDLE()
+                assert opener._L.peare_opener_open_resource_at(
+                    opener._h, folder, index, C.byref(resource)) == 0
+                try:
+                    context = po._Context()
+                    assert opener._L.peare_resource_get_context(
+                        resource, C.byref(context)) == 0
+                    resource_name = context.identifier_utf8.to_bytes().decode(
+                        "utf-8", "replace")
+                    opener._L.peare_resource_context_free(C.byref(context))
+                    if resource_name != name:
+                        continue
+                    blob = po._Blob()
+                    assert opener._L.peare_resource_get_payload(
+                        resource, C.byref(blob)) == 0
+                    payload = blob.to_bytes()
+                    opener._L.peare_blob_free(C.byref(blob))
+                finally:
+                    opener._L.peare_resource_destroy(resource)
+                if payload is not None:
+                    break
+            if payload is not None:
+                break
+        assert payload == source_bytes
+
+
+def test_zipx_jpeg_method96_writer_roundtrip(writer_lib, peare_lib, tmp_path):
+    source_path = os.environ.get("PEARE_ZIPX_JPEG_SOURCE", "")
+    if not source_path or not Path(source_path).is_file():
+        pytest.skip("Set PEARE_ZIPX_JPEG_SOURCE to an external JPEG sample")
+    sample = Path(source_path)
+    name = sample.name
+    source_bytes = sample.read_bytes()
+    archive = tmp_path / "peare-method96.zipx"
+    options = _WriterCreateOptions(b"zip", b"jpeg", None)
+    input_file = _WriterInputFile(str(sample).encode(), name.encode())
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            C.byref(input_file), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with zipfile.ZipFile(archive) as created:
+        assert created.getinfo(name).compress_type == 96
+    with peare_lib.open_file(str(archive)) as opener:
+        found = False
+        for folder in range(opener.folder_count()):
+            for index in range(opener.resource_count(folder)):
+                resource = _HANDLE()
+                assert opener._L.peare_opener_open_resource_at(
+                    opener._h, folder, index, C.byref(resource)) == 0
+                try:
+                    context = po._Context()
+                    assert opener._L.peare_resource_get_context(
+                        resource, C.byref(context)) == 0
+                    resource_name = context.identifier_utf8.to_bytes().decode(
+                        "utf-8", "replace")
+                    opener._L.peare_resource_context_free(C.byref(context))
+                    if resource_name != name:
+                        continue
+                    blob = po._Blob()
+                    status = opener._L.peare_resource_get_payload(
+                        resource, C.byref(blob))
+                    assert status == 0, f"Reader payload status: {status}"
+                    assert blob.to_bytes() == source_bytes
+                    opener._L.peare_blob_free(C.byref(blob))
+                    found = True
+                finally:
+                    opener._L.peare_resource_destroy(resource)
+                if found:
+                    break
+            if found:
+                break
+        assert found
+
+
+def test_gzip_writer_multi_member_roundtrip_and_7zip(
+        writer_lib, peare_lib, tmp_path):
+    seven_zip = _seven_zip_executable()
+    sources = [ROOT / "README.md", ROOT / "docs" / "SUPPORTED_FORMATS.md"]
+    source_bytes = [path.read_bytes() for path in sources]
+    member_names = ["Peare-README-é.md", sources[1].name]
+    formats = []
+    for index in range(writer_lib.peare_writer_create_format_count()):
+        item = _WriterFormat()
+        assert writer_lib.peare_writer_get_create_format(index, C.byref(item)) == 0
+        formats.append(item.id.decode())
+    assert "gzip" in formats
+    assert writer_lib.peare_writer_create_variant_count(b"gzip") == 1
+    variant = _WriterVariant()
+    assert writer_lib.peare_writer_get_create_variant(
+        b"gzip", 0, C.byref(variant)) == 0
+    assert (variant.id, variant.display_name) == (b"deflate", b"Deflate")
+    archive = tmp_path / "peare-gzip.gz"
+    options = _WriterCreateOptions(b"gzip", b"deflate", None)
+    inputs = (_WriterInputFile * len(sources))(*[
+        _WriterInputFile(str(path).encode(), name.encode())
+        for path, name in zip(sources, member_names)])
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            inputs, len(sources))
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    expected = b"".join(source_bytes)
+    with gzip.open(archive, "rb") as decoded:
+        assert decoded.read() == expected
+    if seven_zip:
+        external_check = subprocess.run(
+            [seven_zip, "t", str(archive)], capture_output=True,
+            text=True, timeout=60, check=False)
+        assert external_check.returncode == 0, \
+            external_check.stdout + external_check.stderr
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows[member_names[0]]["sha256"] == hashlib.sha256(expected).hexdigest()
+
+
+def test_bzip2_writer_levels_concatenated_streams_and_7zip(
+        writer_lib, peare_lib, peare_gui_path, tmp_path):
+    seven_zip = _seven_zip_executable()
+    sources = [ROOT / "README.md"]
+    expected = sources[0].read_bytes()
+    expected_hash = hashlib.sha256(expected).hexdigest()
+    variants = []
+    for index in range(writer_lib.peare_writer_create_variant_count(b"bzip2")):
+        item = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"bzip2", index, C.byref(item)) == 0
+        variants.append(item.id.decode())
+    assert variants == [f"level-{level}" for level in range(1, 10)]
+
+    inputs = (_WriterInputFile * len(sources))(*[
+        _WriterInputFile(str(path).encode(), path.name.encode())
+        for path in sources])
+    gui_archive = None
+    for variant in variants:
+        archive = tmp_path / f"peare-{variant}.bz2"
+        options = _WriterCreateOptions(b"bzip2", variant.encode(), None)
+        writer = _HANDLE()
+        assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+        try:
+            status = writer_lib.peare_writer_add_files_to_ex(
+                writer, str(archive).encode(), C.byref(options), 0,
+                inputs, len(sources))
+            assert status == 0, writer_lib.peare_writer_last_error(writer)
+        finally:
+            writer_lib.peare_writer_destroy(writer)
+        if variant == "level-9":
+            gui_archive = archive
+
+        assert bz2.decompress(archive.read_bytes()) == expected
+        if seven_zip:
+            external_check = subprocess.run(
+                [seven_zip, "t", str(archive)], capture_output=True,
+                text=True, timeout=60, check=False)
+            assert external_check.returncode == 0, \
+                external_check.stdout + external_check.stderr
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = opener.normalized_tree()
+            assert len(rows) == 1
+            assert rows[0]["sha256"] == expected_hash
+
+    gui_output = tmp_path / "bzip2-gui-preview"
+    gui_check = subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "run_gui_preview_tests.py"),
+         "--exe", str(peare_gui_path), "--case", "bzip2-writer-level9",
+         str(gui_archive), "peare-level-9", "--output-dir", str(gui_output)],
+        capture_output=True, text=True, timeout=120, check=False)
+    assert gui_check.returncode == 0, gui_check.stdout + gui_check.stderr
+
+
+def test_zstd_writer_levels_concatenated_frames_and_7zip(
+        writer_lib, peare_lib, peare_gui_path, tmp_path):
+    seven_zip = _seven_zip_executable()
+    zstd_cli = os.environ.get("PEARE_ZSTD_TEST_EXECUTABLE") or \
+        shutil.which("zstd.exe") or shutil.which("zstd")
+    sources = [ROOT / "README.md", ROOT / "docs" / "SUPPORTED_FORMATS.md"]
+    expected = b"".join(path.read_bytes() for path in sources)
+    expected_hash = hashlib.sha256(expected).hexdigest()
+    variants = []
+    for index in range(writer_lib.peare_writer_create_variant_count(b"zstd")):
+        item = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"zstd", index, C.byref(item)) == 0
+        variants.append(item.id.decode())
+    assert variants == [f"fast-{level}" for level in range(5, 0, -1)] + [
+        f"level-{level}" for level in range(1, 23)]
+
+    inputs = (_WriterInputFile * len(sources))(*[
+        _WriterInputFile(str(path).encode(), path.name.encode())
+        for path in sources])
+    gui_archive = None
+    for variant in variants:
+        archive = tmp_path / f"peare-{variant}.zst"
+        options = _WriterCreateOptions(b"zstd", variant.encode(), None)
+        writer = _HANDLE()
+        assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+        try:
+            status = writer_lib.peare_writer_add_files_to_ex(
+                writer, str(archive).encode(), C.byref(options), 0,
+                inputs, len(sources))
+            assert status == 0, writer_lib.peare_writer_last_error(writer)
+        finally:
+            writer_lib.peare_writer_destroy(writer)
+        if variant == "level-3":
+            gui_archive = archive
+
+        if zstd_cli:
+            external_extract = subprocess.run(
+                [zstd_cli, "-q", "-d", "-c", str(archive)],
+                capture_output=True, timeout=60, check=False)
+            assert external_extract.returncode == 0, external_extract.stderr.decode(
+                "utf-8", "replace")
+            assert external_extract.stdout == expected
+        elif seven_zip:
+            version = subprocess.run([seven_zip], capture_output=True,
+                                     text=True, timeout=30, check=False)
+            version_text = version.stdout + version.stderr
+            version_match = re.search(r"7-Zip\s+(\d+)\.(\d+)", version_text)
+            if version_match and tuple(map(int, version_match.groups())) >= (24, 1):
+                external_extract = subprocess.run(
+                    [seven_zip, "x", "-so", str(archive)], capture_output=True,
+                    timeout=60, check=False)
+                assert external_extract.returncode == 0, external_extract.stderr.decode(
+                    "utf-8", "replace")
+                assert external_extract.stdout == expected
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = opener.normalized_tree()
+            assert len(rows) == 1
+            assert rows[0]["sha256"] == expected_hash
+
+    gui_output = tmp_path / "zstd-gui-preview"
+    gui_check = subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "run_gui_preview_tests.py"),
+         "--exe", str(peare_gui_path), "--case", "zstd-writer-level3",
+         str(gui_archive), "peare-level-3", "--output-dir", str(gui_output)],
+        capture_output=True, text=True, timeout=120, check=False)
+    assert gui_check.returncode == 0, gui_check.stdout + gui_check.stderr
+
+
+def test_xz_writer_integrity_checks_concatenated_streams_and_7zip(
+        writer_lib, peare_lib, peare_gui_path, tmp_path):
+    seven_zip = _seven_zip_executable()
+    sources = [ROOT / "README.md", ROOT / "docs" / "SUPPORTED_FORMATS.md"]
+    expected = b"".join(path.read_bytes() for path in sources)
+    expected_hash = hashlib.sha256(expected).hexdigest()
+    variants = []
+    for index in range(writer_lib.peare_writer_create_variant_count(b"xz")):
+        item = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"xz", index, C.byref(item)) == 0
+        variants.append(item.id.decode())
+    assert variants == ["none", "crc32", "crc64", "sha256"]
+
+    inputs = (_WriterInputFile * len(sources))(*[
+        _WriterInputFile(str(path).encode(), path.name.encode())
+        for path in sources])
+    gui_archive = None
+    for variant in variants:
+        archive = tmp_path / f"peare-{variant}.xz"
+        options = _WriterCreateOptions(b"xz", variant.encode(), None)
+        writer = _HANDLE()
+        assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+        try:
+            status = writer_lib.peare_writer_add_files_to_ex(
+                writer, str(archive).encode(), C.byref(options), 0,
+                inputs, len(sources))
+            assert status == 0, writer_lib.peare_writer_last_error(writer)
+        finally:
+            writer_lib.peare_writer_destroy(writer)
+        if variant == "crc64":
+            gui_archive = archive
+
+        assert lzma.decompress(archive.read_bytes()) == expected
+        if seven_zip:
+            external_extract = subprocess.run(
+                [seven_zip, "x", "-so", str(archive)], capture_output=True,
+                timeout=60, check=False)
+            assert external_extract.returncode == 0, external_extract.stderr.decode(
+                "utf-8", "replace")
+            assert external_extract.stdout == expected
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = opener.normalized_tree()
+            assert len(rows) == 1
+            assert rows[0]["sha256"] == expected_hash
+
+    gui_output = tmp_path / "xz-gui-preview"
+    gui_check = subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "run_gui_preview_tests.py"),
+         "--exe", str(peare_gui_path), "--case", "xz-writer-crc64",
+         str(gui_archive), "peare-crc64", "--output-dir", str(gui_output)],
+        capture_output=True, text=True, timeout=120, check=False)
+    assert gui_check.returncode == 0, gui_check.stdout + gui_check.stderr
+
+
+def test_lzma_alone_writer_levels_single_stream_and_7zip(
+        writer_lib, peare_lib, peare_gui_path, tmp_path):
+    seven_zip = _seven_zip_executable()
+    sources = [ROOT / "README.md"]
+    expected = sources[0].read_bytes()
+    expected_hash = hashlib.sha256(expected).hexdigest()
+    variants = []
+    for index in range(writer_lib.peare_writer_create_variant_count(b"lzma")):
+        item = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"lzma", index, C.byref(item)) == 0
+        variants.append(item.id.decode())
+    assert variants == [f"level-{level}" for level in range(1, 10)]
+
+    inputs = (_WriterInputFile * len(sources))(*[
+        _WriterInputFile(str(path).encode(), path.name.encode())
+        for path in sources])
+    gui_archive = None
+    for variant in variants:
+        archive = tmp_path / f"peare-{variant}.lzma"
+        options = _WriterCreateOptions(b"lzma", variant.encode(), None)
+        writer = _HANDLE()
+        assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+        try:
+            status = writer_lib.peare_writer_add_files_to_ex(
+                writer, str(archive).encode(), C.byref(options), 0,
+                inputs, len(sources))
+            assert status == 0, writer_lib.peare_writer_last_error(writer)
+        finally:
+            writer_lib.peare_writer_destroy(writer)
+        if variant == "level-5":
+            gui_archive = archive
+
+        assert lzma.decompress(archive.read_bytes(), format=lzma.FORMAT_ALONE) == expected
+        if seven_zip:
+            external_extract = subprocess.run(
+                [seven_zip, "x", "-so", str(archive)], capture_output=True,
+                timeout=60, check=False)
+            assert external_extract.returncode == 0, external_extract.stderr.decode(
+                "utf-8", "replace")
+            assert external_extract.stdout == expected
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = opener.normalized_tree()
+            assert len(rows) == 1
+            assert rows[0]["sha256"] == expected_hash
+
+    gui_output = tmp_path / "lzma-gui-preview"
+    gui_check = subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "run_gui_preview_tests.py"),
+         "--exe", str(peare_gui_path), "--case", "lzma-writer-level5",
+         str(gui_archive), "peare-level-5", "--output-dir", str(gui_output)],
+        capture_output=True, text=True, timeout=120, check=False)
+    assert gui_check.returncode == 0, gui_check.stdout + gui_check.stderr
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_zipx_wavpack_gui_cud_offscreen(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    sample, name, _ = _zipx_method97_sample(peare_lib, tmp_path)
+    archive = tmp_path / "gui-method97.zip"
+    options = _WriterCreateOptions(b"zip", b"wavpack", None)
+    input_file = _WriterInputFile(str(sample).encode(), name.encode())
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            C.byref(input_file), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      str(archive), view, "")
+    report = json.loads((tmp_path / "gui-writer" / view /
+                         "writer-test-report.json").read_text(encoding="utf-8"))
+    with zipfile.ZipFile(report["image"]) as updated:
+        assert updated.getinfo(name).compress_type == 97
+
 
 def test_zip_rename_latency_preserves_untouched_member_data(
         writer_lib, tmp_path):
@@ -5790,6 +6856,9 @@ def writer_lib():
     lib.peare_writer_get_create_filesystem.restype = C.c_int
     lib.peare_writer_create_begin.argtypes = [_HANDLE, C.c_char_p, C.c_char_p]
     lib.peare_writer_create_begin.restype = C.c_int
+    lib.peare_writer_create_begin_variant.argtypes = [
+        _HANDLE, C.c_char_p, C.c_char_p, C.c_char_p]
+    lib.peare_writer_create_begin_variant.restype = C.c_int
     lib.peare_writer_finish.argtypes = [_HANDLE]
     lib.peare_writer_finish.restype = C.c_int
     lib.peare_writer_can_add_files.argtypes = [C.c_char_p]
@@ -5814,12 +6883,21 @@ def writer_lib():
     lib.peare_writer_create_directory.restype = C.c_int
     lib.peare_writer_replace_file.argtypes = [_HANDLE, C.c_char_p, C.c_char_p]
     lib.peare_writer_replace_file.restype = C.c_int
+    lib.peare_writer_replace_entry_by_id.argtypes = [
+        _HANDLE, C.c_char_p, C.c_char_p, C.c_int64]
+    lib.peare_writer_replace_entry_by_id.restype = C.c_int
     lib.peare_writer_enable_fsverity.argtypes = [_HANDLE, C.c_char_p]
     lib.peare_writer_enable_fsverity.restype = C.c_int
     lib.peare_writer_rename_entry.argtypes = [_HANDLE, C.c_char_p, C.c_char_p]
     lib.peare_writer_rename_entry.restype = C.c_int
+    lib.peare_writer_rename_entry_by_id.argtypes = [
+        _HANDLE, C.c_char_p, C.c_char_p, C.c_int64]
+    lib.peare_writer_rename_entry_by_id.restype = C.c_int
     lib.peare_writer_delete_entry.argtypes = [_HANDLE, C.c_char_p, C.c_int]
     lib.peare_writer_delete_entry.restype = C.c_int
+    lib.peare_writer_delete_entry_by_id.argtypes = [
+        _HANDLE, C.c_char_p, C.c_int, C.c_int64]
+    lib.peare_writer_delete_entry_by_id.restype = C.c_int
     lib.peare_writer_add_target_count.argtypes = [C.c_char_p]
     lib.peare_writer_add_target_count.restype = C.c_size_t
     lib.peare_writer_get_add_target_name.argtypes = [C.c_char_p, C.c_size_t,
@@ -5847,6 +6925,302 @@ def writer_lib():
     lib.peare_writer_last_error.argtypes = [_HANDLE]
     lib.peare_writer_last_error.restype = C.c_char_p
     return lib
+
+
+def _cpio_tar_entries(tar, archive):
+    result = subprocess.run([tar, "-tf", str(archive)], check=True, capture_output=True)
+    return [line.decode("utf-8", "replace").rstrip("/").removeprefix("./")
+            for line in result.stdout.splitlines() if line]
+
+
+def _cpio_extract(tar, archive, entry):
+    return subprocess.run([tar, "-xOf", str(archive), entry],
+                          check=True, capture_output=True).stdout
+
+
+def _assert_cpio_crc_checksums(archive):
+    data = Path(archive).read_bytes()
+    offset = 0
+    while offset + 110 <= len(data):
+        header = data[offset:offset + 110]
+        assert header[:6] == b"070702"
+        fields = [int(header[6 + index * 8:14 + index * 8], 16)
+                  for index in range(13)]
+        name_start = offset + 110
+        name_end = name_start + fields[11]
+        name = data[name_start:name_end]
+        assert name.endswith(b"\0")
+        payload_start = (name_end + 3) & ~3
+        payload_end = payload_start + fields[6]
+        assert payload_end <= len(data)
+        assert sum(data[payload_start:payload_end]) & 0xFFFFFFFF == fields[12]
+        offset = (payload_end + 3) & ~3
+        if name[:-1] == b"TRAILER!!!":
+            assert not any(data[offset:])
+            return
+    raise AssertionError("CPIO CRC trailer not found")
+
+
+def test_cpio_create_variants_are_discoverable(writer_lib):
+    expected = [
+        (b"newc", b"SVR4 newc"),
+        (b"crc", b"SVR4 CRC"),
+        (b"odc", b"POSIX odc"),
+        (b"afio-large", b"afio large ASCII"),
+        (b"binary-le", b"Old binary little-endian"),
+        (b"binary-be", b"Old binary big-endian"),
+    ]
+    assert writer_lib.peare_writer_create_variant_count(b"cpio") == len(expected)
+    actual = (_WriterVariant * len(expected))()
+    assert all(writer_lib.peare_writer_get_create_variant(
+        b"cpio", index, C.byref(actual[index])) == 0
+        for index in range(len(expected)))
+    assert [(variant.id, variant.display_name) for variant in actual] == expected
+
+
+@pytest.mark.parametrize(("variant", "magic"), [
+    ("newc", b"070701"), ("crc", b"070702"),
+    ("odc", b"070707"), ("afio-large", b"070727"),
+    ("binary-le", b"\xc7\x71"), ("binary-be", b"\x71\xc7")])
+def test_cpio_create_roundtrip(writer_lib, peare_lib, tmp_path, variant, magic):
+    tar = shutil.which("tar")
+    if not tar:
+        pytest.skip("An independent bsdtar-compatible reader is required")
+    archive = tmp_path / f"created-{variant}.cpio"
+    payload = tmp_path / "payload.txt"
+    payload.write_bytes(b"CPIO newc writer payload\n")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_create_begin_variant(
+            writer, b"cpio", variant.encode(), str(archive).encode())
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_create_directory(writer, b"folder") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(payload).encode(), b"folder/payload.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(writer, b"empty.bin") == 0
+        status = writer_lib.peare_writer_finish(writer)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    assert archive.read_bytes()[:len(magic)] == magic
+    assert set(_cpio_tar_entries(tar, archive)) == {
+        "folder", "folder/payload.txt", "empty.bin"}
+    assert _cpio_extract(tar, archive, "folder/payload.txt") == payload.read_bytes()
+    assert _cpio_extract(tar, archive, "empty.bin") == b""
+    with peare_lib.open_file(str(archive)) as opener:
+        assert opener.container_format() == "CPIO"
+        assert opener.folder_count() > 0
+    if variant == "crc":
+        _assert_cpio_crc_checksums(archive)
+
+    batch_archive = tmp_path / f"batch-created-{variant}.cpio"
+    options = _WriterCreateOptions(b"cpio", variant.encode(), None)
+    input_file = _WriterInputFile(str(payload).encode(), b"batch/payload.txt")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(batch_archive).encode(), C.byref(options), 0,
+            C.byref(input_file), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    assert _cpio_tar_entries(tar, batch_archive) == ["batch/payload.txt"]
+    assert _cpio_extract(tar, batch_archive, "batch/payload.txt") == payload.read_bytes()
+    if variant == "crc":
+        _assert_cpio_crc_checksums(batch_archive)
+
+
+@pytest.mark.parametrize(("sample_name", "replace_name", "magic"), [
+    ("ascii-3.0-1.src.cpio", "ascii.spec", b"070701"),
+    ("pcmcia", "etc/pcmcia/config", b"070702"),
+    ("cinema.cpi", "Cinema.c", b"070707"),
+    ("libarchive/test_read_format_cpio_afio.cpio", "file1", b"070707"),
+    ("libarchive/test_read_format_cpio_bin_le.cpio", "file1111222233334444", b"\xc7\x71"),
+    ("libarchive/test_read_format_cpio_bin_be.cpio", "file1111222233334444", b"\x71\xc7")])
+def test_cpio_cud_on_external_sample(
+        writer_lib, tmp_path, sample_name, replace_name, magic):
+    root = Path(os.environ.get(
+        "PEARE_CPIO_SAMPLE_ROOT",
+        Path.home() / "Documents" / "inerente a" / "Peare" / "cpio-samples"))
+    sample = root / sample_name
+    if not sample.is_file():
+        pytest.skip(f"Missing external CPIO sample: {sample}")
+    tar = shutil.which("tar")
+    if not tar:
+        pytest.skip("An independent bsdtar-compatible reader is required")
+    assert sample.read_bytes()[:len(magic)] == magic
+    if sample_name.endswith("test_read_format_cpio_afio.cpio"):
+        assert b"070727" in sample.read_bytes()
+    original_hash = hashlib.sha256(sample.read_bytes()).digest()
+    archive = tmp_path / sample.name
+    shutil.copy2(sample, archive)
+    assert hashlib.sha256(sample.read_bytes()).digest() == original_hash
+    assert replace_name in _cpio_tar_entries(tar, archive)
+
+    replacement = tmp_path / "replacement.txt"
+    replacement.write_bytes(b"replacement content\n")
+    added = tmp_path / "added.txt"
+    added.write_bytes(b"added content\n")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_update_begin(writer, str(archive).encode())
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), replace_name.encode()) == 0
+        assert writer_lib.peare_writer_create_directory(writer, b"writer-check") == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(added).encode(), b"writer-check/added.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            writer, b"writer-check/delete.bin") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, replace_name.encode(), b"writer-check/renamed.spec") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"writer-check/delete.bin", 0) == 0
+        status = writer_lib.peare_writer_update_finish(writer)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    entries = set(_cpio_tar_entries(tar, archive))
+    assert "writer-check" in entries
+    assert "writer-check/renamed.spec" in entries
+    assert "writer-check/added.txt" in entries
+    assert "writer-check/delete.bin" not in entries
+    assert _cpio_extract(tar, archive, "writer-check/renamed.spec") == replacement.read_bytes()
+    assert _cpio_extract(tar, archive, "writer-check/added.txt") == added.read_bytes()
+    if magic == b"070702":
+        _assert_cpio_crc_checksums(archive)
+    assert hashlib.sha256(sample.read_bytes()).digest() == original_hash
+
+
+@pytest.mark.parametrize("variant", ["gnu", "bsd"])
+def test_ar_create_and_full_cud(writer_lib, peare_lib, tmp_path, variant):
+    ar = shutil.which("ar.exe") or shutil.which("ar")
+    if not ar:
+        pytest.skip("GNU ar is required as an independent archive oracle")
+    archive = tmp_path / f"created-{variant}.a"
+    source = tmp_path / "payload.txt"
+    source.write_bytes(b"original ar payload\n")
+    long_source = tmp_path / "long-payload.txt"
+    long_source.write_bytes(b"long-name payload\n")
+    empty_name = b"empty.bin"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"ar", variant.encode(), str(archive).encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(source).encode(), b"payload.txt") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(long_source).encode(), b"member name longer than fifteen.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(writer, empty_name) == 0
+        status = writer_lib.peare_writer_finish(writer)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    names = subprocess.run([ar, "t", str(archive)], check=True, capture_output=True).stdout
+    assert names.decode("utf-8").splitlines() == [
+        "payload.txt", "member name longer than fifteen.txt", "empty.bin"]
+    extracted = tmp_path / "ar-extracted"
+    extracted.mkdir()
+    for name in ("payload.txt", "member name longer than fifteen.txt", "empty.bin"):
+        subprocess.run([ar, "x", str(archive), name], cwd=extracted,
+                       check=True, capture_output=True)
+    assert (extracted / "payload.txt").read_bytes() == source.read_bytes()
+    assert (extracted / "member name longer than fifteen.txt").read_bytes() == long_source.read_bytes()
+    assert (extracted / "empty.bin").read_bytes() == b""
+    with peare_lib.open_file(str(archive)) as opener:
+        assert opener.container_format() == "AR"
+        assert {row["path"] for row in opener.normalized_tree()} == {
+            "payload.txt", "member name longer than fifteen.txt", "empty.bin"}
+
+    replacement = tmp_path / "replacement.txt"
+    replacement.write_bytes(b"updated ar payload\n")
+    added = tmp_path / "added.txt"
+    added.write_bytes(b"added ar payload\n")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(writer, str(archive).encode()) == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"payload.txt") == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(added).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"member name longer than fifteen.txt", b"renamed.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(writer, empty_name, 0) == 0
+        status = writer_lib.peare_writer_update_finish(writer)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    names = subprocess.run([ar, "t", str(archive)], check=True, capture_output=True).stdout
+    assert names.decode("utf-8").splitlines() == ["payload.txt", "renamed.txt", "added.txt"]
+    updated = tmp_path / "ar-updated"
+    updated.mkdir()
+    for name in ("payload.txt", "renamed.txt", "added.txt"):
+        subprocess.run([ar, "x", str(archive), name], cwd=updated,
+                       check=True, capture_output=True)
+    assert (updated / "payload.txt").read_bytes() == replacement.read_bytes()
+    assert (updated / "renamed.txt").read_bytes() == long_source.read_bytes()
+    assert (updated / "added.txt").read_bytes() == added.read_bytes()
+    assert writer_lib.peare_writer_can_add_files(str(archive).encode()) == 1
+
+
+def test_ar_cud_preserves_members_from_real_gnu_archive(writer_lib, tmp_path):
+    ar = shutil.which("ar.exe") or shutil.which("ar")
+    sample = Path(
+        Path.home() / "Documents" / "inerente a" / "Peare" / "Research tools"
+        r"\lz4-1.10.0\dll\liblz4.dll.a")
+    if not ar or not sample.is_file():
+        pytest.skip("GNU ar and the independent local liblz4 archive are required")
+    original_hash = _sha256_file(sample)
+    archive = tmp_path / sample.name
+    shutil.copy2(sample, archive)
+    original_names = subprocess.run([ar, "t", str(sample)], check=True,
+                                    capture_output=True).stdout.decode().splitlines()
+    assert len(original_names) >= 3
+    replacement = tmp_path / "replacement.o"
+    replacement.write_bytes(b"replacement object payload\n")
+    added = tmp_path / "added.o"
+    added.write_bytes(b"added object payload\n")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), original_names[0].encode()) == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(added).encode(), b"added.o") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, original_names[1].encode(), b"renamed.o") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, original_names[2].encode(), 0) == 0
+        status = writer_lib.peare_writer_update_finish(writer)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    expected = list(original_names)
+    expected[1] = "renamed.o"
+    del expected[2]
+    expected.append("added.o")
+    actual = subprocess.run([ar, "t", str(archive)], check=True,
+                            capture_output=True).stdout.decode().splitlines()
+    assert actual == expected
+    extracted = tmp_path / "real-ar-extract"
+    extracted.mkdir()
+    for name in (original_names[0], "renamed.o", "added.o"):
+        subprocess.run([ar, "x", str(archive), name], cwd=extracted,
+                       check=True, capture_output=True)
+    assert (extracted / original_names[0]).read_bytes() == replacement.read_bytes()
+    assert (extracted / "renamed.o").is_file()
+    assert (extracted / "added.o").read_bytes() == added.read_bytes()
+    assert _sha256_file(sample) == original_hash
 
 def _fat_writer_add(writer_lib, image, source, entry_name):
     writer = _HANDLE()
@@ -9629,12 +11003,100 @@ def test_archive_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
         writer_lib, peare_lib, peare_gui_path, tmp_path,
         str(archive), view, gui_root="")
 
+
+@pytest.mark.parametrize(("sample_name", "magic"), [
+    ("ascii-3.0-1.src.cpio", b"070701"), ("pcmcia", b"070702"),
+    ("cinema.cpi", b"070707"),
+    ("libarchive/test_read_format_cpio_afio.cpio", b"070707"),
+    ("libarchive/test_read_format_cpio_bin_le.cpio", b"\xc7\x71"),
+    ("libarchive/test_read_format_cpio_bin_be.cpio", b"\x71\xc7")])
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_cpio_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
+                                tmp_path, sample_name, magic, view):
+    root = Path(os.environ.get(
+        "PEARE_CPIO_SAMPLE_ROOT",
+        Path.home() / "Documents" / "inerente a" / "Peare" / "cpio-samples"))
+    sample = root / sample_name
+    if not sample.is_file():
+        pytest.skip(f"Missing external CPIO sample: {sample}")
+    assert sample.read_bytes()[:len(magic)] == magic
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      str(sample), view, "")
+
+
+@pytest.mark.parametrize("variant", ["gnu", "bsd"])
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_ar_gui_flat_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
+                                   tmp_path, variant, view):
+    ar = shutil.which("ar.exe") or shutil.which("ar")
+    if not ar:
+        pytest.skip("GNU ar is required as an independent archive oracle")
+    archive = tmp_path / f"gui-{variant}.a"
+    original = tmp_path / "original.txt"
+    original.write_bytes(b"original GUI archive content\n")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"ar", variant.encode(), str(archive).encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(original).encode(), b"original.txt") == 0
+        assert writer_lib.peare_writer_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    sample_hash = _sha256_file(archive)
+    added = tmp_path / "added.txt"
+    replacement = tmp_path / "replacement.txt"
+    added.write_bytes(b"added from GUI\n")
+    replacement.write_bytes(b"replaced from GUI\n")
+    scenario = {
+        "view": view,
+        "target_index": 0,
+        "operations": [
+            {"type": "add_files", "view_path": "", "destination": "",
+             "sources": [str(added)], "expect_present": "added.txt"},
+            {"type": "rename", "path": "original.txt", "view_path": "",
+             "name": "renamed.txt", "expect_present": "renamed.txt",
+             "expect_absent": "original.txt"},
+            {"type": "replace", "path": "renamed.txt", "view_path": "",
+             "source": str(replacement), "expect_present": "renamed.txt"},
+            {"type": "create_file", "parent": "", "view_path": "",
+             "name": "delete-me.txt", "expect_present": "delete-me.txt"},
+            {"type": "delete", "path": "delete-me.txt", "view_path": "",
+             "expect_absent": "delete-me.txt"},
+        ],
+    }
+    scenario_path = tmp_path / f"ar-gui-{view}.json"
+    scenario_path.write_text(json.dumps(scenario), encoding="utf-8")
+    output_dir = tmp_path / f"ar-gui-output-{view}"
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+         "--exe", str(peare_gui_path), "--image", str(archive),
+         "--scenario", str(scenario_path), "--output-dir", str(output_dir)],
+        capture_output=True, text=True, timeout=240)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _sha256_file(archive) == sample_hash
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    updated = Path(report["image"])
+    names = subprocess.run([ar, "t", str(updated)], check=True,
+                           capture_output=True).stdout.decode("utf-8").splitlines()
+    assert names == ["renamed.txt", "added.txt"]
+
 @pytest.mark.parametrize("view", ["tree", "details"])
 @pytest.mark.parametrize(("compression", "expected_method"), [
     ("store", zipfile.ZIP_STORED),
     ("deflate", zipfile.ZIP_DEFLATED),
+    ("bzip2", zipfile.ZIP_BZIP2),
+    ("lzma", zipfile.ZIP_LZMA),
+    ("xz", 95),
+    ("zstd", 93),
+    ("ppmd", 98),
+    ("shrink", 1),
+    ("deflate64", 9),
 ])
-def test_zip_store_deflate_gui_cud_offscreen(
+def test_zip_compression_gui_cud_offscreen(
         writer_lib, peare_lib, peare_gui_path, tmp_path,
         compression, expected_method, view):
     seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
@@ -9643,18 +11105,36 @@ def test_zip_store_deflate_gui_cud_offscreen(
         candidate = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
             "7-Zip" / "7z.exe"
         seven_zip = str(candidate) if candidate.is_file() else None
-    if not seven_zip:
+    if not seven_zip and compression not in {"zstd", "ppmd", "deflate64"}:
         pytest.skip("7-Zip is required to create independent ZIP GUI samples")
 
     archive = tmp_path / f"gui-{compression}.zip"
     level = "0" if compression == "store" else "6"
-    created = subprocess.run(
-        [seven_zip, "a", "-tzip", f"-mx={level}", str(archive),
-         "README.md", "AGENTS.md"], cwd=ROOT, capture_output=True,
-        text=True, timeout=60)
-    assert created.returncode == 0, created.stdout + created.stderr
+    method = [f"-mm={compression}"] \
+        if compression in {"bzip2", "lzma", "xz"} else []
+    if compression in {"zstd", "ppmd", "shrink", "deflate64"}:
+        options = _WriterCreateOptions(b"zip", compression.encode(), None)
+        inputs = (_WriterInputFile * 2)(
+            _WriterInputFile(str(ROOT / "README.md").encode(), b"README.md"),
+            _WriterInputFile(str(ROOT / "AGENTS.md").encode(), b"AGENTS.md"))
+        writer = _HANDLE()
+        assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+        try:
+            created = writer_lib.peare_writer_add_files_to_ex(
+                writer, str(archive).encode(), C.byref(options), 0,
+                inputs, len(inputs))
+            assert created == 0, writer_lib.peare_writer_last_error(writer)
+        finally:
+            writer_lib.peare_writer_destroy(writer)
+    else:
+        created = subprocess.run(
+            [seven_zip, "a", "-tzip", f"-mx={level}", *method, str(archive),
+             "README.md", "AGENTS.md"], cwd=ROOT, capture_output=True,
+            text=True, timeout=60)
+        assert created.returncode == 0, created.stdout + created.stderr
     with zipfile.ZipFile(archive) as source:
-        assert source.testzip() is None
+        if compression not in {"xz", "zstd", "ppmd", "shrink", "deflate64"}:
+            assert source.testzip() is None
         assert {item.compress_type for item in source.infolist()} == {
             expected_method}
 
@@ -9663,9 +11143,37 @@ def test_zip_store_deflate_gui_cud_offscreen(
     report = json.loads((tmp_path / "gui-writer" / view /
                          "writer-test-report.json").read_text(encoding="utf-8"))
     with zipfile.ZipFile(report["image"]) as updated:
-        assert updated.testzip() is None
-        assert updated.read("AGENTS.md") == (ROOT / "AGENTS.md").read_bytes()
         assert updated.getinfo("AGENTS.md").compress_type == expected_method
+        if compression not in {"xz", "zstd", "ppmd", "shrink", "deflate64"}:
+            assert updated.testzip() is None
+            assert updated.read("AGENTS.md") == (ROOT / "AGENTS.md").read_bytes()
+    if compression in {"xz", "zstd", "ppmd"}:
+        winrar = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
+            "WinRAR" / "WinRAR.exe"
+        assert winrar.is_file()
+        winrar_check = subprocess.run(
+            [str(winrar), "t", "-ibck", report["image"]],
+            capture_output=True, text=True, timeout=120, check=False)
+        assert winrar_check.returncode == 0, \
+            winrar_check.stdout + winrar_check.stderr
+    elif compression == "shrink":
+        seven_zip_check = subprocess.run(
+            [seven_zip, "t", report["image"]], capture_output=True,
+            text=True, timeout=120, check=False)
+        assert seven_zip_check.returncode == 0, \
+            seven_zip_check.stdout + seven_zip_check.stderr
+        with peare_lib.open_file(report["image"]) as opener:
+            rows = {row["path"]: row for row in opener.normalized_tree()}
+            assert rows["AGENTS.md"]["sha256"] == hashlib.sha256(
+                (ROOT / "AGENTS.md").read_bytes()).hexdigest()
+    elif compression == "deflate64":
+        result = subprocess.run([seven_zip, "t", report["image"]],
+                                capture_output=True, text=True, timeout=120)
+        assert result.returncode == 0, result.stdout + result.stderr
+        with peare_lib.open_file(report["image"]) as opener:
+            rows = {row["path"]: row for row in opener.normalized_tree()}
+            assert rows["AGENTS.md"]["sha256"] == hashlib.sha256(
+                (ROOT / "AGENTS.md").read_bytes()).hexdigest()
 
 @pytest.mark.parametrize("view", ["tree", "details"])
 def test_zip_shrink_gui_cud_offscreen(
@@ -10265,6 +11773,199 @@ def test_ext_large_add_latency_and_independent_readback(
     assert max(row["seconds"][1] for row in measurements) < 5.0
     assert max(row["seconds"][2] for row in measurements) < 10.0
     assert _sha256_file(sample) == source_hash
+
+
+def _wad_lumps(path):
+    data = Path(path).read_bytes()
+    assert data[:4] in (b"IWAD", b"PWAD")
+    count, directory = struct.unpack_from("<II", data, 4)
+    assert directory >= 12 and directory + count * 16 <= len(data)
+    lumps = []
+    for index in range(count):
+        offset, size = struct.unpack_from("<II", data, directory + index * 16)
+        raw_name = data[directory + index * 16 + 8:directory + index * 16 + 16]
+        assert offset + size <= len(data)
+        lumps.append((raw_name.split(b"\0", 1)[0].decode("ascii"),
+                      data[offset:offset + size]))
+    return data[:4], lumps
+
+
+def _create_test_wad(writer_lib, path, variant, members):
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"wad", variant, str(path).encode()) == 0
+        for index, (name, data) in enumerate(members):
+            payload = Path(path).parent / f"wad-input-{index}.bin"
+            payload.write_bytes(data)
+            assert writer_lib.peare_writer_create_file(
+                writer, str(payload).encode(), name) == 0, \
+                writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+
+@pytest.mark.parametrize(("variant", "signature"), [
+    (b"iwad", b"IWAD"), (b"pwad", b"PWAD")])
+def test_wad_create_roundtrip(writer_lib, peare_lib, tmp_path, variant, signature):
+    archive = tmp_path / f"created-{variant.decode()}.wad"
+    _create_test_wad(writer_lib, archive, variant,
+                     [(b"DUPLUMP", b"first"), (b"DUPLUMP", b"second"),
+                      (b"MAP01", b"")])
+    actual_signature, lumps = _wad_lumps(archive)
+    assert actual_signature == signature
+    assert lumps == [("DUPLUMP", b"first"), ("DUPLUMP", b"second"), ("MAP01", b"")]
+    with peare_lib.open_file(str(archive)) as opener:
+        assert opener.container_format() == "WAD"
+        assert sum(opener.resource_count(folder) for folder in range(opener.folder_count())) == 3
+    batch_archive = tmp_path / f"batch-{variant.decode()}.wad"
+    payload = tmp_path / f"batch-payload-{variant.decode()}"
+    payload.write_bytes(b"batch payload")
+    input_file = _WriterInputFile(str(payload).encode(), b"BATCH")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_to(
+            writer, str(batch_archive).encode(), b"wad", variant, 0,
+            C.byref(input_file), 1) == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    assert _wad_lumps(batch_archive) == (signature, [("BATCH", b"batch payload")])
+
+
+def test_wad_cud_by_entry_id_on_real_and_duplicate_lumps(
+        writer_lib, peare_lib, tmp_path):
+    sample = ROOT / "tests" / "formats" / "wad" / "fixtures" / "e1m4.wad"
+    assert sample.is_file()
+    original_hash = _sha256_file(sample)
+    real_copy = tmp_path / "freedoom-level-copy.wad"
+    shutil.copy2(sample, real_copy)
+    before_signature, before_lumps = _wad_lumps(real_copy)
+    payload = tmp_path / "replacement-lump.bin"
+    payload.write_bytes(b"replacement content\n")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(writer, str(real_copy).encode()) == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, before_lumps[0][0].encode(), b"RENAMED") == 0
+        assert writer_lib.peare_writer_replace_entry_by_id(
+            writer, str(payload).encode(), before_lumps[1][0].encode(), 1) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    after_signature, after_lumps = _wad_lumps(real_copy)
+    assert after_signature == before_signature
+    assert after_lumps[0] == ("RENAMED", before_lumps[0][1])
+    assert after_lumps[1] == (before_lumps[1][0], payload.read_bytes())
+    assert after_lumps[2:] == before_lumps[2:]
+    assert _sha256_file(sample) == original_hash
+    with peare_lib.open_file(str(real_copy)) as opener:
+        assert opener.container_format() == "WAD"
+
+    duplicate_copy = tmp_path / "duplicate-lumps.wad"
+    _create_test_wad(writer_lib, duplicate_copy, b"pwad", [
+        (b"DUPLUMP", b"first"), (b"DUPLUMP", b"second"),
+        (b"REMOVE", b"third")])
+    import peare_opener as po
+    with peare_lib.open_file(str(duplicate_copy)) as opener:
+        context_ids = []
+        for folder in range(opener.folder_count()):
+            for resource_index in range(opener.resource_count(folder)):
+                resource = C.c_void_p()
+                assert opener._L.peare_opener_open_resource_at(
+                    opener._h, folder, resource_index, C.byref(resource)) == 0
+                try:
+                    context = po._Context()
+                    assert opener._L.peare_resource_get_context(
+                        resource, C.byref(context)) == 0
+                    context_ids.append(context.base_id)
+                    opener._L.peare_resource_context_free(C.byref(context))
+                finally:
+                    opener._L.peare_resource_destroy(resource)
+        assert context_ids == [0, 1, 2]
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(writer, str(duplicate_copy).encode()) == 0
+        capabilities = C.c_uint32()
+        assert writer_lib.peare_writer_get_update_capabilities(
+            str(duplicate_copy).encode(), 0, C.byref(capabilities)) == 0
+        assert capabilities.value & 1
+        assert capabilities.value & 2
+        assert capabilities.value & 4 == 0
+        assert capabilities.value & 8
+        assert capabilities.value & 16
+        assert capabilities.value & 32
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"DUPLUMP", b"AMBIG") == 1
+        assert writer_lib.peare_writer_create_directory(writer, b"folder") == 10
+        assert writer_lib.peare_writer_rename_entry_by_id(
+            writer, b"DUPLUMP", b"SECOND", 1) == 0
+        assert writer_lib.peare_writer_replace_entry_by_id(
+            writer, str(payload).encode(), b"DUPLUMP", 0) == 0
+        assert writer_lib.peare_writer_delete_entry_by_id(
+            writer, b"REMOVE", 0, 2) == 0
+        added = tmp_path / "added-lump.bin"
+        added.write_bytes(b"added")
+        assert writer_lib.peare_writer_add_file(
+            writer, str(added).encode(), b"ADDED") == 0
+        assert writer_lib.peare_writer_create_empty_file(writer, b"EMPTY") == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    signature, lumps = _wad_lumps(duplicate_copy)
+    assert signature == b"PWAD"
+    assert lumps == [("DUPLUMP", payload.read_bytes()), ("SECOND", b"second"),
+                     ("ADDED", b"added"), ("EMPTY", b"")]
+    with peare_lib.open_file(str(duplicate_copy)) as opener:
+        assert opener.container_format() == "WAD"
+        assert sum(opener.resource_count(folder) for folder in range(opener.folder_count())) == 4
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_wad_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
+                               tmp_path, view):
+    archive = tmp_path / "gui-pwad.wad"
+    _create_test_wad(writer_lib, archive, b"pwad", [(b"ORIGINAL", b"original")])
+    source_hash = _sha256_file(archive)
+    added = tmp_path / "ADDED"
+    replacement = tmp_path / "gui-replacement.bin"
+    added.write_bytes(b"added")
+    replacement.write_bytes(b"replacement")
+    scenario = {
+        "view": view,
+        "operations": [
+            {"type": "add_files", "view_path": "", "destination": "",
+             "sources": [str(added)], "expect_present": "ADDED"},
+            {"type": "rename", "path": "ORIGINAL", "view_path": "",
+             "name": "RENAMED", "expect_present": "RENAMED",
+             "expect_absent": "ORIGINAL"},
+            {"type": "replace", "path": "RENAMED", "view_path": "",
+             "source": str(replacement), "expect_present": "RENAMED"},
+            {"type": "create_file", "parent": "", "view_path": "",
+             "name": "EMPTY", "expect_present": "EMPTY"},
+            {"type": "delete", "path": "EMPTY", "view_path": "",
+             "expect_absent": "EMPTY"},
+        ],
+    }
+    scenario_path = tmp_path / f"wad-gui-{view}.json"
+    scenario_path.write_text(json.dumps(scenario), encoding="utf-8")
+    output_dir = tmp_path / f"wad-gui-output-{view}"
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+         "--exe", str(peare_gui_path), "--image", str(archive),
+         "--scenario", str(scenario_path), "--output-dir", str(output_dir)],
+        capture_output=True, text=True, timeout=180)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _sha256_file(archive) == source_hash
+    _, lumps = _wad_lumps(output_dir / "writer-test-copy.wad")
+    assert lumps == [("RENAMED", b"replacement"), ("ADDED", b"added")]
 
 @pytest.mark.parametrize(("image_format", "subformat", "variant", "extension"), [
     ("raw", "", "raw", "img"),

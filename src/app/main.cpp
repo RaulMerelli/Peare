@@ -45,6 +45,12 @@ static bool isStartupIconTestRequested(int argc, char* argv[])
         QStringLiteral("--startup-icons-test");
 }
 
+static bool isFolderOpenTestRequested(int argc, char* argv[])
+{
+    return argc >= 2 && QString::fromLocal8Bit(argv[1]) ==
+        QStringLiteral("--folder-open-test");
+}
+
 static bool isFileAssociationTestRequested(int argc, char* argv[])
 {
     return argc >= 2 && QString::fromLocal8Bit(argv[1]) ==
@@ -235,6 +241,7 @@ int main(int argc, char* argv[])
     const bool previewMode = isPreviewModeRequested(argc, argv);
     const bool writerTestMode = isWriterTestRequested(argc, argv);
     const bool startupIconTestMode = isStartupIconTestRequested(argc, argv);
+    const bool folderOpenTestMode = isFolderOpenTestRequested(argc, argv);
     const bool fileAssociationTestMode = isFileAssociationTestRequested(argc, argv);
     if (previewMode && argc != 5) {
         std::fprintf(stderr,
@@ -251,7 +258,8 @@ int main(int argc, char* argv[])
         std::fprintf(stderr, "Set PEARE_ENABLE_GUI_WRITER_TEST=1 to enable GUI writer tests.\n");
         return 2;
     }
-    if (previewMode || writerTestMode || startupIconTestMode || fileAssociationTestMode) {
+    if (previewMode || writerTestMode || startupIconTestMode || folderOpenTestMode ||
+        fileAssociationTestMode) {
         qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
 #ifdef Q_OS_WIN
         if (qEnvironmentVariableIsEmpty("QT_QPA_FONTDIR")) {
@@ -269,7 +277,8 @@ int main(int argc, char* argv[])
     QApplication::setOrganizationName(QStringLiteral("Raul Merelli"));
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/peare/icon.ico")));
 #ifdef Q_OS_WIN
-    if (previewMode || writerTestMode || startupIconTestMode || fileAssociationTestMode)
+    if (previewMode || writerTestMode || startupIconTestMode || folderOpenTestMode ||
+        fileAssociationTestMode)
         app.setFont(QFont(QStringLiteral("Segoe UI"), 9));
 #endif
 
@@ -296,6 +305,21 @@ int main(int argc, char* argv[])
             return 3;
         }
         std::printf("GUI writer scenario passed.\n");
+        return 0;
+    }
+    if (folderOpenTestMode) {
+        if (argc != 5) {
+            std::fprintf(stderr,
+                         "Usage: Peare.exe --folder-open-test <folder> <relative-file> <screenshot.png>\n");
+            return 2;
+        }
+        QString error;
+        if (!window.runOffscreenFolderOpenScenario(app.arguments().at(2),
+                app.arguments().at(3), app.arguments().at(4), &error)) {
+            std::fprintf(stderr, "Folder open test failed: %s\n", error.toUtf8().constData());
+            return 3;
+        }
+        std::printf("Folder file opened through Peare.\n");
         return 0;
     }
     if (startupIconTestMode && argc != 3) {

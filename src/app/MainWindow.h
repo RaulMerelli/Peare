@@ -60,6 +60,10 @@ public:
                                     const QString& reportPath,
                                     const QString& screenshotPath,
                                     QString* error);
+    bool runOffscreenFolderOpenScenario(const QString& directoryPath,
+                                        const QString& relativeFilePath,
+                                        const QString& screenshotPath,
+                                        QString* error);
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;

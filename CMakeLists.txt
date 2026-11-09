@@ -796,6 +796,12 @@ set_target_properties(PeareDecoder PROPERTIES
 add_library(PeareWriter SHARED
     src/writer/api/peare/peare_writer.h
     src/writer/api/Api.cpp
+    src/writer/formats/WinZipJpegEncoder.h
+    src/writer/formats/WinZipJpegEncoder.cpp
+    src/opener/compression/third_party/winzipjpeg/ArithmeticDecoder.c
+    src/opener/compression/third_party/winzipjpeg/ArithmeticDecoder.h
+    src/opener/compression/third_party/winzipjpeg/JPEG.c
+    src/opener/compression/third_party/winzipjpeg/JPEG.h
     src/writer/formats/DiskImageWriter.h
     src/writer/formats/DiskImageWriter.cpp
     src/writer/formats/ExtVolumeUpdate.h
@@ -819,10 +825,147 @@ add_library(PeareWriter SHARED
     src/writer/third_party/fatfs/ff.h
     src/writer/third_party/fatfs/ffconf.h
     src/writer/third_party/fatfs/ffunicode.c
+    src/writer/third_party/miniz/LICENSE
+    src/writer/third_party/miniz/miniz_common.h
+    src/writer/third_party/miniz/miniz.c
+    src/writer/third_party/miniz/miniz.h
+    src/writer/third_party/miniz/miniz_export.h
+    src/writer/third_party/miniz/miniz_tdef.c
+    src/writer/third_party/miniz/miniz_tdef.h
+    src/writer/third_party/miniz/miniz_tinfl.h
+    src/writer/third_party/miniz/miniz_zip.h
+    src/writer/third_party/bzip2/LICENSE
+    src/writer/third_party/bzip2/blocksort.c
+    src/writer/third_party/bzip2/bzlib.c
+    src/writer/third_party/bzip2/bzlib.h
+    src/writer/third_party/bzip2/bzlib_private.h
+    src/writer/third_party/bzip2/compress.c
+    src/writer/third_party/bzip2/crctable.c
+    src/writer/third_party/bzip2/decompress.c
+    src/writer/third_party/bzip2/huffman.c
+    src/writer/third_party/bzip2/randtable.c
+    src/writer/third_party/lzma/7zTypes.h
+    src/writer/third_party/lzma/7zCrc.c
+    src/writer/third_party/lzma/7zCrc.h
+    src/writer/third_party/lzma/7zCrcOpt.c
+    src/writer/third_party/lzma/Alloc.c
+    src/writer/third_party/lzma/Alloc.h
+    src/writer/third_party/lzma/7zWindows.h
+    src/writer/third_party/lzma/Bra.c
+    src/writer/third_party/lzma/Bra86.c
+    src/writer/third_party/lzma/Bra.h
+    src/writer/third_party/lzma/Compiler.h
+    src/writer/third_party/lzma/CpuArch.c
+    src/writer/third_party/lzma/CpuArch.h
+    src/writer/third_party/lzma/Delta.c
+    src/writer/third_party/lzma/Delta.h
+    src/writer/third_party/lzma/LICENSE.txt
+    src/writer/third_party/lzma/LzFind.c
+    src/writer/third_party/lzma/LzFind.h
+    src/writer/third_party/lzma/LzHash.h
+    src/writer/third_party/lzma/LzmaEnc.c
+    src/writer/third_party/lzma/LzmaEnc.h
+    src/writer/third_party/lzma/Lzma2Enc.c
+    src/writer/third_party/lzma/Lzma2Enc.h
+    src/writer/third_party/lzma/Lzma2Dec.c
+    src/writer/third_party/lzma/Lzma2Dec.h
+    src/writer/third_party/lzma/LzmaDec.c
+    src/writer/third_party/lzma/LzmaDec.h
+    src/writer/third_party/lzma/Precomp.h
+    src/writer/third_party/lzma/RotateDefs.h
+    src/writer/third_party/lzma/Sha256.h
+    src/writer/third_party/lzma/Sha256.c
+    src/writer/third_party/lzma/Sha256Opt.c
+    src/writer/third_party/lzma/Xz.h
+    src/writer/third_party/lzma/Xz.c
+    src/writer/third_party/lzma/XzCrc64.c
+    src/writer/third_party/lzma/XzCrc64.h
+    src/writer/third_party/lzma/XzCrc64Opt.c
+    src/writer/third_party/lzma/XzEnc.c
+    src/writer/third_party/lzma/XzEnc.h
+    src/writer/third_party/lzma/XzDec.c
+    src/writer/third_party/lzma/Ppmd8.h
+    src/writer/third_party/lzma/Ppmd.h
+    src/writer/third_party/lzma/Ppmd.h
+    src/writer/third_party/lzma/Ppmd8.c
+    src/writer/third_party/lzma/Ppmd8Enc.c
+    src/writer/third_party/zstd/zstd.h
+    src/writer/third_party/zstd/zstd_errors.h
+    src/writer/third_party/zstd/LICENSE
+    src/writer/third_party/zstd/common/debug.c
+    src/writer/third_party/zstd/common/entropy_common.c
+    src/writer/third_party/zstd/common/error_private.c
+    src/writer/third_party/zstd/common/fse_decompress.c
+    src/writer/third_party/zstd/common/pool.c
+    src/writer/third_party/zstd/common/threading.c
+    src/writer/third_party/zstd/common/xxhash.c
+    src/writer/third_party/zstd/common/zstd_common.c
+    src/writer/third_party/zstd/compress/fse_compress.c
+    src/writer/third_party/zstd/compress/hist.c
+    src/writer/third_party/zstd/compress/huf_compress.c
+    src/writer/third_party/zstd/compress/zstd_compress.c
+    src/writer/third_party/zstd/compress/zstd_compress_literals.c
+    src/writer/third_party/zstd/compress/zstd_compress_sequences.c
+    src/writer/third_party/zstd/compress/zstd_compress_superblock.c
+    src/writer/third_party/zstd/compress/zstd_double_fast.c
+    src/writer/third_party/zstd/compress/zstd_fast.c
+    src/writer/third_party/zstd/compress/zstd_lazy.c
+    src/writer/third_party/zstd/compress/zstd_ldm.c
+    src/writer/third_party/zstd/compress/zstd_opt.c
+    src/writer/third_party/zstd/compress/zstd_preSplit.c
+    src/writer/third_party/zstd/compress/zstdmt_compress.c
+    src/opener/compression/third_party/packmp3/packmp3.cpp
+    src/opener/compression/third_party/packmp3/bitops.cpp
+    src/opener/compression/third_party/packmp3/aricoder.cpp
+    src/opener/compression/third_party/packmp3/huffmp3.cpp
+    src/opener/compression/third_party/packmp3/packmp3lib.h
+    src/opener/compression/third_party/packmp3/bitops.h
+    src/opener/compression/third_party/packmp3/aricoder.h
+    src/opener/compression/third_party/packmp3/huffmp3.h
+    src/opener/compression/third_party/packmp3/huffmp3tbl.h
+    src/opener/compression/third_party/packmp3/pmp3bitlen.h
+    src/opener/compression/third_party/packmp3/pmp3tbl.h
+    src/opener/compression/third_party/packmp3/LICENSE
+    src/opener/compression/third_party/wavpack/include/wavpack.h
+    src/opener/compression/third_party/wavpack/src/common_utils.c
+    src/opener/compression/third_party/wavpack/src/decorr_utils.c
+    src/opener/compression/third_party/wavpack/src/entropy_utils.c
+    src/opener/compression/third_party/wavpack/src/extra1.c
+    src/opener/compression/third_party/wavpack/src/extra2.c
+    src/opener/compression/third_party/wavpack/src/open_utils.c
+    src/opener/compression/third_party/wavpack/src/open_filename.c
+    src/opener/compression/third_party/wavpack/src/open_legacy.c
+    src/opener/compression/third_party/wavpack/src/open_raw.c
+    src/opener/compression/third_party/wavpack/src/pack.c
+    src/opener/compression/third_party/wavpack/src/pack_dns.c
+    src/opener/compression/third_party/wavpack/src/pack_floats.c
+    src/opener/compression/third_party/wavpack/src/pack_utils.c
+    src/opener/compression/third_party/wavpack/src/read_words.c
+    src/opener/compression/third_party/wavpack/src/tags.c
+    src/opener/compression/third_party/wavpack/src/tag_utils.c
+    src/opener/compression/third_party/wavpack/src/unpack.c
+    src/opener/compression/third_party/wavpack/src/unpack_floats.c
+    src/opener/compression/third_party/wavpack/src/unpack_seek.c
+    src/opener/compression/third_party/wavpack/src/unpack_utils.c
+    src/opener/compression/third_party/wavpack/src/write_words.c
+    src/opener/compression/third_party/wavpack/src/decorr_tables.h
+    src/opener/compression/third_party/wavpack/src/unpack3.h
+    src/opener/compression/third_party/wavpack/src/wavpack_local.h
+    src/opener/compression/third_party/wavpack/src/wavpack_version.h
+    src/opener/compression/third_party/wavpack/LICENSE.txt
     src/opener/modules/DeflateDecoder.cpp
     src/opener/modules/DeflateDecoder.h
 )
 target_compile_definitions(PeareWriter PRIVATE PEARE_WRITER_BUILD)
+set_source_files_properties(src/writer/third_party/miniz/miniz.c PROPERTIES
+    COMPILE_DEFINITIONS "MINIZ_NO_INFLATE_APIS;MINIZ_NO_TIME")
+set_source_files_properties(
+    src/writer/third_party/lzma/LzFind.c
+    src/writer/third_party/lzma/LzmaEnc.c
+    src/writer/third_party/lzma/Lzma2Enc.c
+    src/writer/third_party/lzma/XzEnc.c
+    src/writer/third_party/lzma/XzDec.c
+    PROPERTIES COMPILE_DEFINITIONS "Z7_ST")
 target_include_directories(PeareWriter
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/writer/api>
@@ -830,6 +973,10 @@ target_include_directories(PeareWriter
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/writer
         ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/modules
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/writer/third_party/zstd
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/compression/third_party/packmp3
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/compression/third_party/wavpack/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/compression/third_party/wavpack/src
 )
 target_link_libraries(PeareWriter PRIVATE ${PEARE_QT_CORE})
 set_target_properties(PeareWriter PROPERTIES

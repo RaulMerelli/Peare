@@ -81,6 +81,7 @@ enum ItemRole {
     CodePageRole,
     FolderIndexRole,
     ResourceIndexRole,
+    BaseIdRole,
     SessionRole, // pearegui::Session* that owns this item's folder/resource index
     PendingRole, // true: a lazy container whose children are not populated yet
     PlaceholderRole,
@@ -744,6 +745,13 @@ void MainWindow::buildCentralUi() {
                 QTreeWidgetItem* source = detailsSourceItem(row);
                 if (!source)
                     return;
+                if (folderMode_ && source->data(0, LocalPathRole).isValid()) {
+                    if (localDirectory(source))
+                        navigateDetailsTo(source);
+                    else
+                        openFilePath(source->data(0, LocalPathRole).toString());
+                    return;
+                }
                 if (source->data(0, PendingRole).toBool() || source->childCount() > 0)
                     navigateDetailsTo(source);
                 else
@@ -1777,6 +1785,51 @@ void MainWindow::openFolderPath(const QString& path) {
 
 }
 
+bool MainWindow::runOffscreenFolderOpenScenario(const QString& directoryPath,
+                                                const QString& relativeFilePath,
+                                                const QString& screenshotPath,
+                                                QString* error) {
+    auto fail = [&](const QString& message) {
+        if (error) *error = message;
+        return false;
+    };
+    const QFileInfo directoryInfo(directoryPath);
+    if (!directoryInfo.isDir() || relativeFilePath.trimmed().isEmpty())
+        return fail(QStringLiteral("A folder and relative file path are required."));
+
+    resize(1280, 800);
+    show();
+    openFolderPath(directoryInfo.absoluteFilePath());
+    setDetailsMode(true);
+    QApplication::processEvents();
+    QTreeWidgetItem* item = findDetailsPath(relativeFilePath);
+    if (!item || localDirectory(item))
+        return fail(QStringLiteral("The requested file was not found in the opened folder."));
+    const QString expectedPath = QFileInfo(item->data(0, LocalPathRole).toString()).absoluteFilePath();
+
+    selectDetailsSource(item);
+    QTreeWidgetItem* row = nullptr;
+    for (int i = 0; i < detailsView_->topLevelItemCount(); ++i) {
+        QTreeWidgetItem* candidate = detailsView_->topLevelItem(i);
+        if (detailsSourceItem(candidate) == item) {
+            row = candidate;
+            break;
+        }
+    }
+    if (!row)
+        return fail(QStringLiteral("The requested file is not visible in Details view."));
+
+    emit detailsView_->itemActivated(row, 0);
+    QApplication::processEvents();
+    if (folderMode_ || currentFilePath_ != expectedPath || !currentSession_.isOpen())
+        return fail(QStringLiteral("Activating the file did not open it through Peare."));
+
+    const QPixmap screenshot = grab();
+    if (screenshot.isNull() || !screenshot.save(screenshotPath, "PNG"))
+        return fail(QStringLiteral("Could not save the folder-open screenshot."));
+    return true;
+}
+
 void MainWindow::populateLocalDirectory(const QString& path, QTreeWidgetItem* parent) {
     QDir directory(path);
     if (!directory.exists()) return;
@@ -2500,6 +2553,7 @@ void MainWindow::populateFromSession(pearegui::Session* session, QTreeWidgetItem
             child->setData(0, CodePageRole, context.codepage);
             child->setData(0, FolderIndexRole, QVariant::fromValue<qulonglong>(folderIndex));
             child->setData(0, ResourceIndexRole, QVariant::fromValue<qulonglong>(resourceIndex));
+            child->setData(0, BaseIdRole, QVariant::fromValue<qlonglong>(context.baseId));
             child->setData(0, SessionRole, QVariant::fromValue<qulonglong>(sid));
             if (context.isContainer) {
                 // Nested containers expand on demand; file-like entries keep file icons.
@@ -2946,7 +3000,9 @@ void MainWindow::renameWriterEntry(QTreeWidgetItem* item) {
         return;
     }
     if (status == PEARE_WRITER_OK)
-        status = peare_writer_rename_entry(writer, path.toUtf8().constData(), target.toUtf8().constData());
+        status = peare_writer_rename_entry_by_id(
+            writer, path.toUtf8().constData(), target.toUtf8().constData(),
+            item->data(0, BaseIdRole).toLongLong());
     if (status == PEARE_WRITER_OK)
         reportOffscreenWriterStage(QStringLiteral("entry-renamed"));
     if (status == PEARE_WRITER_OK) status = peare_writer_update_finish(writer);
@@ -2982,7 +3038,9 @@ void MainWindow::deleteWriterEntry(QTreeWidgetItem* item) {
         return;
     }
     if (status == PEARE_WRITER_OK)
-        status = peare_writer_delete_entry(writer, path.toUtf8().constData(), 1);
+        status = peare_writer_delete_entry_by_id(
+            writer, path.toUtf8().constData(), 1,
+            item->data(0, BaseIdRole).toLongLong());
     if (status == PEARE_WRITER_OK)
         reportOffscreenWriterStage(QStringLiteral("entry-deleted"));
     if (status == PEARE_WRITER_OK) status = peare_writer_update_finish(writer);
@@ -3019,7 +3077,9 @@ void MainWindow::replaceWriterEntry(QTreeWidgetItem* item) {
         return;
     }
     if (status == PEARE_WRITER_OK)
-        status = peare_writer_replace_file(writer, source.toUtf8().constData(), path.toUtf8().constData());
+        status = peare_writer_replace_entry_by_id(
+            writer, source.toUtf8().constData(), path.toUtf8().constData(),
+            item->data(0, BaseIdRole).toLongLong());
     if (status == PEARE_WRITER_OK)
         reportOffscreenWriterStage(QStringLiteral("entry-replaced"));
     if (status == PEARE_WRITER_OK) status = peare_writer_update_finish(writer);

@@ -557,6 +557,149 @@ fs::ByteStorePtr storeForFile(const QString& path) {
 // Keep Deflate members compressed during listing and inflate only requested data.
 // Header probes read a prefix; extraction reads the full member.
 
+class ZipReduceStore final : public fs::IByteStore {
+public:
+    ZipReduceStore(fs::ByteStorePtr source, std::int64_t offset,
+                   std::int64_t compressed, std::int64_t uncompressed, int factor)
+        : source_(std::move(source)), offset_(offset), compressed_(compressed),
+          uncompressed_(uncompressed), factor_(factor) {}
+
+    std::int64_t capacity() const override { return uncompressed_; }
+    bool cheapRandomAccess() const override { return false; }
+
+    int read(std::int64_t pos, std::uint8_t* dst, int count) const override {
+        if (!source_ || !dst || pos < 0 || count <= 0 || pos >= uncompressed_) return 0;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!ensureDecoded()) return 0;
+        const int n = int(std::min<std::int64_t>(count, uncompressed_ - pos));
+        std::copy(decoded_.begin() + std::ptrdiff_t(pos),
+                  decoded_.begin() + std::ptrdiff_t(pos + n), dst);
+        return n;
+    }
+
+private:
+    bool ensureDecoded() const {
+        if (decodedReady_) return true;
+        if (failed_ || factor_ < 1 || factor_ > 4 || compressed_ < 0 ||
+            uncompressed_ < 0 || offset_ < 0 ||
+            std::uint64_t(compressed_) > std::numeric_limits<std::size_t>::max() ||
+            std::uint64_t(uncompressed_) > std::numeric_limits<std::size_t>::max() ||
+            offset_ > source_->capacity() - compressed_) {
+            failed_ = true;
+            return false;
+        }
+        const auto input = source_->readRange(offset_, std::size_t(compressed_));
+        if (input.size() != std::size_t(compressed_)) { failed_ = true; return false; }
+
+        class BitReader {
+        public:
+            explicit BitReader(const std::vector<std::uint8_t>& bytes) : bytes_(bytes) {}
+            bool read(unsigned bits, std::uint32_t* value) {
+                while (available_ < bits) {
+                    if (offset_ >= bytes_.size()) return false;
+                    buffer_ |= std::uint64_t(bytes_[offset_++]) << available_;
+                    available_ += 8;
+                }
+                *value = std::uint32_t(buffer_ & ((std::uint64_t(1) << bits) - 1));
+                buffer_ >>= bits;
+                available_ -= bits;
+                return true;
+            }
+        private:
+            const std::vector<std::uint8_t>& bytes_;
+            std::size_t offset_ = 0;
+            std::uint64_t buffer_ = 0;
+            unsigned available_ = 0;
+        } bits(input);
+
+        struct Followers { std::uint8_t count = 0, width = 0; std::uint8_t values[32] = {}; };
+        Followers followers[256];
+        for (int previous = 255; previous >= 0; --previous) {
+            std::uint32_t count = 0;
+            if (!bits.read(6, &count) || count > 32) { failed_ = true; return false; }
+            followers[previous].count = std::uint8_t(count);
+            if (count) followers[previous].width = 1;
+            while ((std::uint32_t(1) << followers[previous].width) < count)
+                ++followers[previous].width;
+            for (std::uint32_t i = 0; i < count; ++i) {
+                std::uint32_t byte = 0;
+                if (!bits.read(8, &byte)) { failed_ = true; return false; }
+                followers[previous].values[i] = std::uint8_t(byte);
+            }
+        }
+
+        decoded_.clear();
+        decoded_.reserve(std::size_t(uncompressed_));
+        std::uint8_t previous = 0;
+        auto next = [&](std::uint8_t* out) {
+            const Followers& set = followers[previous];
+            std::uint32_t value = 0;
+            if (!set.count) {
+                if (!bits.read(8, &value)) return false;
+            } else {
+                if (!bits.read(1, &value)) return false;
+                if (value) {
+                    if (!bits.read(8, &value)) return false;
+                } else {
+                    std::uint32_t index = 0;
+                    if (!bits.read(set.width, &index) || index >= set.count) return false;
+                    value = set.values[index];
+                }
+            }
+            *out = std::uint8_t(value);
+            previous = *out;
+            return true;
+        };
+
+        const unsigned lengthBits = unsigned(8 - factor_);
+        const std::uint32_t lengthMask = (1u << lengthBits) - 1;
+        while (decoded_.size() < std::size_t(uncompressed_)) {
+            std::uint8_t value = 0;
+            if (!next(&value)) { failed_ = true; decoded_.clear(); return false; }
+            if (value != 0x90) {
+                decoded_.push_back(value);
+                continue;
+            }
+            std::uint8_t code = 0;
+            if (!next(&code)) { failed_ = true; decoded_.clear(); return false; }
+            if (!code) {
+                decoded_.push_back(0x90);
+                continue;
+            }
+            std::size_t length = code & lengthMask;
+            if (length == lengthMask) {
+                std::uint8_t extra = 0;
+                if (!next(&extra)) { failed_ = true; decoded_.clear(); return false; }
+                length += extra;
+            }
+            length += 3;
+            std::uint8_t lowDistance = 0;
+            if (!next(&lowDistance)) { failed_ = true; decoded_.clear(); return false; }
+            const std::size_t distance =
+                (std::size_t(code >> lengthBits) << 8) + lowDistance + 1;
+            if (length > std::size_t(uncompressed_) - decoded_.size()) {
+                failed_ = true; decoded_.clear(); return false;
+            }
+            for (std::size_t i = 0; i < length; ++i) {
+                decoded_.push_back(distance > decoded_.size()
+                    ? 0 : decoded_[decoded_.size() - distance]);
+            }
+        }
+        decodedReady_ = true;
+        return true;
+    }
+
+    fs::ByteStorePtr source_;
+    std::int64_t offset_;
+    std::int64_t compressed_;
+    std::int64_t uncompressed_;
+    int factor_;
+    mutable std::mutex mutex_;
+    mutable std::vector<std::uint8_t> decoded_;
+    mutable bool decodedReady_ = false;
+    mutable bool failed_ = false;
+};
+
 // ZIP method 1 ("Shrink") is decoded only when the member is actually read.
 // Ordinary stored/deflated members keep their existing zero-copy/prefix paths.
 class ZipShrinkStore final : public fs::IByteStore {
@@ -650,12 +793,12 @@ private:
                 if (command == 1) {
                     if (++codeSize > 13) { failed_ = true; decoded_.clear(); return false; }
                 } else if (command == 2) {
-                    for (int i = kBogusCode + 1; i <= lastFreeCode; ++i) {
+                    for (int i = kBogusCode + 1; i < kTableSize; ++i) {
                         const int p = parent[i] & kCodeMask;
                         if (parent[i] != kFreeCode && p > kBogusCode)
                             parent[p] = quint16(parent[p] | kHasChild);
                     }
-                    for (int i = kBogusCode + 1; i <= lastFreeCode; ++i) {
+                    for (int i = kBogusCode + 1; i < kTableSize; ++i) {
                         if (parent[i] & kHasChild)
                             parent[i] = quint16(parent[i] & ~kHasChild);
                         else
@@ -1491,6 +1634,9 @@ ModulePtr ZipModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
         } else if (method == 1) {
             content = std::make_shared<ZipShrinkStore>(file, dataOffset,
                                                        compressedSize, uncompressedSize);
+        } else if (method >= 2 && method <= 5) {
+            content = std::make_shared<ZipReduceStore>(file, dataOffset,
+                compressedSize, uncompressedSize, method - 1);
         } else if (method == 8) {
             content = std::make_shared<ZipDeflateStore>(file, dataOffset,
                                                         compressedSize, uncompressedSize);

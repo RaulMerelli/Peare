@@ -30,6 +30,7 @@ struct ResourceContext {
     quint32 codepage = 0;
     quint64 dataOffset = 0;
     quint64 dataSize = 0;
+    qint64 baseId = -1;
     bool isContainer = false;
 
     ResourceContext() = default;

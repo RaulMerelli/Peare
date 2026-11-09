@@ -18,6 +18,7 @@ SAMPLE_NAMES = (
     "pcmcia",
     "skeleton",
     "skeleton2.cpio",
+    "libarchive/test_read_format_cpio_afio.cpio",
     "libarchive/test_read_format_cpio_bin_le.cpio",
     "libarchive/test_read_format_cpio_bin_be.cpio",
 )
@@ -27,6 +28,7 @@ SAMPLE_MAGICS = {
     "pcmcia": b"070702",
     "skeleton": b"070702",
     "skeleton2.cpio": b"\x71\xc7",
+    "libarchive/test_read_format_cpio_afio.cpio": b"070707",
     "libarchive/test_read_format_cpio_bin_le.cpio": b"\xc7\x71",
     "libarchive/test_read_format_cpio_bin_be.cpio": b"\x71\xc7",
 }

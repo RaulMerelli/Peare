@@ -52,8 +52,9 @@ peare_writer_status peare_writer_add_file(
 peare_writer_status peare_writer_finish(peare_writer_handle writer);
 ```
 
-The create backends are ZIP, TAR, standalone FAT, floppy images, raw MBR/GPT
-disks, VHD, VHDX, and VMDK. Format descriptors and their strings remain valid
+The create backends are ZIP, GZIP, BZIP2, LZMA-alone, XZ, Zstandard, TAR, GNU and BSD ar, Doom IWAD and PWAD, all six CPIO variants (`newc`, CRC, `odc`, afio
+large ASCII, binary little-endian, and binary big-endian), standalone FAT, floppy images,
+raw MBR/GPT disks, VHD, VHDX, and VMDK. Format descriptors and their strings remain valid
 for the process lifetime. Floppy images support the 12 geometries in the Writer
 variant list. Raw disks support MBR and GPT layouts. VHD and VHDX support fixed
 and dynamic variants. VMDK supports monolithic sparse and split sparse creation.
@@ -61,6 +62,26 @@ Split creation uses one external extent with a 2 GiB maximum. VHD, VHDX, VMDK,
 and raw MBR/GPT creation support FAT12, FAT16, FAT32, exFAT, and NTFS. NTFS
 volumes are formatted by the bundled NTFS-3G formatter on the staged image and
 are checked before Peare publishes the new disk. Floppy images use FAT12.
+
+GZIP creation writes one RFC 1952 member per selected input file. The GZIP
+stream is not an archive with independently editable entries.
+
+BZIP2 creation writes one compressed stream per selected input file. The output
+uses concatenated BZIP2 streams and the selected block level from 1 to 9.
+
+Zstandard creation writes one standard frame per selected input file. The output
+uses concatenated frames and supports compression levels -5 through 22.
+
+XZ creation writes one XZ stream per selected input file. The output uses
+concatenated streams and supports no check, CRC32, CRC64, or SHA-256 checks.
+
+LZMA-alone creation writes one stream for one selected input file and supports
+compression levels 1 through 9.
+
+The ar Writer creates GNU long-name tables or BSD extended-name records. Ar
+members are flat files, so the Writer does not create directory entries. Symbol
+index records are not exposed as members; a rewritten archive omits them. Run
+the platform `ranlib` tool when the archive must be used as a linkable library.
 
 `peare_writer_add_files_to_ex()` uses one `peare_writer_create_options` value
 for a new output. Set its format, variant, and filesystem IDs. Set the options
@@ -126,11 +147,20 @@ peare_writer_status peare_writer_create_directory(
 peare_writer_status peare_writer_replace_file(
     peare_writer_handle writer, const char *source_path_utf8,
     const char *entry_name_utf8);
+peare_writer_status peare_writer_replace_entry_by_id(
+    peare_writer_handle writer, const char *source_path_utf8,
+    const char *entry_name_utf8, int64_t entry_id);
 peare_writer_status peare_writer_rename_entry(
     peare_writer_handle writer, const char *entry_name_utf8,
     const char *new_entry_name_utf8);
+peare_writer_status peare_writer_rename_entry_by_id(
+    peare_writer_handle writer, const char *entry_name_utf8,
+    const char *new_entry_name_utf8, int64_t entry_id);
 peare_writer_status peare_writer_delete_entry(
     peare_writer_handle writer, const char *entry_name_utf8, int recursive);
+peare_writer_status peare_writer_delete_entry_by_id(
+    peare_writer_handle writer, const char *entry_name_utf8,
+    int recursive, int64_t entry_id);
 peare_writer_status peare_writer_add_files_begin(
     peare_writer_handle writer, const char *container_path_utf8);
 peare_writer_status peare_writer_add_files_begin_target(
@@ -171,6 +201,15 @@ creation accepts generic file, empty-file, and directory creation.
 TAR targets report all six CUD capabilities. TAR updates can create regular
 files and directories, replace files, rename files and directory subtrees, and
 delete files or directories. A non-empty directory requires recursive delete.
+All supported CPIO variants report all six CUD capabilities. They support regular
+files, empty files, directories, file replacement, entry rename, and file or
+recursive directory deletion. Updates retain the source variant and preserve existing
+special entries and opaque trailing data.
+IWAD and PWAD targets report create-file, create-empty-file, update-file, rename,
+and delete capabilities. Doom WAD has no directory entries. Lump names are limited
+to 1-8 printable ASCII characters. The `*_entry_by_id()` operations target one
+directory record, so repeated lump names remain individually editable. Name-only
+operations reject ambiguous lump names.
 Supported FAT image targets report all six CUD capabilities. They support
 regular files and directories, file replacement, entry rename, and file or
 recursive directory deletion. The legacy `peare_writer_can_add_files()` is
@@ -197,13 +236,13 @@ The ZIP backend reads and updates ZIP64 end records and per-entry ZIP64 extra
 fields. It stages updates separately, then commits the completed archive through
 an atomic replacement. It preserves untouched members and central records.
 Rename copies compressed member bytes without recompression and updates local and
-central records. Replace appends a new stored member and removes the old record.
-Delete removes entries from the central directory; recursive directory deletion
-also removes all members below that path. Existing archive comments remain.
-Existing Store, Shrink, and Deflate data remains readable after updates. New
-members use Store. New archive-level ZIP64 records are written when entry counts
-or offsets require them. Multi-disk archives and unsafe new entry names are
-rejected. The Writer limits each new ZIP member to 512 MiB.
+central records. Replace appends a new member and removes the old record. Delete
+removes entries from the central directory; recursive directory deletion also
+removes all members below that path. Existing archive comments remain. Updates
+preserve the compressed data and method of untouched members. New archives use
+the selected Store, Deflate, BZip2, LZMA, XZ, Zstandard, or PPMd method. New members in existing ZIP
+archives use Deflate. New ZIP64 records are written when required. Multi-disk
+archives and unsafe new entry names are rejected.
 
 The TAR backend writes USTAR regular-file and directory entries. It creates a
 new archive or updates an existing archive. Updates preserve untouched payload
@@ -335,11 +374,10 @@ The ZIP-specific API can create a new archive transactionally. The destination
 is replaced only after its finish call succeeds. An abandoned active writer is
 cancelled by `peare_writer_destroy()` or `peare_writer_abort()`.
 
-New entries use UTF-8 names and the ZIP `stored` method. File input is streamed.
-The Writer does not need to hold an entire file in memory.
+New entries use UTF-8 names and the selected ZIP Store, Deflate, BZip2, LZMA, XZ, Zstandard, or PPMd method. File
+input is streamed. The Writer does not need to hold an entire file in memory.
 New entries use ZIP32 size fields when possible.
 ZIP64 fields store offsets and archive records when required.
-New member payloads are limited to 512 MiB.
 
 Entry names use `/` separators. Absolute paths, drive-prefixed paths, `.` and
 `..` path segments, empty names, and duplicate normalized names are rejected.

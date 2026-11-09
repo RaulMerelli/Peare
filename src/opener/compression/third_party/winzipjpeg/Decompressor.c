@@ -26,7 +26,6 @@
 #include <string.h>
 
 
-
 //
 // Constructor and destructor.
 //
@@ -500,7 +499,6 @@ const WinZipJPEGQuantizationTable *quantization)
 	// Decode pivot (abs>=2). (5.6.6.2)
 	int pivotcontext1=Min(Category(val1),4);
 	int pivotcontext2=Min(Category(val2),6);
-
 	int pivot=NextBitFromWinZipJPEGArithmeticDecoder(&self->decoder,
 	&self->pivotbins[comp][k-1][pivotcontext1][pivotcontext2]);
 

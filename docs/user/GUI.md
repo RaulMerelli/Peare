@@ -99,7 +99,8 @@ expose these operations.
 The GUI reads operation support from the Writer ABI. Disk images with multiple
 FAT volumes prompt for the target volume before an update.
 
-ZIP updates keep existing Store, Shrink, Deflate, and ZIP64 metadata.
+ZIP updates preserve untouched compressed members and their methods.
+New ZIPs can use Store, Deflate, BZip2, LZMA, XZ, Zstandard, or PPMd compression.
 TAR updates keep existing entries and support create, replace, rename, and
 delete operations for USTAR entries.
 FAT12, FAT16, and FAT32 images support file and directory creation, replacement,
@@ -119,8 +120,7 @@ The Writer converts a streamOptimized disk to monolithicSparse during an update.
 
 The Writer does not support parented disks, VMFS or device-backed extents, or
 compressed VMDK layouts other than streamOptimized. It does not support VHD or
-VHDX differencing disks, extended MBR partitions, VDI, or QCOW. The Writer
-limits each new ZIP member to 512 MiB.
+VHDX differencing disks, extended MBR partitions, VDI, or QCOW.
 Multi-disk ZIP and unsupported TAR variants are not supported.
 
 ## Local folder operations

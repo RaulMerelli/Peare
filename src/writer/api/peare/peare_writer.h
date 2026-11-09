@@ -140,14 +140,23 @@ PEARE_WRITER_API peare_writer_status peare_writer_create_directory(
 PEARE_WRITER_API peare_writer_status peare_writer_replace_file(
     peare_writer_handle writer, const char *source_path_utf8,
     const char *entry_name_utf8);
+PEARE_WRITER_API peare_writer_status peare_writer_replace_entry_by_id(
+    peare_writer_handle writer, const char *source_path_utf8,
+    const char *entry_name_utf8, int64_t entry_id);
 PEARE_WRITER_API peare_writer_status peare_writer_enable_fsverity(
     peare_writer_handle writer, const char *entry_name_utf8);
 PEARE_WRITER_API peare_writer_status peare_writer_rename_entry(
     peare_writer_handle writer, const char *entry_name_utf8,
     const char *new_entry_name_utf8);
+PEARE_WRITER_API peare_writer_status peare_writer_rename_entry_by_id(
+    peare_writer_handle writer, const char *entry_name_utf8,
+    const char *new_entry_name_utf8, int64_t entry_id);
 PEARE_WRITER_API peare_writer_status peare_writer_delete_entry(
     peare_writer_handle writer, const char *entry_name_utf8,
     int recursive);
+PEARE_WRITER_API peare_writer_status peare_writer_delete_entry_by_id(
+    peare_writer_handle writer, const char *entry_name_utf8,
+    int recursive, int64_t entry_id);
 PEARE_WRITER_API peare_writer_status peare_writer_update_finish(
     peare_writer_handle writer);
 

@@ -99,8 +99,8 @@ package-specific limits on ZIP-based files.
 
 | Format | Description | Read | Write |
 |---|---|---:|---:|
-| ZIP | Store, Shrink, Reduce, Implode, Deflate, Deflate64, BZip2, LZMA, DCL Implode, and ZIP64; `.zapXX` files use the same ZIP reader | Yes | Yes |
-| ZIPX | WinZip extensions: XZ, Zstandard, PPMd, WavPack, MP3, and JPEG compression | Yes | Yes |
+| ZIP | Store, Shrink, Implode, Deflate, Deflate64, BZip2, LZMA, DCL Implode, ZIPX methods, and ZIP64; Writer methods are tracked in ZIP Writer Methods; `.zapXX` files use the same ZIP reader | Yes | Yes |
+| ZIPX | WinZip extensions: XZ, Zstandard, PPMd, WavPack, MP3, and JPEG compression; Writer method coverage is tracked in ZIP Writer Methods | Yes | Yes |
 | 7-Zip (7z) | 7z archives | Yes | No |
 | NSIS | Nullsoft Scriptable Install System installers | Yes | No |
 | RAR4 | RAR4 archives | Yes | No |
@@ -126,22 +126,22 @@ package-specific limits on ZIP-based files.
 | Microsoft Cabinet | Uncompressed, MSZIP, LZX (window sizes 15 to 21), and Quantum (window sizes 10 to 21) | Yes | No |
 | Microsoft Compiled HTML Help (CHM) | ITSF versions 2 and 3 with LZX-compressed content | Yes | No |
 | Electron ASAR | Packed and unpacked members | Yes | No |
-| GZIP (`.gz`, `.gzip`, `.tgz`) | RFC 1952 streams, including concatenated members | Yes | No |
-| XZ (`.xz`, `.txz`) | LZMA2 streams, concatenation, stream padding, and CRC32, CRC64, or SHA-256 checks | Yes | No |
-| LZMA-alone (`.lzma`) | LZMA streams with declared or unknown unpacked size | Yes | No |
+| GZIP (`.gz`, `.gzip`) | RFC 1952 streams, including concatenated members; the Writer creates one member per selected input file. The Reader also opens `.tgz` streams. | Yes | Yes |
+| XZ (`.xz`, `.txz`) | LZMA2 streams, concatenation, stream padding, and no check, CRC32, CRC64, or SHA-256 checks | Yes | Yes |
+| LZMA-alone (`.lzma`) | LZMA stream with declared unpacked size; Writer levels 1-9 | Yes | Yes |
 | OS/2 PACK | IBM and Microsoft PACK version 1 | Yes | No |
 | OS/2 PACK2 | FTCOMP `fT19` archives only; `fT21` is not supported | Yes | No |
-| BZIP2 (`.bz2`, `.bzip2`, `.tbz`, `.tbz2`) | Block levels 1-9; multi-block and concatenated streams | Yes | No |
+| BZIP2 (`.bz2`, `.bzip2`, `.tbz`, `.tbz2`) | Block levels 1-9; multi-block and concatenated streams; the Writer creates one member per selected input file | Yes | Yes |
 | Unix compress (`.Z`, `.taz`) | LZW block mode, code widths 9-16 bits | Yes | No |
 | Lzip (`.lz`, `.tlz`) | Version 1 members, including concatenated members | Yes | No |
-| Zstandard (`.zst`) | Standard dictionary-free frames, including concatenated and checksummed frames | Yes | No |
-| Unix ar | GNU and BSD archives; thin archives are not supported | Yes | No |
+| Zstandard (`.zst`) | Standard dictionary-free frames, including concatenated and checksummed frames; Writer levels -5 through 22 | Yes | Yes |
+| Unix ar | GNU and BSD archives with short and extended member names; thin archives are not supported | Yes | Yes |
 | ARJ | Methods 0-4, legacy, GOST40, GOST256, and GOST256L password encryption, and split volumes | Yes | No |
 | XAR | XAR archives and Apple flat installer packages | Yes | No |
-| CPIO | SVR4 `newc` and CRC, POSIX `odc`, and old binary little- and big-endian variants | Yes | No |
+| CPIO | SVR4 `newc` and CRC, POSIX `odc`, afio large ASCII, and old binary little- and big-endian archives | Yes | Yes |
 | Debian package | `.deb` and `.udeb`, version 2.0; raw or gzip/xz/zstd control TAR, plus raw/gzip/xz/zstd/bzip2/lzma data TAR | Yes | No |
 | LHA / LZH | LHA and LZH archives | Yes | No |
-| Doom WAD | IWAD and PWAD archives | Yes | No |
+| Doom WAD | IWAD and PWAD archives | Yes | Yes |
 | Quake WAD2 | WAD2 archives | Yes | No |
 | Half-Life WAD3 | WAD3 archives | Yes | No |
 | APPX / MSIX | Windows application ZIP packages | Yes | Yes |

@@ -297,6 +297,7 @@ ResourceContext Resource::context() const
     result.codepage = context.codepage;
     result.dataOffset = context.data_offset;
     result.dataSize = context.data_size;
+    result.baseId = context.base_id;
     result.isContainer = context.is_container != 0;
     peare_resource_context_free(&context);
     return result;

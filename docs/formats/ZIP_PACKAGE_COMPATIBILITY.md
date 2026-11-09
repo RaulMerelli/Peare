@@ -8,6 +8,11 @@ The extensions listed in Supported Formats are common examples, not an
 allowlist. Any standard ZIP archive can use the same container operations,
 regardless of its file extension.
 
+The Writer can create Store, Deflate, BZip2, LZMA, XZ, Zstandard, PPMd, and ZIPX JPEG entries. It preserves
+the original compressed data for untouched entries. New or replaced entries
+use the selected method. ZIP methods not listed here are not available for new
+entries yet. The method-by-method status is in [ZIP Writer Methods](../testing/ZIP_WRITER_METHODS.md).
+
 The Writer changes the ZIP container only. It does not update package manifests,
 relationships, signatures, or catalogs. An edited package can fail signature
 checks or package validation. Applications can also ignore added files that are
