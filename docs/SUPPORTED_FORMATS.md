@@ -124,6 +124,7 @@ package-specific limits on ZIP-based files.
 | TAR.GZ / TGZ | USTAR archive in an RFC 1952 GZIP stream | Yes | Yes |
 | TAR.BZ2 / TBZ / TBZ2 | USTAR archive in a BZIP2 stream; compression levels 1-9 | Yes | Yes |
 | TAR.ZST / TZST / TAR.ZSTD | USTAR archive in a Zstandard frame; compression levels -5 to 22 | Yes | Yes |
+| TAR.Z / TAZ | USTAR archive in a Unix compress stream; block and non-block modes, code widths 9-16 bits | Yes | Yes |
 | OS/2 WarpIN (WPI) | Raw revision 3 and 4 packages; stored and bzip2-compressed payloads. Self-extracting EXE packages are not included. | Yes | No |
 | RPM | RPM v3/v4 packages with CPIO payloads | Yes | No |
 | Microsoft Cabinet | Uncompressed, MSZIP, LZX (window sizes 15 to 21), and Quantum (window sizes 10 to 21) | Yes | No |
@@ -135,7 +136,7 @@ package-specific limits on ZIP-based files.
 | OS/2 PACK | IBM and Microsoft PACK version 1 | Yes | No |
 | OS/2 PACK2 | FTCOMP `fT19` archives only; `fT21` is not supported | Yes | No |
 | BZIP2 (`.bz2`, `.bzip2`, `.tbz`, `.tbz2`) | Block levels 1-9; multi-block and concatenated streams; the Writer creates one member per selected input file | Yes | Yes |
-| Unix compress (`.Z`, `.taz`) | LZW block and non-block modes, code widths 9-16 bits | Yes | Yes |
+| Unix compress (`.Z`) | LZW block and non-block modes, code widths 9-16 bits; one input file per stream | Yes | Yes |
 | Lzip (`.lz`, `.tlz`) | Version 1 members, including concatenated members | Yes | No |
 | Zstandard (`.zst`) | Standard dictionary-free frames, including concatenated and checksummed frames; Writer levels -5 through 22 | Yes | Yes |
 | Unix ar | GNU and BSD archives with short and extended member names; thin archives are not supported | Yes | Yes |

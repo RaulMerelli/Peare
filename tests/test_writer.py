@@ -4802,7 +4802,7 @@ def test_tar_zstd_create_and_cud_roundtrip_with_independent_decoder(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 20
+    assert writer_lib.peare_writer_create_format_count() == 21
     assert writer_lib.peare_writer_create_variant_count(b"tar-zstd") == 27
     variants = [f"fast-{level}" for level in range(5, 0, -1)] + [
         f"level-{level}" for level in range(1, 23)]
@@ -4902,6 +4902,137 @@ def test_tar_zstd_create_and_cud_roundtrip_with_independent_decoder(
         finally:
             writer_lib.peare_writer_destroy(writer)
         assert read_tar(alias_archive)["alias-added.txt"] == payload.read_bytes()
+
+
+def test_tar_unix_compress_create_all_variants_and_7zip(
+        writer_lib, peare_lib, tmp_path):
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required for independent TAR.Z validation")
+
+    source = ROOT / "src" / "writer" / "third_party" / "zstd" / "compress" / "zstd_compress.c"
+    expected_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    variants = [f"block-{width}" for width in range(9, 17)] + [
+        f"legacy-{width}" for width in range(9, 17)]
+    assert writer_lib.peare_writer_create_variant_count(b"tar-unix-compress") == 16
+    reported = []
+    for index in range(16):
+        item = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"tar-unix-compress", index, C.byref(item)) == 0
+        reported.append(item.id.decode())
+    assert reported == variants
+
+    input_file = _WriterInputFile(str(source).encode(), source.name.encode())
+    for variant in variants:
+        archive = tmp_path / f"created-{variant}.taz"
+        writer = _HANDLE()
+        assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+        try:
+            status = writer_lib.peare_writer_add_files_to(
+                writer, str(archive).encode(), b"tar-unix-compress",
+                variant.encode(), 0, C.byref(input_file), 1)
+            assert status == 0, writer_lib.peare_writer_last_error(writer)
+        finally:
+            writer_lib.peare_writer_destroy(writer)
+
+        checked = subprocess.run(
+            [seven_zip, "t", str(archive)], capture_output=True,
+            text=True, timeout=60)
+        assert checked.returncode == 0, checked.stdout + checked.stderr
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = opener.normalized_tree()
+            assert any(row["path"].endswith("/" + source.name) and
+                       row["sha256"] == expected_hash for row in rows)
+
+
+def test_tar_unix_compress_cud_from_upstream_sample(
+        writer_lib, peare_lib, peare_gui_path, tmp_path):
+    root = Path(os.environ.get(
+        "PEARE_COMPRESS_SAMPLE_ROOT",
+        Path.home() / "Documents" / "inerente a" / "Peare" /
+        "compress-samples" / "libarchive"))
+    sample = root / "test_compat_mac-1.tar.Z"
+    if not sample.is_file():
+        pytest.skip("The upstream libarchive TAR.Z sample is not configured")
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required for independent TAR.Z validation")
+
+    payload = ROOT / "README.md"
+    replacement = ROOT / "AGENTS.md"
+    updated = tmp_path / "updated.tar.Z"
+    original_hash = _sha256_file(sample)
+    shutil.copyfile(sample, updated)
+    assert writer_lib.peare_writer_can_add_files(str(updated).encode()) == 1
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(
+            writer, str(updated).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"file") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"file", b"renamed.txt") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(payload).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"._file", 0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    checked = subprocess.run(
+        [seven_zip, "t", str(updated)], capture_output=True,
+        text=True, timeout=60)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert _sha256_file(sample) == original_hash
+    with peare_lib.open_file(str(updated)) as opener:
+        rows = {row["path"]: row["sha256"] for row in opener.normalized_tree()}
+        root_name = "updated.tar"
+        assert rows[f"{root_name}/renamed.txt"] == hashlib.sha256(
+            replacement.read_bytes()).hexdigest()
+        assert rows[f"{root_name}/added.txt"] == hashlib.sha256(
+            payload.read_bytes()).hexdigest()
+        assert f"{root_name}/file" not in rows
+        assert f"{root_name}/._file" not in rows
+
+    for suffix in (".taz", ".tar.Z"):
+        alias = tmp_path / f"alias{suffix}"
+        shutil.copyfile(sample, alias)
+        assert writer_lib.peare_writer_can_add_files(str(alias).encode()) == 1
+
+    for view in ("tree", "details"):
+        scenario = {
+            "view": view,
+            "target_index": 0,
+            "operations": [
+                {"type": "create_directory", "name": "WriterTest"},
+                {"type": "add_files", "view_path": "writer-test-copy",
+                 "destination": "WriterTest", "sources": [str(payload)],
+                 "expect_present": "writer-test-copy/WriterTest/README.md"},
+                {"type": "rename", "path": "writer-test-copy/WriterTest/README.md",
+                 "view_path": "writer-test-copy/WriterTest", "name": "renamed.txt",
+                 "expect_present": "writer-test-copy/WriterTest/renamed.txt"},
+                {"type": "delete", "path": "writer-test-copy/WriterTest/renamed.txt",
+                 "view_path": "writer-test-copy/WriterTest",
+                 "expect_absent": "writer-test-copy/WriterTest/renamed.txt"},
+            ],
+        }
+        scenario_path = tmp_path / f"tar-z-gui-{view}.json"
+        scenario_path.write_text(json.dumps(scenario), encoding="utf-8")
+        output_dir = tmp_path / f"tar-z-gui-{view}"
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+             "--exe", str(peare_gui_path), "--image", str(sample),
+             "--scenario", str(scenario_path), "--output-dir", str(output_dir)],
+            capture_output=True, text=True, timeout=240)
+        assert result.returncode == 0, result.stdout + result.stderr
+        report = json.loads((output_dir / "writer-test-report.json").read_text(
+            encoding="utf-8"))
+        assert all(operation["passed"] for operation in report["operations"])
 
 @pytest.mark.parametrize(("sample_name", "tar_root"), [
     ("docs.tgz", "archive.tar"), ("docs.tbz2", "writer-test-copy.tbz2"),

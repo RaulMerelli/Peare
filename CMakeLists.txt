@@ -173,6 +173,8 @@ target_include_directories(PeareMtxDecoder PRIVATE
 
 # Peare-owned compression decoders used by archive and disk readers.
 add_library(PeareOpener SHARED
+    src/common/compression/UnixCompress.h
+    src/common/compression/UnixCompress.cpp
     src/opener/compression/ArjGost40.h
     src/opener/compression/ArjGost40.cpp
     src/opener/compression/PackMp3Decoder.h
@@ -794,6 +796,8 @@ set_target_properties(PeareDecoder PROPERTIES
 )
 
 add_library(PeareWriter SHARED
+    src/common/compression/UnixCompress.h
+    src/common/compression/UnixCompress.cpp
     src/writer/api/peare/peare_writer.h
     src/writer/api/Api.cpp
     src/writer/formats/WinZipJpegEncoder.h
