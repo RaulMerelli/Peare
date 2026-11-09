@@ -191,7 +191,7 @@ package-specific limits on ZIP-based files.
 | Siemens ProSave FWF | Siemens HMI FWF | Yes | No |
 | Siemens FSF | Siemens FSF | Yes | No |
 | Siemens ADONIS / SMART_OS | ADONIS and SMART_OS images | Yes | No |
-| Intel HEX | Data records, checksums, and segment or linear addresses | Yes | No |
+| Intel HEX | Data records, checksums, and segment or linear addresses | Yes | Yes |
 | Windows CE ROM / IMGFS | Windows CE ROM and IMGFS variants | Yes | No |
 | Windows Registry hive | Windows Registry hive files | Yes | No |
 | Windows BCD | Windows Boot Configuration Data | Yes | No |

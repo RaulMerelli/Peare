@@ -4681,7 +4681,7 @@ def test_tar_bzip2_create_and_cud_roundtrip_with_7zip(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 19
+    assert writer_lib.peare_writer_create_format_count() == 26
     assert writer_lib.peare_writer_create_variant_count(b"tar-bzip2") == 9
     for level in range(1, 10):
         archive = tmp_path / f"created-level-{level}.tbz2"
@@ -4818,7 +4818,7 @@ def test_tar_zstd_create_and_cud_roundtrip_with_independent_decoder(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 25
+    assert writer_lib.peare_writer_create_format_count() == 26
     assert writer_lib.peare_writer_create_variant_count(b"tar-zstd") == 27
     variants = [f"fast-{level}" for level in range(5, 0, -1)] + [
         f"level-{level}" for level in range(1, 23)]
@@ -5057,7 +5057,7 @@ def test_tar_xz_create_all_checks_and_7zip(writer_lib, peare_lib, tmp_path):
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     checks = ("none", "crc32", "crc64", "sha256")
-    assert writer_lib.peare_writer_create_format_count() == 25
+    assert writer_lib.peare_writer_create_format_count() == 26
     assert writer_lib.peare_writer_create_variant_count(b"tar-xz") == len(checks)
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for check in checks:
@@ -5188,7 +5188,7 @@ def test_tar_lzma_create_all_levels_and_7zip(writer_lib, peare_lib, tmp_path):
         pytest.skip("7-Zip is required for independent TAR.LZMA validation")
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    assert writer_lib.peare_writer_create_format_count() == 25
+    assert writer_lib.peare_writer_create_format_count() == 26
     assert writer_lib.peare_writer_create_variant_count(b"tar-lzma") == 9
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for level in range(1, 10):
@@ -5305,7 +5305,7 @@ def test_lzip_writer_all_levels_and_winrar(
     source = ROOT / "README.md"
     expected = source.read_bytes()
     expected_hash = hashlib.sha256(expected).hexdigest()
-    assert writer_lib.peare_writer_create_format_count() == 25
+    assert writer_lib.peare_writer_create_format_count() == 26
     assert writer_lib.peare_writer_create_variant_count(b"lzip") == 10
     variants = []
     for index in range(10):
@@ -5422,11 +5422,11 @@ def test_lzip_writer_concatenates_selected_inputs(writer_lib, peare_lib, tmp_pat
     "classic", "classic-encoded-name", "base64", "base64-encoded-name"])
 def test_uuencode_writer_roundtrip_all_headers(
         writer_lib, peare_lib, peare_gui_path, tmp_path, variant):
-    assert writer_lib.peare_writer_create_format_count() == 25
-    formats = (_WriterFormat * 25)()
+    assert writer_lib.peare_writer_create_format_count() == 26
+    formats = (_WriterFormat * 26)()
     assert all(writer_lib.peare_writer_get_create_format(
         index, C.byref(formats[index])) == 0 for index in range(len(formats)))
-    assert formats[-1].id == b"uuencode"
+    assert {item.id for item in formats} >= {b"uuencode", b"ihex"}
     assert writer_lib.peare_writer_create_variant_count(b"uuencode") == 4
     source = ROOT / "README.md"
     payload = source.read_bytes()
@@ -5506,6 +5506,129 @@ def test_uuencode_writer_empty_input_and_single_file_contract(
     finally:
         writer_lib.peare_writer_destroy(writer)
     assert not rejected.exists()
+
+
+def _decode_ihex_records(path):
+    address_base = 0
+    payload = {}
+    saw_eof = False
+    for line in path.read_text(encoding="ascii").splitlines():
+        assert line.startswith(":")
+        record = bytes.fromhex(line[1:])
+        assert len(record) == record[0] + 5
+        assert sum(record) & 0xff == 0
+        address = (record[1] << 8) | record[2]
+        kind = record[3]
+        data = record[4:-1]
+        if kind == 0:
+            start = address_base + address
+            assert all(start + index not in payload for index in range(len(data)))
+            payload.update({start + index: value for index, value in enumerate(data)})
+        elif kind == 1:
+            assert address == 0 and not data
+            saw_eof = True
+            break
+        elif kind == 4:
+            assert address == 0 and len(data) == 2
+            address_base = int.from_bytes(data, "big") << 16
+        else:
+            raise AssertionError(f"Unexpected Intel HEX record type: {kind}")
+    assert saw_eof
+    if not payload:
+        return b""
+    assert sorted(payload) == list(range(len(payload)))
+    return bytes(payload[index] for index in range(len(payload)))
+
+
+@pytest.mark.parametrize("variant", ["record-16", "record-32", "record-64"])
+def test_ihex_writer_variants_with_7zip(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, variant):
+    source = ROOT / ("README.md" if variant == "record-16" else
+                     "docs/SUPPORTED_FORMATS.md" if variant == "record-32" else
+                     "src/writer/api/Api.cpp")
+    payload = source.read_bytes()
+    expected_hash = hashlib.sha256(payload).hexdigest()
+    archive = tmp_path / f"created-{variant}.hex"
+    source_item = _WriterInputFile(str(source).encode(), source.name.encode())
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to(
+            writer, str(archive).encode(), b"ihex", variant.encode(),
+            0, C.byref(source_item), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    lines = archive.read_text(encoding="ascii").splitlines()
+    records = [bytes.fromhex(line[1:]) for line in lines]
+    assert all((sum(record) & 0xff) == 0 for record in records)
+    assert _decode_ihex_records(archive) == payload
+    expected_record_size = int(variant.removeprefix("record-"))
+    data_sizes = [record[0] for record in records if record[3] == 0]
+    assert max(data_sizes) <= expected_record_size
+
+    with peare_lib.open_file(str(archive)) as opener:
+        assert opener.container_format() == "INTEL_HEX"
+        rows = opener.normalized_tree()
+        assert len(rows) == 1 and rows[0]["sha256"] == expected_hash
+        tree_path = rows[0]["path"]
+
+    if variant == "record-64":
+        assert any(record[3] == 4 for record in records)
+    if variant == "record-16":
+        seven_zip = _seven_zip_executable()
+        assert seven_zip
+        destination = tmp_path / "7zip-ihex"
+        destination.mkdir()
+        result = subprocess.run(
+            [seven_zip, "x", str(archive), f"-o{destination}", "-y"],
+            capture_output=True, text=True, timeout=60)
+        assert result.returncode == 0, result.stdout + result.stderr
+        extracted = [path for path in destination.rglob("*") if path.is_file()]
+        assert len(extracted) == 1 and extracted[0].read_bytes() == payload
+        gui_output = tmp_path / "ihex-gui-preview"
+        gui_check = subprocess.run(
+            [sys.executable, str(ROOT / "tests" / "run_gui_preview_tests.py"),
+             "--exe", str(peare_gui_path), "--case", "ihex-writer-record16",
+             str(archive), tree_path, "--output-dir", str(gui_output)],
+            capture_output=True, text=True, timeout=120, check=False)
+        assert gui_check.returncode == 0, gui_check.stdout + gui_check.stderr
+
+
+def test_ihex_writer_requires_one_input(writer_lib, tmp_path):
+    source = ROOT / "README.md"
+    inputs = (_WriterInputFile * 2)(
+        _WriterInputFile(str(source).encode(), b"one.bin"),
+        _WriterInputFile(str(source).encode(), b"two.bin"))
+    output = tmp_path / "multiple.hex"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to(
+            writer, str(output).encode(), b"ihex", b"record-16",
+            0, inputs, 2)
+        assert status != 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    assert not output.exists()
+
+
+def test_ihex_writer_empty_input(writer_lib, peare_lib, tmp_path):
+    output = tmp_path / "empty.hex"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"ihex", b"record-16", str(output).encode()) == 0
+        assert writer_lib.peare_writer_create_empty_file(writer, b"empty.bin") == 0
+        assert writer_lib.peare_writer_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    assert _decode_ihex_records(output) == b""
+    with peare_lib.open_file(str(output)) as opener:
+        rows = opener.normalized_tree()
+        assert len(rows) == 1 and rows[0]["size"] == 0
 
 @pytest.mark.parametrize(("sample_name", "tar_root"), [
     ("docs.tgz", "archive.tar"), ("docs.tbz2", "writer-test-copy.tbz2"),

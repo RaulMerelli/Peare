@@ -246,12 +246,14 @@ struct peare_writer_handle_s {
     bool uuencodeEncodedName = false;
     bool uuencodePayloadWritten = false;
     bool uuencodeHasData = false;
+    bool ihexPayloadWritten = false;
+    unsigned ihexRecordSize = 16;
     bool xzWrappedTar = false;
     bool lzmaWrappedTar = false;
     bool fatTargetSpecified = false;
     size_t fatTargetIndex = 0;
     enum class Mode { None, ZipCreate, ZipUpdate, GzipCreate, Bzip2Create, ZstdCreate, XzCreate, LzmaAloneCreate, LzipCreate, UnixCompressCreate, TarCreate, TarUpdate, CpioCreate,
-                      CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate, UuencodeCreate, TarGzipCreate,
+                      CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate, UuencodeCreate, IhexCreate, TarGzipCreate,
                       TarBzip2Create, TarZstdCreate, TarUnixCompressCreate,
                       TarXzCreate, TarLzmaCreate,
                       FatCreate, DiskUpdate } mode = Mode::None;
@@ -4431,6 +4433,73 @@ peare_writer_status writeUuencodeMember(peare_writer_handle_s* writer,
     return PEARE_WRITER_OK;
 }
 
+bool writeIhexRecord(QIODevice* output, quint16 address, quint8 type,
+                     const QByteArray& data) {
+    if (!output || data.size() > 255) return false;
+    QByteArray bytes;
+    bytes.reserve(data.size() + 5);
+    bytes.append(char(data.size()));
+    bytes.append(char(address >> 8));
+    bytes.append(char(address));
+    bytes.append(char(type));
+    bytes.append(data);
+    unsigned sum = 0;
+    for (const unsigned char value : bytes) sum += value;
+    bytes.append(char((-sum) & 0xff));
+    const QByteArray line = ':' + bytes.toHex().toUpper() + "\r\n";
+    return writeAll(output, line.constData(), line.size());
+}
+
+peare_writer_status writeIhexMember(peare_writer_handle_s* writer,
+                                    const char* sourcePathUtf8,
+                                    const char* entryNameUtf8) {
+    if (writer->ihexPayloadWritten)
+        return fail(writer, PEARE_WRITER_UNSUPPORTED_OPERATION,
+                    QStringLiteral("Intel HEX output stores one input file."));
+    if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("An Intel HEX source file is required."));
+    QFile input(QString::fromUtf8(sourcePathUtf8));
+    if (!input.open(QIODevice::ReadOnly))
+        return fail(writer, PEARE_WRITER_IO_ERROR, input.errorString());
+    const qint64 size = input.size();
+    if (size < 0 || quint64(size) > 0x100000000ull)
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("Intel HEX supports addresses up to 0xFFFFFFFF."));
+
+    QByteArray buffer;
+    buffer.resize(int(writer->ihexRecordSize));
+    quint32 currentUpper = 0;
+    bool haveUpper = true;
+    quint64 offset = 0;
+    while (true) {
+        const qint64 count = input.read(buffer.data(), buffer.size());
+        if (count < 0)
+            return fail(writer, PEARE_WRITER_IO_ERROR, input.errorString());
+        if (count == 0) break;
+        const quint32 upper = quint32(offset >> 16);
+        if (!haveUpper || upper != currentUpper) {
+            QByteArray addressData;
+            addressData.append(char(upper >> 8));
+            addressData.append(char(upper));
+            if (!writeIhexRecord(writer->output.get(), 0, 4, addressData))
+                return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+            currentUpper = upper;
+            haveUpper = true;
+        }
+        const QByteArray recordData(buffer.constData(), int(count));
+        if (!writeIhexRecord(writer->output.get(), quint16(offset), 0, recordData))
+            return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+        offset += quint64(count);
+    }
+    if (input.error() != QFileDevice::NoError)
+        return fail(writer, PEARE_WRITER_IO_ERROR, input.errorString());
+    if (!writeIhexRecord(writer->output.get(), 0, 1, {}))
+        return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+    writer->ihexPayloadWritten = true;
+    return PEARE_WRITER_OK;
+}
+
 peare_writer_status writeLzmaAloneMember(peare_writer_handle_s* writer,
                                          const char* sourcePathUtf8,
                                          const char* entryNameUtf8) {
@@ -5036,6 +5105,9 @@ peare_writer_status addFilesToImpl(
         if (createNew && std::strcmp(formatIdUtf8, "uuencode") == 0 && fileCount != 1)
             return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                         QStringLiteral("UUencode requires exactly one input file."), false);
+        if (createNew && std::strcmp(formatIdUtf8, "ihex") == 0 && fileCount != 1)
+            return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                        QStringLiteral("Intel HEX requires exactly one input file."), false);
         if ((createNew && targetIndex != 0) ||
             (!createNew && ((variantIdUtf8 && *variantIdUtf8) ||
                             (filesystemIdUtf8 && *filesystemIdUtf8))) ||
@@ -5110,7 +5182,7 @@ peare_writer_status peare_writer_create(peare_writer_handle* outWriter) {
     }
 }
 
-size_t peare_writer_create_format_count(void) { return 25; }
+size_t peare_writer_create_format_count(void) { return 26; }
 
 peare_writer_status peare_writer_get_create_format(size_t index,
                                                     peare_writer_format* outFormat) {
@@ -5140,7 +5212,8 @@ peare_writer_status peare_writer_get_create_format(size_t index,
         {"tar-xz", "TAR.XZ archive", "txz"},
         {"tar-lzma", "TAR.LZMA archive", "tar.lzma"},
         {"lzip", "Lzip compressed file", "lz"},
-        {"uuencode", "UUencoded file", "uue"}
+        {"uuencode", "UUencoded file", "uue"},
+        {"ihex", "Intel HEX firmware image", "hex"}
     };
     if (index >= sizeof(formats) / sizeof(formats[0]))
         return PEARE_WRITER_INVALID_ARGUMENT;
@@ -5158,6 +5231,7 @@ size_t peare_writer_create_variant_count(const char* formatIdUtf8) {
     if (std::strcmp(formatIdUtf8, "lzma") == 0) return 9;
     if (std::strcmp(formatIdUtf8, "lzip") == 0) return 10;
     if (std::strcmp(formatIdUtf8, "uuencode") == 0) return 4;
+    if (std::strcmp(formatIdUtf8, "ihex") == 0) return 3;
     if (std::strcmp(formatIdUtf8, "unix-compress") == 0) return 16;
     if (std::strcmp(formatIdUtf8, "tar") == 0) return 1;
     if (std::strcmp(formatIdUtf8, "tar-gzip") == 0) return 1;
@@ -5260,6 +5334,11 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
         {"base64", "GNU Base64 UUencode"},
         {"base64-encoded-name", "GNU Base64 UUencode, encoded filename"}
     };
+    static const peare_writer_variant ihexVariants[] = {
+        {"record-16", "16-byte records"},
+        {"record-32", "32-byte records"},
+        {"record-64", "64-byte records"}
+    };
     static const peare_writer_variant tarVariants[] = { {"ustar", "USTAR"} };
     static const peare_writer_variant cpioVariants[] = {
         {"newc", "SVR4 newc"}, {"crc", "SVR4 CRC"},
@@ -5334,6 +5413,10 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
     }
     if (std::strcmp(formatIdUtf8, "uuencode") == 0 && index < 4) {
         *outVariant = uuencodeVariants[index];
+        return PEARE_WRITER_OK;
+    }
+    if (std::strcmp(formatIdUtf8, "ihex") == 0 && index < 3) {
+        *outVariant = ihexVariants[index];
         return PEARE_WRITER_OK;
     }
     if ((std::strcmp(formatIdUtf8, "unix-compress") == 0 ||
@@ -5735,6 +5818,37 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
             writer->active = true;
             writer->updateMode = false;
             writer->mode = peare_writer_handle_s::Mode::UuencodeCreate;
+            return PEARE_WRITER_OK;
+        });
+    }
+    if (std::strcmp(formatIdUtf8, "ihex") == 0) {
+        unsigned recordSize = 16;
+        if (variant) {
+            if (std::strcmp(variant, "record-16") == 0) recordSize = 16;
+            else if (std::strcmp(variant, "record-32") == 0) recordSize = 32;
+            else if (std::strcmp(variant, "record-64") == 0) recordSize = 64;
+            else
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("The Intel HEX record size is invalid."), false);
+        }
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (writer->active)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("A writer operation is already active."), false);
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            writer->output.reset(new (std::nothrow) QSaveFile(QString::fromUtf8(outputPathUtf8)));
+            if (!writer->output || !writer->output->open(QIODevice::WriteOnly)) {
+                const QString error = writer->output ? writer->output->errorString()
+                    : QStringLiteral("Could not allocate the Intel HEX output.");
+                writer->output.reset();
+                return fail(writer, PEARE_WRITER_IO_ERROR, error, false);
+            }
+            writer->ihexRecordSize = recordSize;
+            writer->ihexPayloadWritten = false;
+            writer->active = true;
+            writer->updateMode = false;
+            writer->mode = peare_writer_handle_s::Mode::IhexCreate;
             return PEARE_WRITER_OK;
         });
     }
@@ -6749,6 +6863,10 @@ peare_writer_status peare_writer_add_file(peare_writer_handle writer,
         return cBoundary(writer, [&] {
             return writeUuencodeMember(writer, sourcePathUtf8, entryNameUtf8);
         });
+    if (writer->mode == peare_writer_handle_s::Mode::IhexCreate)
+        return cBoundary(writer, [&] {
+            return writeIhexMember(writer, sourcePathUtf8, entryNameUtf8);
+        });
     if (writer->mode == peare_writer_handle_s::Mode::UnixCompressCreate)
         return cBoundary(writer, [&] {
             return writeUnixCompressMember(writer, sourcePathUtf8, entryNameUtf8);
@@ -7577,6 +7695,20 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
             }
             if (!writeAll(writer->output.get(), ending, qint64(std::strlen(ending))) ||
                 !writer->output->commit())
+                return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+            writer->output.reset();
+            writer->active = false;
+            writer->mode = peare_writer_handle_s::Mode::None;
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            return PEARE_WRITER_OK;
+        });
+    if (writer->mode == peare_writer_handle_s::Mode::IhexCreate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (!writer->ihexPayloadWritten)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("Intel HEX output needs one input file."));
+            if (!writer->output->commit())
                 return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
             writer->output.reset();
             writer->active = false;

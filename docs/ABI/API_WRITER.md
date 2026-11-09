@@ -55,7 +55,8 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer);
 The create backends are ZIP, GZIP, BZIP2, Unix compress, LZMA-alone, Lzip, XZ,
 Zstandard, TAR, TAR.GZ, TAR.BZ2, TAR.ZST, TAR.Z, TAR.XZ, TAR.LZMA, GNU and BSD ar, Doom IWAD and PWAD,
 all six CPIO variants (`newc`, CRC, `odc`, afio
-large ASCII, binary little-endian, and binary big-endian), UUencode, standalone FAT, floppy images,
+large ASCII, binary little-endian, and binary big-endian), UUencode, Intel HEX,
+standalone FAT, floppy images,
 raw MBR/GPT disks, VHD, VHDX, and VMDK. Format descriptors and their strings remain valid
 for the process lifetime. Floppy images support the 12 geometries in the Writer
 variant list. Raw disks support MBR and GPT layouts. VHD and VHDX support fixed
@@ -119,6 +120,10 @@ block and non-block modes with code widths from 9 through 16 bits.
 UUencode creation writes one file per output. It supports classic and GNU
 Base64 bodies, with plain or Base64-encoded filenames. The batch API rejects
 zero or multiple input files before it creates the output.
+
+Intel HEX creation writes one file per output. It writes data records, extended
+linear addresses, checksums, and the end-of-file record. It supports 16-, 32-,
+and 64-byte data records for input files up to the 32-bit address limit.
 
 The ar Writer creates GNU long-name tables or BSD extended-name records. Ar
 members are flat files, so the Writer does not create directory entries. Symbol
