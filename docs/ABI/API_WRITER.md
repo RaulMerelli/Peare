@@ -57,7 +57,7 @@ Zstandard, TAR, TAR.GZ, TAR.BZ2, TAR.ZST, TAR.Z, TAR.XZ, TAR.LZMA, GNU and BSD a
 all six CPIO variants (`newc`, CRC, `odc`, afio
 large ASCII, binary little-endian, and binary big-endian), UUencode, Intel HEX,
 standalone FAT, floppy images,
-raw MBR/GPT disks, VHD, VHDX, VMDK, and Debian packages. Format descriptors and their strings remain valid
+raw MBR/GPT disks, VHD, VHDX, VMDK, Debian packages, and RPM packages. Format descriptors and their strings remain valid
 for the process lifetime. Floppy images support the 12 geometries in the Writer
 variant list. Raw disks support MBR and GPT layouts. VHD and VHDX support fixed
 and dynamic variants. VMDK supports monolithic sparse and split sparse creation.
@@ -70,6 +70,13 @@ Debian package creation writes version 2.0 `.deb` files with generated package
 metadata and one control TAR plus one data TAR. The ABI offers 24 combinations
 of raw, GZIP, XZ, or Zstandard control TAR and raw, GZIP, XZ, Zstandard, BZIP2,
 or LZMA data TAR. Debian package creation creates a new package; it does not
+modify an existing package.
+
+RPM creation writes unsigned RPM v3 packages with CPIO CRC payloads. The ABI
+offers uncompressed, GZIP, BZIP2, XZ, Zstandard, and LZMA-alone payloads. The
+Writer records package metadata, file paths, sizes, modes, and MD5 digests. Its
+RPM MD5 tag covers the main header and compressed payload. It detects data
+changes but does not authenticate the package source. RPM creation does not
 modify an existing package.
 
 GZIP creation writes one RFC 1952 member per selected input file. The GZIP

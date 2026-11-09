@@ -24,6 +24,7 @@
 #include <QStringList>
 #include <QSet>
 #include <QDateTime>
+#include <QCryptographicHash>
 #include <QMap>
 #include <QTemporaryFile>
 #include <QTemporaryDir>
@@ -166,6 +167,21 @@ struct DebEntry {
     QByteArray name;
 };
 
+struct RpmEntry {
+    QString sourcePath;
+    QByteArray name;
+    quint32 size = 0;
+    quint32 modified = 0;
+    QByteArray digest;
+};
+
+struct RpmTag {
+    quint32 tag = 0;
+    quint32 type = 0;
+    quint32 count = 0;
+    QByteArray value;
+};
+
 struct CpioEntry {
     QString key;
     QByteArray name;
@@ -217,12 +233,14 @@ struct peare_writer_handle_s {
     std::unique_ptr<QTemporaryFile> arStage;
     std::unique_ptr<QTemporaryFile> wadStage;
     std::unique_ptr<QTemporaryDir> debStage;
+    std::unique_ptr<QTemporaryDir> rpmStage;
     std::vector<Entry> entries;
     std::vector<TarEntry> tarEntries;
     std::vector<CpioEntry> cpioEntries;
     std::vector<ArEntry> arEntries;
     std::vector<WadEntry> wadEntries;
     std::vector<DebEntry> debEntries;
+    std::vector<RpmEntry> rpmEntries;
     std::vector<QByteArray> debDirectories;
     CpioFormat cpioFormat = CpioFormat::Newc;
     ArFormat arFormat = ArFormat::Gnu;
@@ -259,13 +277,14 @@ struct peare_writer_handle_s {
     unsigned ihexRecordSize = 16;
     int debControlCodec = 0;
     int debDataCodec = 0;
+    int rpmCodec = 0;
     QString createPath;
     bool xzWrappedTar = false;
     bool lzmaWrappedTar = false;
     bool fatTargetSpecified = false;
     size_t fatTargetIndex = 0;
     enum class Mode { None, ZipCreate, ZipUpdate, GzipCreate, Bzip2Create, ZstdCreate, XzCreate, LzmaAloneCreate, LzipCreate, UnixCompressCreate, TarCreate, TarUpdate, CpioCreate,
-                      CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate, UuencodeCreate, IhexCreate, DebCreate, TarGzipCreate,
+                      CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate, UuencodeCreate, IhexCreate, DebCreate, RpmCreate, TarGzipCreate,
                       TarBzip2Create, TarZstdCreate, TarUnixCompressCreate,
                       TarXzCreate, TarLzmaCreate,
                       FatCreate, DiskUpdate } mode = Mode::None;
@@ -312,6 +331,7 @@ peare_writer_status fail(peare_writer_handle_s* writer, peare_writer_status stat
             writer->arStage.reset();
             writer->wadStage.reset();
             writer->debStage.reset();
+            writer->rpmStage.reset();
             if (writer->diskUpdate) {
                 writer->diskUpdate->abort();
                 writer->diskUpdate.reset();
@@ -322,6 +342,7 @@ peare_writer_status fail(peare_writer_handle_s* writer, peare_writer_status stat
             writer->arEntries.clear();
             writer->wadEntries.clear();
             writer->debEntries.clear();
+            writer->rpmEntries.clear();
             writer->debDirectories.clear();
             writer->cpioFormat = CpioFormat::Newc;
             writer->cpioOpaqueOffset = 0;
@@ -4533,6 +4554,85 @@ const char* debTarFormat(int codec) {
         ? formats[codec] : nullptr;
 }
 
+void appendBe16(QByteArray* bytes, quint16 value) {
+    bytes->append(char(value >> 8));
+    bytes->append(char(value));
+}
+
+void appendBe32(QByteArray* bytes, quint32 value) {
+    bytes->append(char(value >> 24));
+    bytes->append(char(value >> 16));
+    bytes->append(char(value >> 8));
+    bytes->append(char(value));
+}
+
+QByteArray rpmHeader(std::vector<RpmTag> tags) {
+    std::sort(tags.begin(), tags.end(), [](const RpmTag& a, const RpmTag& b) {
+        return a.tag < b.tag;
+    });
+    QByteArray store;
+    QByteArray index;
+    for (const RpmTag& tag : tags) {
+        const int alignment = tag.type == 3 ? 2 : tag.type == 4 ? 4 : 1;
+        while (store.size() % alignment) store.append('\0');
+        appendBe32(&index, tag.tag);
+        appendBe32(&index, tag.type);
+        appendBe32(&index, quint32(store.size()));
+        appendBe32(&index, tag.count);
+        store.append(tag.value);
+    }
+    QByteArray result("\x8e\xad\xe8\x01\0\0\0\0", 8);
+    appendBe32(&result, quint32(tags.size()));
+    appendBe32(&result, quint32(store.size()));
+    result.append(index);
+    result.append(store);
+    return result;
+}
+
+RpmTag rpmStringTag(quint32 tag, const QByteArray& text, quint32 type = 6) {
+    RpmTag result{tag, type, 1, text};
+    result.value.append('\0');
+    return result;
+}
+
+RpmTag rpmStringArrayTag(quint32 tag, const QByteArray& values, quint32 count) {
+    return {tag, 8, count, values};
+}
+
+RpmTag rpmInt32Tag(quint32 tag, const std::vector<quint32>& values) {
+    QByteArray bytes;
+    for (quint32 value : values) appendBe32(&bytes, value);
+    return {tag, 4, quint32(values.size()), bytes};
+}
+
+QString rpmCodecName(int codec) {
+    static const char* codecs[] = {"none", "gzip", "bzip2", "xz", "zstd", "lzma"};
+    return codec >= 0 && codec < 6 ? QString::fromLatin1(codecs[codec]) : QString();
+}
+
+const char* rpmInnerFormat(int codec) {
+    static const char* formats[] = {nullptr, "gzip", "bzip2", "xz", "zstd", "lzma"};
+    return codec >= 0 && codec < 6 ? formats[codec] : nullptr;
+}
+
+const char* rpmInnerVariant(int codec) {
+    static const char* variants[] = {nullptr, "deflate", "level-9", "crc64", "level-3", "level-5"};
+    return codec >= 0 && codec < 6 ? variants[codec] : nullptr;
+}
+
+bool rpmWriteLead(QIODevice* output) {
+    QByteArray lead(96, '\0');
+    lead[0] = char(0xed); lead[1] = char(0xab); lead[2] = char(0xee); lead[3] = char(0xdb);
+    lead[4] = 3;
+    lead[6] = 0;
+    lead[7] = 5;
+    const QByteArray name("peare-generated");
+    std::memcpy(lead.data() + 10, name.constData(), size_t(name.size()));
+    lead[76] = 1;
+    lead[78] = 5;
+    return writeAll(output, lead.constData(), lead.size());
+}
+
 QByteArray debTarMemberName(int codec, bool control) {
     static const char* extensions[] = {
         "tar", "tar.gz", "tar.xz", "tar.zst", "tar.bz2", "tar.lzma"};
@@ -4683,6 +4783,183 @@ peare_writer_status writeDebPackage(peare_writer_handle_s* writer) {
     writer->debStage.reset();
     writer->debEntries.clear();
     writer->debDirectories.clear();
+    writer->names.clear();
+    writer->createPath.clear();
+    writer->error.clear();
+    writer->errorUtf8.clear();
+    return PEARE_WRITER_OK;
+}
+
+peare_writer_status writeRpmPackage(peare_writer_handle_s* writer) {
+    if (!writer->rpmStage || !writer->rpmStage->isValid())
+        return fail(writer, PEARE_WRITER_IO_ERROR,
+                    QStringLiteral("Could not create RPM package staging."));
+    if (writer->rpmEntries.size() > quint32(INT_MAX))
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("The RPM package contains too many files."));
+
+    const QString cpioPath = writer->rpmStage->filePath(QStringLiteral("payload.cpio"));
+    peare_writer_handle inner = nullptr;
+    peare_writer_status status = peare_writer_create(&inner);
+    QByteArray cpioVariant("crc");
+    if (status == PEARE_WRITER_OK)
+        status = peare_writer_create_begin_variant(inner, "cpio", cpioVariant.constData(),
+                                                    cpioPath.toUtf8().constData());
+    for (const RpmEntry& entry : writer->rpmEntries) {
+        if (status != PEARE_WRITER_OK) break;
+        const QByteArray member = QByteArray("./") + entry.name;
+        status = peare_writer_create_file(inner, entry.sourcePath.toUtf8().constData(),
+                                          member.constData());
+    }
+    if (status == PEARE_WRITER_OK) status = peare_writer_finish(inner);
+    QString nestedError;
+    if (status != PEARE_WRITER_OK && inner)
+        nestedError = QString::fromUtf8(peare_writer_last_error(inner));
+    if (inner) peare_writer_destroy(inner);
+    if (status != PEARE_WRITER_OK)
+        return fail(writer, status, nestedError.isEmpty()
+                    ? QStringLiteral("Could not create RPM CPIO payload.") : nestedError);
+
+    const QString payloadPath = writer->rpmStage->filePath(QStringLiteral("payload.bin"));
+    if (writer->rpmCodec == 0) {
+        QFile source(cpioPath);
+        QFile destination(payloadPath);
+        if (!source.open(QIODevice::ReadOnly))
+            return fail(writer, PEARE_WRITER_IO_ERROR, source.errorString());
+        if (!destination.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            return fail(writer, PEARE_WRITER_IO_ERROR, destination.errorString());
+        if (!copyFile(source, &destination) || !destination.flush())
+            return fail(writer, PEARE_WRITER_IO_ERROR,
+                        destination.errorString());
+    } else {
+        const QByteArray cpioPathUtf8 = cpioPath.toUtf8();
+        peare_writer_input_file input{cpioPathUtf8.constData(), "payload.cpio"};
+        peare_writer_handle compressor = nullptr;
+        status = peare_writer_create(&compressor);
+        if (status == PEARE_WRITER_OK)
+            status = peare_writer_add_files_to(compressor, payloadPath.toUtf8().constData(),
+                rpmInnerFormat(writer->rpmCodec), rpmInnerVariant(writer->rpmCodec), 0,
+                &input, 1);
+        if (status != PEARE_WRITER_OK && compressor)
+            nestedError = QString::fromUtf8(peare_writer_last_error(compressor));
+        if (compressor) peare_writer_destroy(compressor);
+        if (status != PEARE_WRITER_OK)
+            return fail(writer, status, nestedError.isEmpty()
+                        ? QStringLiteral("Could not compress the RPM payload.") : nestedError);
+    }
+
+    QFile cpio(cpioPath);
+    QFile payload(payloadPath);
+    if (!cpio.open(QIODevice::ReadOnly) || !payload.open(QIODevice::ReadOnly) ||
+        cpio.size() > INT_MAX || payload.size() > INT_MAX)
+        return fail(writer, PEARE_WRITER_IO_ERROR,
+                    QStringLiteral("The RPM payload exceeds the supported package size."));
+
+    std::vector<RpmTag> tags;
+    tags.push_back(rpmStringArrayTag(100, QByteArray("C\0", 2), 1));
+    tags.push_back(rpmStringTag(1000, QByteArray("peare-generated")));
+    tags.push_back(rpmStringTag(1001, QByteArray("1.0")));
+    tags.push_back(rpmStringTag(1002, QByteArray("1")));
+    tags.push_back(rpmStringTag(1004, QByteArray("C"), 9));
+    tags.push_back(rpmStringTag(1005, QByteArray("Package created by Peare."), 9));
+    tags.push_back(rpmInt32Tag(1006, {quint32(QDateTime::currentSecsSinceEpoch())}));
+    tags.push_back(rpmStringTag(1007, QByteArray("localhost")));
+    quint64 installedSize = 0;
+    for (const RpmEntry& entry : writer->rpmEntries) installedSize += entry.size;
+    if (installedSize > quint32(INT_MAX))
+        return fail(writer, PEARE_WRITER_IO_ERROR,
+                    QStringLiteral("The RPM installed size exceeds the format limit."));
+    tags.push_back(rpmInt32Tag(1009, {quint32(installedSize)}));
+    tags.push_back(rpmStringTag(1014, QByteArray("NOASSERTION")));
+    tags.push_back(rpmStringTag(1015, QByteArray("Peare")));
+    tags.push_back(rpmStringTag(1016, QByteArray("Unspecified"), 9));
+    tags.push_back(rpmStringTag(1021, QByteArray("linux")));
+    tags.push_back(rpmStringTag(1022, QByteArray("noarch")));
+    tags.push_back(rpmInt32Tag(1046, {quint32(cpio.size())}));
+    tags.push_back(rpmStringTag(1124, QByteArray("cpio")));
+    tags.push_back(rpmStringTag(1125, rpmCodecName(writer->rpmCodec).toLatin1()));
+    tags.push_back(rpmInt32Tag(5011, {1}));
+
+    std::vector<quint32> sizes, modes, mtimes, flags, verifyFlags, dirIndexes;
+    QByteArray digests, bases, directories;
+    QMap<QByteArray, quint32> directoryIndex;
+    for (const RpmEntry& entry : writer->rpmEntries) {
+        const int slash = entry.name.lastIndexOf('/');
+        const QByteArray dir = slash < 0 ? QByteArray("/")
+                                         : QByteArray("/") + entry.name.left(slash + 1);
+        const QByteArray base = slash < 0 ? entry.name : entry.name.mid(slash + 1);
+        auto found = directoryIndex.find(dir);
+        if (found == directoryIndex.end()) {
+            const quint32 index = quint32(directoryIndex.size());
+            directoryIndex.insert(dir, index);
+            directories.append(dir);
+            directories.append('\0');
+            found = directoryIndex.find(dir);
+        }
+        dirIndexes.push_back(found.value());
+        bases.append(base); bases.append('\0');
+        digests.append(entry.digest.toHex()); digests.append('\0');
+        sizes.push_back(entry.size);
+        modes.push_back(0100644);
+        mtimes.push_back(entry.modified);
+        flags.push_back(0);
+        verifyFlags.push_back(0x3f);
+    }
+    const quint32 count = quint32(writer->rpmEntries.size());
+    tags.push_back(rpmInt32Tag(1028, sizes));
+    QByteArray modeData;
+    for (quint32 value : modes) appendBe16(&modeData, quint16(value));
+    tags.push_back({1030, 3, count, modeData});
+    tags.push_back(rpmInt32Tag(1034, mtimes));
+    tags.push_back(rpmStringArrayTag(1035, digests, count));
+    tags.push_back(rpmInt32Tag(1037, flags));
+    QByteArray owners, groups;
+    for (quint32 i = 0; i < count; ++i) {
+        owners.append("root\0", 5);
+        groups.append("root\0", 5);
+    }
+    tags.push_back(rpmStringArrayTag(1039, owners, count));
+    tags.push_back(rpmStringArrayTag(1040, groups, count));
+    tags.push_back(rpmInt32Tag(1045, verifyFlags));
+    tags.push_back(rpmStringArrayTag(1117, bases, count));
+    tags.push_back(rpmInt32Tag(1116, dirIndexes));
+    tags.push_back(rpmStringArrayTag(1118, directories, quint32(directoryIndex.size())));
+    const QByteArray header = rpmHeader(std::move(tags));
+    if (header.isEmpty() || header.size() > INT_MAX)
+        return fail(writer, PEARE_WRITER_IO_ERROR,
+                    QStringLiteral("Could not build the RPM metadata header."));
+
+    QCryptographicHash md5(QCryptographicHash::Md5);
+    payload.seek(0);
+    md5.addData(header);
+    if (!md5.addData(&payload))
+        return fail(writer, PEARE_WRITER_IO_ERROR, payload.errorString());
+    QByteArray digest = md5.result();
+    const quint64 signedSize = quint64(header.size()) + quint64(payload.size());
+    if (signedSize > quint32(INT_MAX))
+        return fail(writer, PEARE_WRITER_IO_ERROR,
+                    QStringLiteral("The RPM signature size exceeds the format limit."));
+    std::vector<RpmTag> signatureTags;
+    signatureTags.push_back(rpmInt32Tag(1000, {quint32(signedSize)}));
+    signatureTags.push_back({1004, 7, 16, digest});
+    QByteArray signature = rpmHeader(std::move(signatureTags));
+    while (signature.size() % 8) signature.append('\0');
+    payload.seek(0);
+
+    writer->output.reset(new (std::nothrow) QSaveFile(writer->createPath));
+    if (!writer->output || !writer->output->open(QIODevice::WriteOnly))
+        return fail(writer, PEARE_WRITER_IO_ERROR, writer->output
+            ? writer->output->errorString() : QStringLiteral("Could not allocate RPM output."));
+    if (!rpmWriteLead(writer->output.get()) ||
+        !writeAll(writer->output.get(), signature.constData(), signature.size()) ||
+        !writeAll(writer->output.get(), header.constData(), header.size()) ||
+        !copyFile(payload, writer->output.get()) || !writer->output->commit())
+        return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+    writer->output.reset();
+    writer->active = false;
+    writer->mode = peare_writer_handle_s::Mode::None;
+    writer->rpmStage.reset();
+    writer->rpmEntries.clear();
     writer->names.clear();
     writer->createPath.clear();
     writer->error.clear();
@@ -5372,7 +5649,7 @@ peare_writer_status peare_writer_create(peare_writer_handle* outWriter) {
     }
 }
 
-size_t peare_writer_create_format_count(void) { return 27; }
+size_t peare_writer_create_format_count(void) { return 28; }
 
 peare_writer_status peare_writer_get_create_format(size_t index,
                                                     peare_writer_format* outFormat) {
@@ -5404,7 +5681,8 @@ peare_writer_status peare_writer_get_create_format(size_t index,
         {"lzip", "Lzip compressed file", "lz"},
         {"uuencode", "UUencoded file", "uue"},
         {"ihex", "Intel HEX firmware image", "hex"},
-        {"deb", "Debian package", "deb"}
+        {"deb", "Debian package", "deb"},
+        {"rpm", "RPM package", "rpm"}
     };
     if (index >= sizeof(formats) / sizeof(formats[0]))
         return PEARE_WRITER_INVALID_ARGUMENT;
@@ -5424,6 +5702,7 @@ size_t peare_writer_create_variant_count(const char* formatIdUtf8) {
     if (std::strcmp(formatIdUtf8, "uuencode") == 0) return 4;
     if (std::strcmp(formatIdUtf8, "ihex") == 0) return 3;
     if (std::strcmp(formatIdUtf8, "deb") == 0) return 24;
+    if (std::strcmp(formatIdUtf8, "rpm") == 0) return 6;
     if (std::strcmp(formatIdUtf8, "unix-compress") == 0) return 16;
     if (std::strcmp(formatIdUtf8, "tar") == 0) return 1;
     if (std::strcmp(formatIdUtf8, "tar-gzip") == 0) return 1;
@@ -5557,6 +5836,11 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
         {"control-zstd+data-bzip2", "Control Zstandard, data BZIP2"},
         {"control-zstd+data-lzma", "Control Zstandard, data LZMA"}
     };
+    static const peare_writer_variant rpmVariants[] = {
+        {"none", "Uncompressed CPIO CRC"}, {"gzip", "GZIP"},
+        {"bzip2", "BZIP2"}, {"xz", "XZ"},
+        {"zstd", "Zstandard"}, {"lzma", "LZMA-alone"}
+    };
     static const peare_writer_variant tarVariants[] = { {"ustar", "USTAR"} };
     static const peare_writer_variant cpioVariants[] = {
         {"newc", "SVR4 newc"}, {"crc", "SVR4 CRC"},
@@ -5639,6 +5923,10 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
     }
     if (std::strcmp(formatIdUtf8, "deb") == 0 && index < 24) {
         *outVariant = debVariants[index];
+        return PEARE_WRITER_OK;
+    }
+    if (std::strcmp(formatIdUtf8, "rpm") == 0 && index < 6) {
+        *outVariant = rpmVariants[index];
         return PEARE_WRITER_OK;
     }
     if ((std::strcmp(formatIdUtf8, "unix-compress") == 0 ||
@@ -6109,6 +6397,39 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
             writer->active = true;
             writer->updateMode = false;
             writer->mode = peare_writer_handle_s::Mode::DebCreate;
+            return PEARE_WRITER_OK;
+        });
+    }
+    if (std::strcmp(formatIdUtf8, "rpm") == 0) {
+        int codec = -1;
+        const char* requested = variant ? variant : "gzip";
+        for (int i = 0; i < 6; ++i) {
+            peare_writer_variant item{};
+            if (peare_writer_get_create_variant("rpm", size_t(i), &item) == PEARE_WRITER_OK &&
+                std::strcmp(requested, item.id) == 0) codec = i;
+        }
+        if (codec < 0)
+            return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                        QStringLiteral("The requested RPM payload variant is invalid."), false);
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (writer->active)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("A writer operation is already active."), false);
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            writer->rpmStage.reset(new (std::nothrow) QTemporaryDir);
+            if (!writer->rpmStage || !writer->rpmStage->isValid()) {
+                writer->rpmStage.reset();
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            QStringLiteral("Could not allocate RPM package staging."), false);
+            }
+            writer->rpmCodec = codec;
+            writer->rpmEntries.clear();
+            writer->names.clear();
+            writer->createPath = QString::fromUtf8(outputPathUtf8);
+            writer->active = true;
+            writer->updateMode = false;
+            writer->mode = peare_writer_handle_s::Mode::RpmCreate;
             return PEARE_WRITER_OK;
         });
     }
@@ -7099,6 +7420,46 @@ peare_writer_status peare_writer_add_file(peare_writer_handle writer,
             writer->debEntries.push_back({stagedPath, name});
             return PEARE_WRITER_OK;
         });
+    if (writer->mode == peare_writer_handle_s::Mode::RpmCreate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("A source file and RPM path are required."));
+            QByteArray name;
+            if (!normalizedEntryName(entryNameUtf8, false, &name))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The RPM package path is invalid or unsafe."));
+            const QString key = QString::fromUtf8(name);
+            if (writer->names.contains(key))
+                return fail(writer, PEARE_WRITER_DUPLICATE_ENTRY,
+                            QStringLiteral("The RPM package path already exists."));
+            QFile input(QString::fromUtf8(sourcePathUtf8));
+            if (!input.open(QIODevice::ReadOnly) || input.size() < 0 || input.size() > UINT32_MAX)
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            input.isOpen() ? QStringLiteral("The RPM file exceeds 4 GiB.")
+                                           : input.errorString());
+            const QString stagedPath = writer->rpmStage->filePath(
+                QStringLiteral("input-%1").arg(writer->rpmEntries.size()));
+            QFile staged(stagedPath);
+            if (!staged.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+                !copyFile(input, &staged) || !staged.flush())
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            staged.isOpen() ? staged.errorString() : input.errorString());
+            staged.close();
+            QFile stagedRead(stagedPath);
+            if (!stagedRead.open(QIODevice::ReadOnly))
+                return fail(writer, PEARE_WRITER_IO_ERROR, stagedRead.errorString());
+            QCryptographicHash fileHash(QCryptographicHash::Md5);
+            if (!fileHash.addData(&stagedRead))
+                return fail(writer, PEARE_WRITER_IO_ERROR, stagedRead.errorString());
+            const QByteArray fileDigest = fileHash.result();
+            const QFileInfo info(QString::fromUtf8(sourcePathUtf8));
+            writer->rpmEntries.push_back({stagedPath, name, quint32(input.size()),
+                quint32(std::max<qint64>(0, info.lastModified().toSecsSinceEpoch())),
+                fileDigest.toHex()});
+            writer->names.insert(key);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::TarCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarGzipCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarBzip2Create ||
@@ -8020,6 +8381,8 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
         });
     if (writer->mode == peare_writer_handle_s::Mode::DebCreate)
         return cBoundary(writer, [&] { return writeDebPackage(writer); });
+    if (writer->mode == peare_writer_handle_s::Mode::RpmCreate)
+        return cBoundary(writer, [&] { return writeRpmPackage(writer); });
     if (writer->mode == peare_writer_handle_s::Mode::TarCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarGzipCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarBzip2Create ||
@@ -8704,6 +9067,7 @@ void peare_writer_abort(peare_writer_handle writer) {
     writer->arStage.reset();
     writer->wadStage.reset();
     writer->debStage.reset();
+    writer->rpmStage.reset();
     if (writer->diskUpdate) {
         writer->diskUpdate->abort();
         writer->diskUpdate.reset();
@@ -8714,6 +9078,7 @@ void peare_writer_abort(peare_writer_handle writer) {
     writer->arEntries.clear();
     writer->wadEntries.clear();
     writer->debEntries.clear();
+    writer->rpmEntries.clear();
     writer->debDirectories.clear();
     writer->cpioFormat = CpioFormat::Newc;
     writer->cpioOpaqueOffset = 0;

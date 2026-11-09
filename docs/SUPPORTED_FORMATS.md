@@ -128,7 +128,7 @@ package-specific limits on ZIP-based files.
 | TAR.XZ / TXZ | USTAR archive in an XZ stream; no check, CRC32, CRC64, or SHA-256 checks | Yes | Yes |
 | TAR.LZMA | USTAR archive in an LZMA-alone stream; compression levels 1-9 | Yes | Yes |
 | OS/2 WarpIN (WPI) | Raw revision 3 and 4 packages; stored and bzip2-compressed payloads. Self-extracting EXE packages are not included. | Yes | No |
-| RPM | RPM v3/v4 packages with CPIO payloads | Yes | No |
+| RPM | RPM v3/v4 packages with CPIO payloads | Yes | Yes |
 | Microsoft Cabinet | Uncompressed, MSZIP, LZX (window sizes 15 to 21), and Quantum (window sizes 10 to 21) | Yes | No |
 | Microsoft Compiled HTML Help (CHM) | ITSF versions 2 and 3 with LZX-compressed content | Yes | No |
 | Electron ASAR | Packed and unpacked members | Yes | No |

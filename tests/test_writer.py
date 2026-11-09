@@ -4681,7 +4681,7 @@ def test_tar_bzip2_create_and_cud_roundtrip_with_7zip(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 27
+    assert writer_lib.peare_writer_create_format_count() == 28
     assert writer_lib.peare_writer_create_variant_count(b"tar-bzip2") == 9
     for level in range(1, 10):
         archive = tmp_path / f"created-level-{level}.tbz2"
@@ -4818,7 +4818,7 @@ def test_tar_zstd_create_and_cud_roundtrip_with_independent_decoder(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 27
+    assert writer_lib.peare_writer_create_format_count() == 28
     assert writer_lib.peare_writer_create_variant_count(b"tar-zstd") == 27
     variants = [f"fast-{level}" for level in range(5, 0, -1)] + [
         f"level-{level}" for level in range(1, 23)]
@@ -5057,7 +5057,7 @@ def test_tar_xz_create_all_checks_and_7zip(writer_lib, peare_lib, tmp_path):
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     checks = ("none", "crc32", "crc64", "sha256")
-    assert writer_lib.peare_writer_create_format_count() == 27
+    assert writer_lib.peare_writer_create_format_count() == 28
     assert writer_lib.peare_writer_create_variant_count(b"tar-xz") == len(checks)
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for check in checks:
@@ -5188,7 +5188,7 @@ def test_tar_lzma_create_all_levels_and_7zip(writer_lib, peare_lib, tmp_path):
         pytest.skip("7-Zip is required for independent TAR.LZMA validation")
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    assert writer_lib.peare_writer_create_format_count() == 27
+    assert writer_lib.peare_writer_create_format_count() == 28
     assert writer_lib.peare_writer_create_variant_count(b"tar-lzma") == 9
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for level in range(1, 10):
@@ -5305,7 +5305,7 @@ def test_lzip_writer_all_levels_and_winrar(
     source = ROOT / "README.md"
     expected = source.read_bytes()
     expected_hash = hashlib.sha256(expected).hexdigest()
-    assert writer_lib.peare_writer_create_format_count() == 27
+    assert writer_lib.peare_writer_create_format_count() == 28
     assert writer_lib.peare_writer_create_variant_count(b"lzip") == 10
     variants = []
     for index in range(10):
@@ -5422,8 +5422,8 @@ def test_lzip_writer_concatenates_selected_inputs(writer_lib, peare_lib, tmp_pat
     "classic", "classic-encoded-name", "base64", "base64-encoded-name"])
 def test_uuencode_writer_roundtrip_all_headers(
         writer_lib, peare_lib, peare_gui_path, tmp_path, variant):
-    assert writer_lib.peare_writer_create_format_count() == 27
-    formats = (_WriterFormat * 27)()
+    assert writer_lib.peare_writer_create_format_count() == 28
+    formats = (_WriterFormat * 28)()
     assert all(writer_lib.peare_writer_get_create_format(
         index, C.byref(formats[index])) == 0 for index in range(len(formats)))
     assert {item.id for item in formats} >= {b"uuencode", b"ihex"}
@@ -5734,6 +5734,126 @@ def test_deb_writer_all_compression_combinations(
              str(output), leaf["path"], "--output-dir", str(gui_output)],
             capture_output=True, text=True, timeout=120, check=False)
         assert gui_check.returncode == 0, gui_check.stdout + gui_check.stderr
+
+
+def _rpm_header(data, offset):
+    assert data[offset:offset + 8] == b"\x8e\xad\xe8\x01\0\0\0\0"
+    count, store_size = struct.unpack_from(">II", data, offset + 8)
+    end_index = offset + 16 + count * 16
+    end = end_index + store_size
+    return data[offset:end], end
+
+
+def _rpm_header_tags(data, offset):
+    count, store_size = struct.unpack_from(">II", data, offset + 8)
+    index_offset = offset + 16
+    store_offset = index_offset + count * 16
+    tags = {}
+    for index in range(count):
+        tag, kind, value_offset, items = struct.unpack_from(
+            ">IIII", data, index_offset + index * 16)
+        size = {3: 2, 4: 4, 7: 1}.get(kind, 0)
+        if kind in (3, 4):
+            values = [int.from_bytes(data[store_offset + value_offset + i * size:
+                                         store_offset + value_offset + (i + 1) * size],
+                                     "big") for i in range(items)]
+            tags[tag] = values
+        elif kind == 7:
+            tags[tag] = data[store_offset + value_offset:
+                             store_offset + value_offset + items]
+        elif kind in (6, 8, 9):
+            start = store_offset + value_offset
+            end = data.index(b"\0", start)
+            tags[tag] = data[start:end + 1]
+    assert store_offset + store_size <= len(data)
+    return tags
+
+
+def _rpm_cpio_crc(data):
+    offset = 0
+    files = {}
+    while True:
+        header = data[offset:offset + 110]
+        assert header[:6] == b"070702"
+        values = [int(header[i:i + 8], 16) for i in range(6, 110, 8)]
+        file_size, name_size, expected_sum = values[6], values[11], values[12]
+        offset += 110
+        name = data[offset:offset + name_size - 1].decode("utf-8")
+        offset = (offset + name_size + 3) & ~3
+        payload = data[offset:offset + file_size]
+        offset = (offset + file_size + 3) & ~3
+        if name == "TRAILER!!!":
+            break
+        assert sum(payload) & 0xffffffff == expected_sum
+        files[name.removeprefix("./")] = payload
+    return files
+
+
+@pytest.mark.parametrize("codec", ["none", "gzip", "bzip2", "xz", "zstd", "lzma"])
+def test_rpm_writer_payload_codecs(writer_lib, peare_lib, peare_gui_path, tmp_path, codec):
+    source = ROOT / "README.md"
+    expected = source.read_bytes()
+    output = tmp_path / f"peare-{codec}.rpm"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_variant_count(b"rpm") == 6
+        status = writer_lib.peare_writer_create_begin_variant(
+            writer, b"rpm", codec.encode(), str(output).encode())
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_create_file(
+            writer, str(source).encode(), b"usr/share/peare/README.md") == 0
+        status = writer_lib.peare_writer_finish(writer)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    data = output.read_bytes()
+    assert data[:4] == b"\xed\xab\xee\xdb" and data[4] == 3
+    signature, sig_end = _rpm_header(data, 96)
+    assert all(byte == 0 for byte in data[sig_end:(sig_end + 7) & ~7])
+    main_header, payload_offset = _rpm_header(data, (sig_end + 7) & ~7)
+    payload = data[payload_offset:]
+    assert len(payload) > 0 and len(signature) > 0 and len(main_header) > 0
+    signature_tags = _rpm_header_tags(data, 96)
+    assert signature_tags[1000] == [len(main_header) + len(payload)]
+    assert signature_tags[1004] == hashlib.md5(main_header + payload).digest()
+    main_tags = _rpm_header_tags(data, (sig_end + 7) & ~7)
+    assert main_tags[1000] == b"peare-generated\0"
+    assert main_tags[1124] == b"cpio\0"
+    assert main_tags[1125] == codec.encode() + b"\0"
+    if codec == "none":
+        cpio = payload
+    elif codec == "gzip":
+        cpio = gzip.decompress(payload)
+    elif codec == "bzip2":
+        cpio = bz2.decompress(payload)
+    elif codec == "xz":
+        cpio = lzma.decompress(payload, format=lzma.FORMAT_XZ)
+    elif codec == "lzma":
+        cpio = lzma.decompress(payload, format=lzma.FORMAT_ALONE)
+    else:
+        with zstandard.ZstdDecompressor().stream_reader(io.BytesIO(payload)) as reader:
+            cpio = reader.read()
+    assert _rpm_cpio_crc(cpio)["usr/share/peare/README.md"] == expected
+
+    with peare_lib.open_file(str(output)) as opener:
+        assert opener.container_format() == "RPM"
+        rows = opener.normalized_tree()
+    leaf = next(row for row in rows if row["path"].endswith("usr/share/peare/README.md"))
+    assert leaf["sha256"] == hashlib.sha256(expected).hexdigest()
+    if codec == "gzip":
+        gui = subprocess.run(
+            [sys.executable, str(ROOT / "tests" / "run_gui_preview_tests.py"),
+             "--exe", str(peare_gui_path), "--case", "rpm-writer-gzip",
+             str(output), leaf["path"], "--output-dir", str(tmp_path / "gui")],
+            capture_output=True, text=True, timeout=120)
+        assert gui.returncode == 0, gui.stdout + gui.stderr
+    seven_zip = _seven_zip_executable()
+    if seven_zip and codec == "gzip":
+        result = subprocess.run([seven_zip, "t", str(output)], capture_output=True,
+                                text=True, timeout=60)
+        assert result.returncode == 0, result.stdout + result.stderr
 
 @pytest.mark.parametrize(("sample_name", "tar_root"), [
     ("docs.tgz", "archive.tar"), ("docs.tbz2", "writer-test-copy.tbz2"),

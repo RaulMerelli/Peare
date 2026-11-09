@@ -159,3 +159,6 @@ a history window larger than 2 GiB on 64-bit builds are not supported.
 Peare reads RPM packages with CPIO payloads and the supported compressors listed
 in the format matrix. It does not verify RPM package signatures. Payloads that
 use another compressor or the large-file `07070X` CPIO extension are not read.
+
+The Writer creates unsigned RPM v3 packages. Its MD5 digest detects data changes,
+but it does not authenticate the package source.
