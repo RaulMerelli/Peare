@@ -59,6 +59,18 @@ def test_lzip_payload_matches_upstream_source(peare_lib):
         assert _payload(peare_lib, opener) == expected.read_bytes()
 
 
+def test_lzip_tar_sample_matches_upstream_source(peare_lib):
+    sample = DEFAULT_ROOT / "docs.tar.lz"
+    expected = REPO / "tests" / "formats" / "tar" / "fixtures" / "docs.tar"
+    assert sample.is_file()
+    assert expected.is_file()
+    opener = peare_lib.open_file(str(sample))
+    assert opener is not None
+    with opener:
+        assert opener.container_format() == "LZIP"
+        assert _payload(peare_lib, opener) == expected.read_bytes()
+
+
 def test_lzip_concatenated_members_from_independent_encoder(peare_lib):
     sample_value = os.environ.get("PEARE_LZIP_MULTI_MEMBER_SAMPLE")
     if not sample_value:

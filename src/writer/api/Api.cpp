@@ -246,7 +246,7 @@ struct peare_writer_handle_s {
     bool lzmaWrappedTar = false;
     bool fatTargetSpecified = false;
     size_t fatTargetIndex = 0;
-    enum class Mode { None, ZipCreate, ZipUpdate, GzipCreate, Bzip2Create, ZstdCreate, XzCreate, LzmaAloneCreate, UnixCompressCreate, TarCreate, TarUpdate, CpioCreate,
+    enum class Mode { None, ZipCreate, ZipUpdate, GzipCreate, Bzip2Create, ZstdCreate, XzCreate, LzmaAloneCreate, LzipCreate, UnixCompressCreate, TarCreate, TarUpdate, CpioCreate,
                       CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate, TarGzipCreate,
                       TarBzip2Create, TarZstdCreate, TarUnixCompressCreate,
                       TarXzCreate, TarLzmaCreate,
@@ -4434,6 +4434,119 @@ peare_writer_status writeLzmaAloneMember(peare_writer_handle_s* writer,
     return PEARE_WRITER_OK;
 }
 
+bool lzipDictionaryFor(quint64 inputSize, int level, UInt32* dictionary,
+                       Byte* codedSize) {
+    static const quint32 limits[] = {
+        64 * 1024, 1 * 1024 * 1024, 1536 * 1024, 2 * 1024 * 1024,
+        3 * 1024 * 1024, 4 * 1024 * 1024, 8 * 1024 * 1024,
+        16 * 1024 * 1024, 24 * 1024 * 1024, 32 * 1024 * 1024
+    };
+    if (!dictionary || !codedSize || level < 0 || level > 9) return false;
+    quint64 limit = std::min<quint64>(inputSize, limits[level]);
+    limit = std::max<quint64>(limit, 1u << 12);
+    quint32 best = 1u << 12;
+    unsigned bestExponent = 12;
+    unsigned bestFraction = 0;
+    for (unsigned exponent = 12; exponent <= 27; ++exponent) {
+        const quint32 base = 1u << exponent;
+        for (unsigned fraction = 0; fraction <= 7; ++fraction) {
+            const quint32 candidate = base - (base >> 4) * fraction;
+            if (candidate <= limit && candidate > best) {
+                best = candidate;
+                bestExponent = exponent;
+                bestFraction = fraction;
+            }
+        }
+    }
+    *dictionary = best;
+    *codedSize = Byte((bestFraction << 5) | bestExponent);
+    return true;
+}
+
+peare_writer_status writeLzipMember(peare_writer_handle_s* writer,
+                                    const char* sourcePathUtf8,
+                                    const char* entryNameUtf8) {
+    if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("A Lzip source and member name are required."));
+    QByteArray safeName;
+    if (!normalizedEntryName(entryNameUtf8, false, &safeName))
+        return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                    QStringLiteral("The Lzip member name is invalid or unsafe."));
+
+    QFile input(QString::fromUtf8(sourcePathUtf8));
+    if (!input.open(QIODevice::ReadOnly))
+        return fail(writer, PEARE_WRITER_IO_ERROR, input.errorString());
+    const qint64 declaredSize = input.size();
+    if (declaredSize < 0)
+        return fail(writer, PEARE_WRITER_IO_ERROR,
+                    QStringLiteral("Could not determine the Lzip input size."));
+
+    static const unsigned matchLength[] = {16, 5, 6, 8, 12, 20, 36, 68, 132, 273};
+    UInt32 dictionary = 0;
+    Byte codedSize = 0;
+    if (!lzipDictionaryFor(quint64(declaredSize), writer->lzmaLevel,
+                           &dictionary, &codedSize))
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("The requested Lzip level is invalid."));
+    QByteArray header("LZIP", 4);
+    header.append(char(1));
+    header.append(char(codedSize));
+    const qint64 memberStart = writer->output->pos();
+    if (!writeAll(writer->output.get(), header.constData(), header.size()))
+        return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+
+    CLzmaEncProps properties;
+    LzmaEncProps_Init(&properties);
+    properties.level = writer->lzmaLevel;
+    properties.dictSize = dictionary;
+    properties.lc = 3;
+    properties.lp = 0;
+    properties.pb = 2;
+    properties.fb = int(matchLength[writer->lzmaLevel]);
+    properties.writeEndMark = 1;
+    properties.numThreads = 1;
+    CLzmaEncHandle encoder = LzmaEnc_Create(&kZipLzmaAllocator);
+    if (!encoder)
+        return fail(writer, PEARE_WRITER_ALLOCATION_FAILED,
+                    QStringLiteral("Could not allocate the Lzip encoder."));
+    const SRes configured = LzmaEnc_SetProps(encoder, &properties);
+    auto read = [&input](char* buffer, qint64 size) {
+        return input.read(buffer, size);
+    };
+    ZipLzmaInput<decltype(read)> source;
+    source.stream.Read = &ZipLzmaInput<decltype(read)>::readStream;
+    source.read = &read;
+    ZipLzmaOutput encoded;
+    encoded.stream.Write = &ZipLzmaOutput::writeStream;
+    encoded.device = writer->output.get();
+    SRes status = configured;
+    if (status == SZ_OK)
+        status = LzmaEnc_Encode(encoder, &encoded.stream, &source.stream, nullptr,
+                                &kZipLzmaAllocator, &kZipLzmaAllocator);
+    LzmaEnc_Destroy(encoder, &kZipLzmaAllocator, &kZipLzmaAllocator);
+    if (status != SZ_OK || source.size != quint64(declaredSize) ||
+        input.error() != QFileDevice::NoError)
+        return fail(writer, PEARE_WRITER_IO_ERROR,
+                    !source.error.isEmpty() ? source.error
+                    : !encoded.error.isEmpty() ? encoded.error
+                    : input.error() != QFileDevice::NoError ? input.errorString()
+                    : QStringLiteral("Lzip compression failed (%1).").arg(status));
+
+    const quint64 compressedSize = quint64(writer->output->pos() - memberStart);
+    const quint64 maximumMemberSize = quint64(1) << 51;
+    if (compressedSize > maximumMemberSize - 20)
+        return fail(writer, PEARE_WRITER_UNSUPPORTED_LIMIT,
+                    QStringLiteral("The Lzip member exceeds the format size limit."));
+    QByteArray trailer;
+    append32(&trailer, source.crc ^ 0xffffffffu);
+    append64(&trailer, source.size);
+    append64(&trailer, compressedSize + 20);
+    if (!writeAll(writer->output.get(), trailer.constData(), trailer.size()))
+        return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+    return PEARE_WRITER_OK;
+}
+
 template <typename Read>
 bool writeZipXzPayload(QIODevice* output, Read read, quint32* crc,
                        quint64* inputSize, quint64* outputSize,
@@ -4923,7 +5036,7 @@ peare_writer_status peare_writer_create(peare_writer_handle* outWriter) {
     }
 }
 
-size_t peare_writer_create_format_count(void) { return 24; }
+size_t peare_writer_create_format_count(void) { return 25; }
 
 peare_writer_status peare_writer_get_create_format(size_t index,
                                                     peare_writer_format* outFormat) {
@@ -4951,7 +5064,8 @@ peare_writer_status peare_writer_get_create_format(size_t index,
         {"tar-zstd", "TAR.ZST archive", "tar.zst"},
         {"tar-unix-compress", "TAR.Z archive", "taz"},
         {"tar-xz", "TAR.XZ archive", "txz"},
-        {"tar-lzma", "TAR.LZMA archive", "tar.lzma"}
+        {"tar-lzma", "TAR.LZMA archive", "tar.lzma"},
+        {"lzip", "Lzip compressed file", "lz"}
     };
     if (index >= sizeof(formats) / sizeof(formats[0]))
         return PEARE_WRITER_INVALID_ARGUMENT;
@@ -4967,6 +5081,7 @@ size_t peare_writer_create_variant_count(const char* formatIdUtf8) {
     if (std::strcmp(formatIdUtf8, "zstd") == 0) return 27;
     if (std::strcmp(formatIdUtf8, "xz") == 0) return 4;
     if (std::strcmp(formatIdUtf8, "lzma") == 0) return 9;
+    if (std::strcmp(formatIdUtf8, "lzip") == 0) return 10;
     if (std::strcmp(formatIdUtf8, "unix-compress") == 0) return 16;
     if (std::strcmp(formatIdUtf8, "tar") == 0) return 1;
     if (std::strcmp(formatIdUtf8, "tar-gzip") == 0) return 1;
@@ -5037,6 +5152,13 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
         {"level-5", "Level 5"}, {"level-6", "Level 6"},
         {"level-7", "Level 7"}, {"level-8", "Level 8"},
         {"level-9", "Level 9"}
+    };
+    static const peare_writer_variant lzipVariants[] = {
+        {"level-0", "Level 0"}, {"level-1", "Level 1"},
+        {"level-2", "Level 2"}, {"level-3", "Level 3"},
+        {"level-4", "Level 4"}, {"level-5", "Level 5"},
+        {"level-6", "Level 6"}, {"level-7", "Level 7"},
+        {"level-8", "Level 8"}, {"level-9", "Level 9"}
     };
     static const peare_writer_variant unixCompressVariants[] = {
         {"block-9", "Block mode, 9 bits"},
@@ -5122,6 +5244,10 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
     }
     if (std::strcmp(formatIdUtf8, "lzma") == 0 && index < 9) {
         *outVariant = lzmaVariants[index];
+        return PEARE_WRITER_OK;
+    }
+    if (std::strcmp(formatIdUtf8, "lzip") == 0 && index < 10) {
+        *outVariant = lzipVariants[index];
         return PEARE_WRITER_OK;
     }
     if ((std::strcmp(formatIdUtf8, "unix-compress") == 0 ||
@@ -5459,6 +5585,35 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
             writer->active = true;
             writer->updateMode = false;
             writer->mode = peare_writer_handle_s::Mode::LzmaAloneCreate;
+            return PEARE_WRITER_OK;
+        });
+    }
+    if (std::strcmp(formatIdUtf8, "lzip") == 0) {
+        int level = 6;
+        if (variant) {
+            if (std::strlen(variant) != 7 || std::strncmp(variant, "level-", 6) != 0 ||
+                variant[6] < '0' || variant[6] > '9')
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("The requested Lzip level is invalid."), false);
+            level = variant[6] - '0';
+        }
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (writer->active)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("A writer operation is already active."), false);
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            writer->output.reset(new (std::nothrow) QSaveFile(QString::fromUtf8(outputPathUtf8)));
+            if (!writer->output || !writer->output->open(QIODevice::WriteOnly)) {
+                const QString error = writer->output ? writer->output->errorString()
+                    : QStringLiteral("Could not allocate the Lzip output.");
+                writer->output.reset();
+                return fail(writer, PEARE_WRITER_IO_ERROR, error, false);
+            }
+            writer->lzmaLevel = level;
+            writer->active = true;
+            writer->updateMode = false;
+            writer->mode = peare_writer_handle_s::Mode::LzipCreate;
             return PEARE_WRITER_OK;
         });
     }
@@ -6465,6 +6620,10 @@ peare_writer_status peare_writer_add_file(peare_writer_handle writer,
         return cBoundary(writer, [&] {
             return writeLzmaAloneMember(writer, sourcePathUtf8, entryNameUtf8);
         });
+    if (writer->mode == peare_writer_handle_s::Mode::LzipCreate)
+        return cBoundary(writer, [&] {
+            return writeLzipMember(writer, sourcePathUtf8, entryNameUtf8);
+        });
     if (writer->mode == peare_writer_handle_s::Mode::UnixCompressCreate)
         return cBoundary(writer, [&] {
             return writeUnixCompressMember(writer, sourcePathUtf8, entryNameUtf8);
@@ -7269,6 +7428,7 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
             return PEARE_WRITER_OK;
         });
     if (writer->mode == peare_writer_handle_s::Mode::LzmaAloneCreate ||
+        writer->mode == peare_writer_handle_s::Mode::LzipCreate ||
         writer->mode == peare_writer_handle_s::Mode::UnixCompressCreate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             if (!writer->output->commit())

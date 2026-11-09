@@ -139,7 +139,7 @@ package-specific limits on ZIP-based files.
 | OS/2 PACK2 | FTCOMP `fT19` archives only; `fT21` is not supported | Yes | No |
 | BZIP2 (`.bz2`, `.bzip2`, `.tbz`, `.tbz2`) | Block levels 1-9; multi-block and concatenated streams; the Writer creates one member per selected input file | Yes | Yes |
 | Unix compress (`.Z`) | LZW block and non-block modes, code widths 9-16 bits; one input file per stream | Yes | Yes |
-| Lzip (`.lz`, `.tlz`) | Version 1 members, including concatenated members | Yes | No |
+| Lzip (`.lz`, `.tlz`) | Version 1 members, including concatenated members; Writer levels 0-9 | Yes | Yes |
 | Zstandard (`.zst`) | Standard dictionary-free frames, including concatenated and checksummed frames; Writer levels -5 through 22 | Yes | Yes |
 | Unix ar | GNU and BSD archives with short and extended member names; thin archives are not supported | Yes | Yes |
 | ARJ | Methods 0-4, legacy, GOST40, GOST256, and GOST256L password encryption, and split volumes | Yes | No |

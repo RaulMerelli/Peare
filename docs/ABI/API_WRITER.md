@@ -52,7 +52,7 @@ peare_writer_status peare_writer_add_file(
 peare_writer_status peare_writer_finish(peare_writer_handle writer);
 ```
 
-The create backends are ZIP, GZIP, BZIP2, Unix compress, LZMA-alone, XZ,
+The create backends are ZIP, GZIP, BZIP2, Unix compress, LZMA-alone, Lzip, XZ,
 Zstandard, TAR, TAR.GZ, TAR.BZ2, TAR.ZST, TAR.Z, TAR.XZ, TAR.LZMA, GNU and BSD ar, Doom IWAD and PWAD,
 all six CPIO variants (`newc`, CRC, `odc`, afio
 large ASCII, binary little-endian, and binary big-endian), standalone FAT, floppy images,
@@ -108,6 +108,10 @@ concatenated streams and supports no check, CRC32, CRC64, or SHA-256 checks.
 
 LZMA-alone creation writes one stream for one selected input file and supports
 compression levels 1 through 9.
+
+Lzip creation writes one version 1 member for each selected input file. It uses
+the standard LZMA properties, an end marker, CRC32, and the selected compression
+level from 0 through 9. Multiple inputs form a concatenated Lzip stream.
 
 Unix compress creation writes one `.Z` stream for one input file. It supports
 block and non-block modes with code widths from 9 through 16 bits.

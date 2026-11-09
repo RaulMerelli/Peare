@@ -60,6 +60,18 @@ def _seven_zip_executable():
             return str(candidate)
     return None
 
+def _winrar_executable():
+    configured = os.environ.get("PEARE_WINRAR_EXE")
+    if configured and Path(configured).is_file():
+        return configured
+    roots = [Path(os.environ.get("ProgramFiles", "C:/Program Files")),
+             Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)"))]
+    for root in roots:
+        candidate = root / "WinRAR" / "WinRAR.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
 class _ProcessIoCounters(C.Structure):
     _fields_ = [(name, C.c_ulonglong) for name in (
         "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
@@ -4802,7 +4814,7 @@ def test_tar_zstd_create_and_cud_roundtrip_with_independent_decoder(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 24
+    assert writer_lib.peare_writer_create_format_count() == 25
     assert writer_lib.peare_writer_create_variant_count(b"tar-zstd") == 27
     variants = [f"fast-{level}" for level in range(5, 0, -1)] + [
         f"level-{level}" for level in range(1, 23)]
@@ -5041,7 +5053,7 @@ def test_tar_xz_create_all_checks_and_7zip(writer_lib, peare_lib, tmp_path):
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     checks = ("none", "crc32", "crc64", "sha256")
-    assert writer_lib.peare_writer_create_format_count() == 24
+    assert writer_lib.peare_writer_create_format_count() == 25
     assert writer_lib.peare_writer_create_variant_count(b"tar-xz") == len(checks)
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for check in checks:
@@ -5172,7 +5184,7 @@ def test_tar_lzma_create_all_levels_and_7zip(writer_lib, peare_lib, tmp_path):
         pytest.skip("7-Zip is required for independent TAR.LZMA validation")
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    assert writer_lib.peare_writer_create_format_count() == 24
+    assert writer_lib.peare_writer_create_format_count() == 25
     assert writer_lib.peare_writer_create_variant_count(b"tar-lzma") == 9
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for level in range(1, 10):
@@ -5283,6 +5295,124 @@ def test_tar_lzma_cud_from_independent_sample(writer_lib, peare_lib,
         report = json.loads((output_dir / "writer-test-report.json").read_text(
             encoding="utf-8"))
         assert all(operation["passed"] for operation in report["operations"])
+
+def test_lzip_writer_all_levels_and_winrar(
+        writer_lib, peare_lib, peare_gui_path, tmp_path):
+    source = ROOT / "README.md"
+    expected = source.read_bytes()
+    expected_hash = hashlib.sha256(expected).hexdigest()
+    assert writer_lib.peare_writer_create_format_count() == 25
+    assert writer_lib.peare_writer_create_variant_count(b"lzip") == 10
+    variants = []
+    for index in range(10):
+        item = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"lzip", index, C.byref(item)) == 0
+        variants.append(item.id.decode())
+    assert variants == [f"level-{level}" for level in range(10)]
+
+    source_item = _WriterInputFile(str(source).encode(), source.name.encode())
+    winrar = _winrar_executable()
+    gui_archive = None
+    for level, variant in enumerate(variants):
+        archive = tmp_path / f"created-level-{level}.lz"
+        writer = _HANDLE()
+        assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+        try:
+            status = writer_lib.peare_writer_add_files_to(
+                writer, str(archive).encode(), b"lzip", variant.encode(),
+                0, C.byref(source_item), 1)
+            assert status == 0, writer_lib.peare_writer_last_error(writer)
+        finally:
+            writer_lib.peare_writer_destroy(writer)
+        if level == 6:
+            gui_archive = archive
+
+        encoded = archive.read_bytes()
+        assert encoded[:4] == b"LZIP" and encoded[4] == 1
+        exponent = encoded[5] & 0x1f
+        fraction = encoded[5] >> 5
+        dictionary = (1 << exponent) - ((1 << exponent) >> 4) * fraction
+        decoded = lzma.decompress(
+            encoded[6:-20], format=lzma.FORMAT_RAW,
+            filters=[{"id": lzma.FILTER_LZMA1, "dict_size": dictionary,
+                      "lc": 3, "lp": 0, "pb": 2}])
+        checksum, data_size, member_size = struct.unpack("<IQQ", encoded[-20:])
+        assert decoded == expected
+        assert checksum == zlib.crc32(expected)
+        assert data_size == len(expected)
+        assert member_size == len(encoded)
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = opener.normalized_tree()
+            assert opener.container_format() == "LZIP"
+            assert len(rows) == 1 and rows[0]["sha256"] == expected_hash
+
+        if level == 6 and winrar:
+            output_dir = tmp_path / "winrar-lzip"
+            output_dir.mkdir()
+            result = subprocess.run(
+                [winrar, "x", "-ibck", "-y", str(archive),
+                 str(output_dir) + "\\"], capture_output=True,
+                text=True, timeout=60)
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert (output_dir / archive.stem).read_bytes() == expected
+
+    gui_output = tmp_path / "lzip-gui-preview"
+    gui_check = subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "run_gui_preview_tests.py"),
+         "--exe", str(peare_gui_path), "--case", "lzip-writer-level6",
+         str(gui_archive), "created-level-6", "--output-dir", str(gui_output)],
+        capture_output=True, text=True, timeout=120, check=False)
+    assert gui_check.returncode == 0, gui_check.stdout + gui_check.stderr
+
+def test_lzip_writer_concatenates_selected_inputs(writer_lib, peare_lib, tmp_path):
+    sources = [ROOT / "README.md", ROOT / "docs" / "SUPPORTED_FORMATS.md"]
+    expected = [source.read_bytes() for source in sources]
+    inputs = (_WriterInputFile * len(sources))(*[
+        _WriterInputFile(str(source).encode(), source.name.encode())
+        for source in sources])
+    archive = tmp_path / "concatenated.lz"
+    options = _WriterCreateOptions(b"lzip", b"level-6", None)
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            inputs, len(sources))
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    encoded = archive.read_bytes()
+    offset = 0
+    decoded_members = []
+    while offset < len(encoded):
+        assert encoded[offset:offset + 4] == b"LZIP"
+        assert encoded[offset + 4] == 1
+        coded_size = encoded[offset + 5]
+        exponent = coded_size & 0x1f
+        fraction = coded_size >> 5
+        dictionary = (1 << exponent) - ((1 << exponent) >> 4) * fraction
+        decoder = lzma.LZMADecompressor(
+            format=lzma.FORMAT_RAW,
+            filters=[{"id": lzma.FILTER_LZMA1, "dict_size": dictionary,
+                      "lc": 3, "lp": 0, "pb": 2}])
+        member_data = decoder.decompress(encoded[offset + 6:])
+        compressed_size = len(encoded[offset + 6:]) - len(decoder.unused_data)
+        trailer_offset = offset + 6 + compressed_size
+        checksum, data_size, member_size = struct.unpack_from(
+            "<IQQ", encoded, trailer_offset)
+        assert checksum == zlib.crc32(member_data)
+        assert data_size == len(member_data)
+        assert member_size == compressed_size + 26
+        decoded_members.append(member_data)
+        offset = trailer_offset + 20
+    assert decoded_members == expected
+    with peare_lib.open_file(str(archive)) as opener:
+        assert opener.container_format() == "LZIP"
+        rows = opener.normalized_tree()
+        assert len(rows) == 1
+        assert rows[0]["sha256"] == hashlib.sha256(b"".join(expected)).hexdigest()
 
 @pytest.mark.parametrize(("sample_name", "tar_root"), [
     ("docs.tgz", "archive.tar"), ("docs.tbz2", "writer-test-copy.tbz2"),
