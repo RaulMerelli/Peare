@@ -965,7 +965,13 @@ add_library(PeareWriter SHARED
     src/opener/modules/DeflateDecoder.cpp
     src/opener/modules/DeflateDecoder.h
 )
-target_compile_definitions(PeareWriter PRIVATE PEARE_WRITER_BUILD)
+target_compile_definitions(PeareWriter PRIVATE PEARE_WRITER_BUILD ZSTD_DISABLE_ASM)
+if(ANDROID AND CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
+    set_source_files_properties(
+        src/writer/third_party/lzma/Sha256Opt.c
+        PROPERTIES COMPILE_OPTIONS "-march=armv8-a+sha2"
+    )
+endif()
 set_source_files_properties(src/writer/third_party/miniz/miniz.c PROPERTIES
     COMPILE_DEFINITIONS "MINIZ_NO_TIME")
 set_source_files_properties(
