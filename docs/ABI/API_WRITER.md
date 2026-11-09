@@ -55,7 +55,7 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer);
 The create backends are ZIP, GZIP, BZIP2, Unix compress, LZMA-alone, Lzip, XZ,
 Zstandard, TAR, TAR.GZ, TAR.BZ2, TAR.ZST, TAR.Z, TAR.XZ, TAR.LZMA, GNU and BSD ar, Doom IWAD and PWAD,
 all six CPIO variants (`newc`, CRC, `odc`, afio
-large ASCII, binary little-endian, and binary big-endian), standalone FAT, floppy images,
+large ASCII, binary little-endian, and binary big-endian), UUencode, standalone FAT, floppy images,
 raw MBR/GPT disks, VHD, VHDX, and VMDK. Format descriptors and their strings remain valid
 for the process lifetime. Floppy images support the 12 geometries in the Writer
 variant list. Raw disks support MBR and GPT layouts. VHD and VHDX support fixed
@@ -115,6 +115,10 @@ level from 0 through 9. Multiple inputs form a concatenated Lzip stream.
 
 Unix compress creation writes one `.Z` stream for one input file. It supports
 block and non-block modes with code widths from 9 through 16 bits.
+
+UUencode creation writes one file per output. It supports classic and GNU
+Base64 bodies, with plain or Base64-encoded filenames. The batch API rejects
+zero or multiple input files before it creates the output.
 
 The ar Writer creates GNU long-name tables or BSD extended-name records. Ar
 members are flat files, so the Writer does not create directory entries. Symbol

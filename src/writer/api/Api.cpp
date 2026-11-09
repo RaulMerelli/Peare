@@ -242,12 +242,16 @@ struct peare_writer_handle_s {
     bool zstdWrappedTar = false;
     bool unixCompressWrappedTar = false;
     bool unixCompressPayloadWritten = false;
+    bool uuencodeBase64 = false;
+    bool uuencodeEncodedName = false;
+    bool uuencodePayloadWritten = false;
+    bool uuencodeHasData = false;
     bool xzWrappedTar = false;
     bool lzmaWrappedTar = false;
     bool fatTargetSpecified = false;
     size_t fatTargetIndex = 0;
     enum class Mode { None, ZipCreate, ZipUpdate, GzipCreate, Bzip2Create, ZstdCreate, XzCreate, LzmaAloneCreate, LzipCreate, UnixCompressCreate, TarCreate, TarUpdate, CpioCreate,
-                      CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate, TarGzipCreate,
+                      CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate, UuencodeCreate, TarGzipCreate,
                       TarBzip2Create, TarZstdCreate, TarUnixCompressCreate,
                       TarXzCreate, TarLzmaCreate,
                       FatCreate, DiskUpdate } mode = Mode::None;
@@ -4360,6 +4364,73 @@ peare_writer_status writeUnixCompressMember(peare_writer_handle_s* writer,
     return PEARE_WRITER_OK;
 }
 
+peare_writer_status writeUuencodeMember(peare_writer_handle_s* writer,
+                                        const char* sourcePathUtf8,
+                                        const char* entryNameUtf8) {
+    if (writer->uuencodePayloadWritten)
+        return fail(writer, PEARE_WRITER_UNSUPPORTED_OPERATION,
+                    QStringLiteral("UUencode stores one file per output."));
+    if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("A source file and output filename are required."));
+
+    const QString filename = QFileInfo(QString::fromUtf8(entryNameUtf8)).fileName();
+    const QByteArray name = filename.toLocal8Bit();
+    if (filename.isEmpty() || filename == QStringLiteral(".") ||
+        filename == QStringLiteral("..") || QString::fromLocal8Bit(name) != filename ||
+        name.contains('\n') || name.contains('\r'))
+        return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                    QStringLiteral("The UUencode filename is invalid."));
+
+    const QByteArray headerName = writer->uuencodeEncodedName ? name.toBase64() : name;
+    const QByteArray header = (writer->uuencodeBase64
+        ? (writer->uuencodeEncodedName ? QByteArray("begin-base64-encoded 644 ")
+                                       : QByteArray("begin-base64 644 "))
+        : (writer->uuencodeEncodedName ? QByteArray("begin-encoded 644 ")
+                                       : QByteArray("begin 644 "))) + headerName + '\n';
+    if (!writeAll(writer->output.get(), header.constData(), header.size()))
+        return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+
+    QFile input(QString::fromUtf8(sourcePathUtf8));
+    if (!input.open(QIODevice::ReadOnly))
+        return fail(writer, PEARE_WRITER_IO_ERROR, input.errorString());
+    std::array<unsigned char, 57> buffer{};
+    while (true) {
+        const qint64 limit = writer->uuencodeBase64 ? 57 : 45;
+        const qint64 count = input.read(reinterpret_cast<char*>(buffer.data()), limit);
+        if (count < 0)
+            return fail(writer, PEARE_WRITER_IO_ERROR, input.errorString());
+        if (count == 0) break;
+        writer->uuencodeHasData = true;
+
+        QByteArray line;
+        if (writer->uuencodeBase64) {
+            line = QByteArray(reinterpret_cast<const char*>(buffer.data()), int(count)).toBase64();
+        } else {
+            line.reserve(1 + 4 * int((count + 2) / 3) + 1);
+            line.append(char(count + 0x20));
+            for (qint64 i = 0; i < count; i += 3) {
+                const unsigned a = buffer[std::size_t(i)];
+                const unsigned b = i + 1 < count ? buffer[std::size_t(i + 1)] : 0;
+                const unsigned c = i + 2 < count ? buffer[std::size_t(i + 2)] : 0;
+                const unsigned values[] = {a >> 2, ((a << 4) | (b >> 4)) & 0x3f,
+                    ((b << 2) | (c >> 6)) & 0x3f, c & 0x3f};
+                for (int j = 0; j < 4; ++j)
+                    line.append(char((values[j] & 0x3f) + 0x20));
+            }
+            for (int i = 1; i < line.size(); ++i)
+                if (line[i] == ' ') line[i] = '`';
+        }
+        line.append('\n');
+        if (!writeAll(writer->output.get(), line.constData(), line.size()))
+            return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+    }
+    if (input.error() != QFileDevice::NoError)
+        return fail(writer, PEARE_WRITER_IO_ERROR, input.errorString());
+    writer->uuencodePayloadWritten = true;
+    return PEARE_WRITER_OK;
+}
+
 peare_writer_status writeLzmaAloneMember(peare_writer_handle_s* writer,
                                          const char* sourcePathUtf8,
                                          const char* entryNameUtf8) {
@@ -4962,6 +5033,9 @@ peare_writer_status addFilesToImpl(
              std::strcmp(formatIdUtf8, "vmdk") == 0 ||
              std::strcmp(formatIdUtf8, "raw-disk") == 0 ||
              std::strcmp(formatIdUtf8, "floppy") == 0);
+        if (createNew && std::strcmp(formatIdUtf8, "uuencode") == 0 && fileCount != 1)
+            return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                        QStringLiteral("UUencode requires exactly one input file."), false);
         if ((createNew && targetIndex != 0) ||
             (!createNew && ((variantIdUtf8 && *variantIdUtf8) ||
                             (filesystemIdUtf8 && *filesystemIdUtf8))) ||
@@ -5065,7 +5139,8 @@ peare_writer_status peare_writer_get_create_format(size_t index,
         {"tar-unix-compress", "TAR.Z archive", "taz"},
         {"tar-xz", "TAR.XZ archive", "txz"},
         {"tar-lzma", "TAR.LZMA archive", "tar.lzma"},
-        {"lzip", "Lzip compressed file", "lz"}
+        {"lzip", "Lzip compressed file", "lz"},
+        {"uuencode", "UUencoded file", "uue"}
     };
     if (index >= sizeof(formats) / sizeof(formats[0]))
         return PEARE_WRITER_INVALID_ARGUMENT;
@@ -5082,6 +5157,7 @@ size_t peare_writer_create_variant_count(const char* formatIdUtf8) {
     if (std::strcmp(formatIdUtf8, "xz") == 0) return 4;
     if (std::strcmp(formatIdUtf8, "lzma") == 0) return 9;
     if (std::strcmp(formatIdUtf8, "lzip") == 0) return 10;
+    if (std::strcmp(formatIdUtf8, "uuencode") == 0) return 4;
     if (std::strcmp(formatIdUtf8, "unix-compress") == 0) return 16;
     if (std::strcmp(formatIdUtf8, "tar") == 0) return 1;
     if (std::strcmp(formatIdUtf8, "tar-gzip") == 0) return 1;
@@ -5178,6 +5254,12 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
         {"legacy-15", "Non-block mode, 15 bits"},
         {"legacy-16", "Non-block mode, 16 bits"}
     };
+    static const peare_writer_variant uuencodeVariants[] = {
+        {"classic", "Classic UUencode"},
+        {"classic-encoded-name", "Classic UUencode, encoded filename"},
+        {"base64", "GNU Base64 UUencode"},
+        {"base64-encoded-name", "GNU Base64 UUencode, encoded filename"}
+    };
     static const peare_writer_variant tarVariants[] = { {"ustar", "USTAR"} };
     static const peare_writer_variant cpioVariants[] = {
         {"newc", "SVR4 newc"}, {"crc", "SVR4 CRC"},
@@ -5248,6 +5330,10 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
     }
     if (std::strcmp(formatIdUtf8, "lzip") == 0 && index < 10) {
         *outVariant = lzipVariants[index];
+        return PEARE_WRITER_OK;
+    }
+    if (std::strcmp(formatIdUtf8, "uuencode") == 0 && index < 4) {
+        *outVariant = uuencodeVariants[index];
         return PEARE_WRITER_OK;
     }
     if ((std::strcmp(formatIdUtf8, "unix-compress") == 0 ||
@@ -5614,6 +5700,41 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
             writer->active = true;
             writer->updateMode = false;
             writer->mode = peare_writer_handle_s::Mode::LzipCreate;
+            return PEARE_WRITER_OK;
+        });
+    }
+    if (std::strcmp(formatIdUtf8, "uuencode") == 0) {
+        if (!variant || std::strcmp(variant, "classic") == 0 ||
+            std::strcmp(variant, "classic-encoded-name") == 0) {
+            writer->uuencodeBase64 = false;
+        } else if (std::strcmp(variant, "base64") == 0 ||
+                   std::strcmp(variant, "base64-encoded-name") == 0) {
+            writer->uuencodeBase64 = true;
+        } else {
+            return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                        QStringLiteral("The requested UUencode variant is invalid."), false);
+        }
+        writer->uuencodeEncodedName = variant &&
+            (std::strcmp(variant, "classic-encoded-name") == 0 ||
+             std::strcmp(variant, "base64-encoded-name") == 0);
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (writer->active)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("A writer operation is already active."), false);
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            writer->output.reset(new (std::nothrow) QSaveFile(QString::fromUtf8(outputPathUtf8)));
+            if (!writer->output || !writer->output->open(QIODevice::WriteOnly)) {
+                const QString error = writer->output ? writer->output->errorString()
+                    : QStringLiteral("Could not allocate the UUencode output.");
+                writer->output.reset();
+                return fail(writer, PEARE_WRITER_IO_ERROR, error, false);
+            }
+            writer->uuencodePayloadWritten = false;
+            writer->uuencodeHasData = false;
+            writer->active = true;
+            writer->updateMode = false;
+            writer->mode = peare_writer_handle_s::Mode::UuencodeCreate;
             return PEARE_WRITER_OK;
         });
     }
@@ -6624,6 +6745,10 @@ peare_writer_status peare_writer_add_file(peare_writer_handle writer,
         return cBoundary(writer, [&] {
             return writeLzipMember(writer, sourcePathUtf8, entryNameUtf8);
         });
+    if (writer->mode == peare_writer_handle_s::Mode::UuencodeCreate)
+        return cBoundary(writer, [&] {
+            return writeUuencodeMember(writer, sourcePathUtf8, entryNameUtf8);
+        });
     if (writer->mode == peare_writer_handle_s::Mode::UnixCompressCreate)
         return cBoundary(writer, [&] {
             return writeUnixCompressMember(writer, sourcePathUtf8, entryNameUtf8);
@@ -7432,6 +7557,26 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
         writer->mode == peare_writer_handle_s::Mode::UnixCompressCreate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             if (!writer->output->commit())
+                return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+            writer->output.reset();
+            writer->active = false;
+            writer->mode = peare_writer_handle_s::Mode::None;
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            return PEARE_WRITER_OK;
+        });
+    if (writer->mode == peare_writer_handle_s::Mode::UuencodeCreate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (!writer->uuencodePayloadWritten)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("UUencode output needs one input file."));
+            const char* ending = writer->uuencodeBase64 ? "====\n" : "end\n";
+            if (!writer->uuencodeBase64 && !writer->uuencodeHasData) {
+                if (!writeAll(writer->output.get(), "`\n", 2))
+                    return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+            }
+            if (!writeAll(writer->output.get(), ending, qint64(std::strlen(ending))) ||
+                !writer->output->commit())
                 return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
             writer->output.reset();
             writer->active = false;

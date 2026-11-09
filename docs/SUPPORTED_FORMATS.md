@@ -161,7 +161,7 @@ package-specific limits on ZIP-based files.
 
 | Format | Description | Read | Write |
 |---|---|---:|---:|
-| UUencode | Classic and GNU Base64 single-file encoding | Yes | No |
+| UUencode | Classic and GNU Base64 single-file encoding | Yes | Yes |
 
 ### Binaries
 

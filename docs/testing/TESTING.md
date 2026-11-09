@@ -38,6 +38,7 @@ sample evidence.
 | `tests/test_android_apk_abi.py` | Checks APK entries, v2/v3/v3.1 signer metadata, and Android binary XML previews through the ABI and GUI. It does not verify APK signatures. Set `PEARE_ANDROID_SAMPLE` and `PEARE_ANDROID_V31_SAMPLE` to the local APK samples. |
 | `tests/test_wim_swm_abi.py` | Opens both parts of a split WIM set and checks every payload hash through the Opener ABI. `tests/formats/wim/gui-preview-cases.json` checks the same parts in the GUI. |
 | `tests/test_uue_samples_abi.py` | Compares upstream libarchive classic UUencode samples with their `.Z` payloads and checks the RFC 6873 Base64 envelope through the Opener ABI. |
+| `tests/test_writer.py::test_uuencode_writer_roundtrip_all_headers` | Checks all four UUencode headers with Python, the Opener ABI, and an offscreen GUI preview. |
 | `tests/test_chm_samples_abi.py` | Compares CHM members with independent 7-Zip extractions through the Opener ABI. Set `PEARE_CHM_ITSF2_SAMPLE` and `PEARE_CHM_ITSF2_ORACLE` to enable the optional ITSF v2 sample case. |
 | `tests/test_lzip_samples_abi.py` | Opens GNU Lzip test samples through the Opener ABI and compares the decoded payload with the upstream source file. |
 | `tests/test_szdd_variant_b_abi.py` | Opens the local Windows 3.1 build 026 SZDD mode B corpus through the Opener ABI and checks declared sizes and selected DOS signatures. Set `PEARE_SZDD_B_SAMPLE_ROOT` to the extracted sample directory. |

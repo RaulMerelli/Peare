@@ -1,5 +1,9 @@
 import ctypes as C
 
+import base64
+
+import binascii
+
 import hashlib
 
 import bz2
@@ -5413,6 +5417,95 @@ def test_lzip_writer_concatenates_selected_inputs(writer_lib, peare_lib, tmp_pat
         rows = opener.normalized_tree()
         assert len(rows) == 1
         assert rows[0]["sha256"] == hashlib.sha256(b"".join(expected)).hexdigest()
+
+@pytest.mark.parametrize("variant", [
+    "classic", "classic-encoded-name", "base64", "base64-encoded-name"])
+def test_uuencode_writer_roundtrip_all_headers(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, variant):
+    assert writer_lib.peare_writer_create_format_count() == 25
+    formats = (_WriterFormat * 25)()
+    assert all(writer_lib.peare_writer_get_create_format(
+        index, C.byref(formats[index])) == 0 for index in range(len(formats)))
+    assert formats[-1].id == b"uuencode"
+    assert writer_lib.peare_writer_create_variant_count(b"uuencode") == 4
+    source = ROOT / "README.md"
+    payload = source.read_bytes()
+    expected_hash = hashlib.sha256(payload).hexdigest()
+    entry_name = "Peare UU sample.txt"
+    archive = tmp_path / f"created-{variant}.uue"
+    source_item = _WriterInputFile(str(source).encode(), entry_name.encode())
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to(
+            writer, str(archive).encode(), b"uuencode", variant.encode(),
+            0, C.byref(source_item), 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    lines = archive.read_bytes().splitlines()
+    assert lines[0].startswith(b"begin")
+    if variant.startswith("base64"):
+        assert lines[-1] == b"===="
+        decoded = base64.b64decode(b"".join(lines[1:-1]), validate=True)
+    else:
+        assert lines[-1] == b"end"
+        decoded = b"".join(binascii.a2b_uu(line) for line in lines[1:-1])
+    assert decoded == payload
+    if variant.endswith("encoded-name"):
+        assert base64.b64decode(lines[0].split()[-1]) == entry_name.encode()
+
+    with peare_lib.open_file(str(archive)) as opener:
+        assert opener.container_format() == "UUE"
+        rows = opener.normalized_tree()
+        assert len(rows) == 1 and rows[0]["sha256"] == expected_hash
+        tree_path = rows[0]["path"]
+
+    if variant == "base64":
+        gui_output = tmp_path / "uue-gui-preview"
+        gui_check = subprocess.run(
+            [sys.executable, str(ROOT / "tests" / "run_gui_preview_tests.py"),
+             "--exe", str(peare_gui_path), "--case", "uue-writer-base64",
+             str(archive), tree_path, "--output-dir", str(gui_output)],
+            capture_output=True, text=True, timeout=120, check=False)
+        assert gui_check.returncode == 0, gui_check.stdout + gui_check.stderr
+
+
+@pytest.mark.parametrize("variant", ["classic", "base64"])
+def test_uuencode_writer_empty_input_and_single_file_contract(
+        writer_lib, peare_lib, tmp_path, variant):
+    empty_archive = tmp_path / f"empty-{variant}.uue"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"uuencode", variant.encode(), str(empty_archive).encode()) == 0
+        assert writer_lib.peare_writer_create_empty_file(writer, b"empty.bin") == 0
+        assert writer_lib.peare_writer_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    assert empty_archive.read_bytes().splitlines()[-1] == (
+        b"====" if variant == "base64" else b"end")
+    with peare_lib.open_file(str(empty_archive)) as opener:
+        rows = opener.normalized_tree()
+        assert len(rows) == 1 and rows[0]["size"] == 0
+
+    source = ROOT / "README.md"
+    inputs = (_WriterInputFile * 2)(
+        _WriterInputFile(str(source).encode(), b"one.txt"),
+        _WriterInputFile(str(source).encode(), b"two.txt"))
+    rejected = tmp_path / "multiple.uue"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to(
+            writer, str(rejected).encode(), b"uuencode", b"classic",
+            0, inputs, 2)
+        assert status != 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    assert not rejected.exists()
 
 @pytest.mark.parametrize(("sample_name", "tar_root"), [
     ("docs.tgz", "archive.tar"), ("docs.tbz2", "writer-test-copy.tbz2"),
