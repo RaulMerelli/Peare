@@ -52,19 +52,22 @@ peare_writer_status peare_writer_add_file(
 peare_writer_status peare_writer_finish(peare_writer_handle writer);
 ```
 
-The create backends are ZIP, GZIP, BZIP2, Unix compress, LZMA-alone, Lzip, XZ,
-Zstandard, TAR, TAR.GZ, TAR.BZ2, TAR.ZST, TAR.Z, TAR.XZ, TAR.LZMA, GNU and BSD ar, Doom IWAD and PWAD,
-all six CPIO variants (`newc`, CRC, `odc`, afio
-large ASCII, binary little-endian, and binary big-endian), UUencode, Intel HEX,
-standalone FAT, floppy images,
-raw MBR/GPT disks, VHD, VHDX, VMDK, Debian packages, and RPM packages. Format descriptors and their strings remain valid
-for the process lifetime. Floppy images support the 12 geometries in the Writer
-variant list. Raw disks support MBR and GPT layouts. VHD and VHDX support fixed
-and dynamic variants. VMDK supports monolithic sparse and split sparse creation.
-Split creation uses one external extent with a 2 GiB maximum. VHD, VHDX, VMDK,
-and raw MBR/GPT creation support FAT12, FAT16, FAT32, exFAT, and NTFS. NTFS
-volumes are formatted by the bundled NTFS-3G formatter on the staged image and
-are checked before Peare publishes the new disk. Floppy images use FAT12.
+The create backends include ZIP, GZIP, BZIP2, XZ, Zstandard, TAR, CPIO, ar,
+WAD, UUencode, Intel HEX, standalone FAT, floppy images, disk images, Debian
+packages, RPM packages, and XAR archives. They also include Unix compress,
+LZMA-alone, Lzip, TAR.GZ, TAR.BZ2, TAR.ZST, TAR.Z, TAR.XZ, and TAR.LZMA.
+The CPIO backend supports `newc`, CRC, `odc`, afio large ASCII, and binary
+little- and big-endian variants. The ar backend supports GNU and BSD variants.
+The WAD backend supports IWAD and PWAD variants.
+
+Format descriptors and their strings remain valid for the process lifetime.
+Floppy images support the 12 geometries in the Writer variant list. Raw disks
+support MBR and GPT layouts. VHD and VHDX support fixed and dynamic variants.
+VMDK supports monolithic sparse and split sparse creation. Split creation uses
+one external extent with a 2 GiB maximum. VHD, VHDX, VMDK, and raw MBR/GPT
+creation support FAT12, FAT16, FAT32, exFAT, and NTFS. NTFS volumes use the
+bundled NTFS-3G formatter on the staged image. Peare checks each volume before
+it publishes the new disk. Floppy images use FAT12.
 
 Debian package creation writes version 2.0 `.deb` files with generated package
 metadata and one control TAR plus one data TAR. The ABI offers 24 combinations
@@ -78,6 +81,10 @@ Writer records package metadata, file paths, sizes, modes, and MD5 digests. Its
 RPM MD5 tag covers the main header and compressed payload. It detects data
 changes but does not authenticate the package source. RPM creation does not
 modify an existing package.
+
+XAR creation supports file and directory entries with Store, zlib, or BZIP2
+data. It writes a SHA-1 table-of-contents checksum and SHA-256 member checksums.
+It does not update existing XAR archives or create Apple package signatures.
 
 GZIP creation writes one RFC 1952 member per selected input file. The GZIP
 stream is not an archive with independently editable entries.

@@ -143,7 +143,8 @@ package-specific limits on ZIP-based files.
 | Zstandard (`.zst`) | Standard dictionary-free frames, including concatenated and checksummed frames; Writer levels -5 through 22 | Yes | Yes |
 | Unix ar | GNU and BSD archives with short and extended member names; thin archives are not supported | Yes | Yes |
 | ARJ | Methods 0-4, legacy, GOST40, GOST256, and GOST256L password encryption, and split volumes | Yes | No |
-| XAR | XAR archives and Apple flat installer packages | Yes | No |
+| XAR archive | XAR v1 archive creation with stored, zlib, or bzip2 file data | Yes | Yes |
+| Apple flat installer package | XAR-based package layout and package metadata | Yes | No |
 | CPIO | SVR4 `newc` and CRC, POSIX `odc`, afio large ASCII, and old binary little- and big-endian archives | Yes | Yes |
 | Debian package | `.deb` and `.udeb`, version 2.0; raw or gzip/xz/zstd control TAR, plus raw/gzip/xz/zstd/bzip2/lzma data TAR | Yes | Yes |
 | LHA / LZH | LHA and LZH archives | Yes | No |

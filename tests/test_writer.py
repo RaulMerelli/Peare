@@ -4681,7 +4681,7 @@ def test_tar_bzip2_create_and_cud_roundtrip_with_7zip(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 28
+    assert writer_lib.peare_writer_create_format_count() == 29
     assert writer_lib.peare_writer_create_variant_count(b"tar-bzip2") == 9
     for level in range(1, 10):
         archive = tmp_path / f"created-level-{level}.tbz2"
@@ -4818,7 +4818,7 @@ def test_tar_zstd_create_and_cud_roundtrip_with_independent_decoder(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 28
+    assert writer_lib.peare_writer_create_format_count() == 29
     assert writer_lib.peare_writer_create_variant_count(b"tar-zstd") == 27
     variants = [f"fast-{level}" for level in range(5, 0, -1)] + [
         f"level-{level}" for level in range(1, 23)]
@@ -5057,7 +5057,7 @@ def test_tar_xz_create_all_checks_and_7zip(writer_lib, peare_lib, tmp_path):
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     checks = ("none", "crc32", "crc64", "sha256")
-    assert writer_lib.peare_writer_create_format_count() == 28
+    assert writer_lib.peare_writer_create_format_count() == 29
     assert writer_lib.peare_writer_create_variant_count(b"tar-xz") == len(checks)
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for check in checks:
@@ -5188,7 +5188,7 @@ def test_tar_lzma_create_all_levels_and_7zip(writer_lib, peare_lib, tmp_path):
         pytest.skip("7-Zip is required for independent TAR.LZMA validation")
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    assert writer_lib.peare_writer_create_format_count() == 28
+    assert writer_lib.peare_writer_create_format_count() == 29
     assert writer_lib.peare_writer_create_variant_count(b"tar-lzma") == 9
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for level in range(1, 10):
@@ -5305,7 +5305,7 @@ def test_lzip_writer_all_levels_and_winrar(
     source = ROOT / "README.md"
     expected = source.read_bytes()
     expected_hash = hashlib.sha256(expected).hexdigest()
-    assert writer_lib.peare_writer_create_format_count() == 28
+    assert writer_lib.peare_writer_create_format_count() == 29
     assert writer_lib.peare_writer_create_variant_count(b"lzip") == 10
     variants = []
     for index in range(10):
@@ -5422,7 +5422,7 @@ def test_lzip_writer_concatenates_selected_inputs(writer_lib, peare_lib, tmp_pat
     "classic", "classic-encoded-name", "base64", "base64-encoded-name"])
 def test_uuencode_writer_roundtrip_all_headers(
         writer_lib, peare_lib, peare_gui_path, tmp_path, variant):
-    assert writer_lib.peare_writer_create_format_count() == 28
+    assert writer_lib.peare_writer_create_format_count() == 29
     formats = (_WriterFormat * 28)()
     assert all(writer_lib.peare_writer_get_create_format(
         index, C.byref(formats[index])) == 0 for index in range(len(formats)))
