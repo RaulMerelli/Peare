@@ -828,6 +828,7 @@ add_library(PeareWriter SHARED
     src/writer/third_party/miniz/LICENSE
     src/writer/third_party/miniz/miniz_common.h
     src/writer/third_party/miniz/miniz.c
+    src/writer/third_party/miniz/miniz_tinfl.c
     src/writer/third_party/miniz/miniz.h
     src/writer/third_party/miniz/miniz_export.h
     src/writer/third_party/miniz/miniz_tdef.c
@@ -958,7 +959,7 @@ add_library(PeareWriter SHARED
 )
 target_compile_definitions(PeareWriter PRIVATE PEARE_WRITER_BUILD)
 set_source_files_properties(src/writer/third_party/miniz/miniz.c PROPERTIES
-    COMPILE_DEFINITIONS "MINIZ_NO_INFLATE_APIS;MINIZ_NO_TIME")
+    COMPILE_DEFINITIONS "MINIZ_NO_TIME")
 set_source_files_properties(
     src/writer/third_party/lzma/LzFind.c
     src/writer/third_party/lzma/LzmaEnc.c

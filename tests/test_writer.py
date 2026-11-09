@@ -4515,6 +4515,208 @@ def test_tar_cud_with_archive_created_by_external_tool(
     finally:
         opener.close()
 
+def test_tar_gzip_create_and_cud_roundtrip_with_7zip(
+        writer_lib, peare_lib, tmp_path):
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required for independent TAR.GZ validation")
+
+    payload = tmp_path / "payload.txt"
+    payload.write_bytes((ROOT / "README.md").read_bytes())
+    ordinary_gzip = tmp_path / "ordinary.gz"
+    compressed = subprocess.run(
+        [seven_zip, "a", "-tgzip", str(ordinary_gzip), str(payload)],
+        capture_output=True, text=True, timeout=60)
+    assert compressed.returncode == 0, compressed.stdout + compressed.stderr
+    assert writer_lib.peare_writer_can_add_files(str(ordinary_gzip).encode()) == 0
+
+    archive = tmp_path / "created.tgz"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"tar-gzip", b"ustar", str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_create_directory(writer, b"docs") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(payload).encode(), b"docs/payload.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            writer, b"empty.txt") == 0
+        assert writer_lib.peare_writer_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with tarfile.open(archive, "r:gz") as created:
+        assert set(created.getnames()) == {"docs", "docs/payload.txt", "empty.txt"}
+        assert created.extractfile("docs/payload.txt").read() == payload.read_bytes()
+        assert created.extractfile("empty.txt").read() == b""
+    checked = subprocess.run(
+        [seven_zip, "t", str(archive)], capture_output=True, text=True, timeout=60)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    opened = peare_lib.open_file(str(archive))
+    assert opened is not None
+    try:
+        rows = {row["path"]: row["sha256"] for row in opened.normalized_tree()}
+        assert rows["archive.tar/docs/payload.txt"] == hashlib.sha256(
+            payload.read_bytes()).hexdigest()
+    finally:
+        opened.close()
+
+    batch_archive = tmp_path / "batch.tgz"
+    batch_input = _WriterInputFile(str(payload).encode(), b"batch.txt")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_to(
+            writer, str(batch_archive).encode(), b"tar-gzip", b"ustar", 0,
+            C.byref(batch_input), 1) == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    with tarfile.open(batch_archive, "r:gz") as batch:
+        assert batch.getnames() == ["batch.txt"]
+        assert batch.extractfile("batch.txt").read() == payload.read_bytes()
+    checked = subprocess.run(
+        [seven_zip, "t", str(batch_archive)], capture_output=True,
+        text=True, timeout=60)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+
+    sample = ROOT / "tests" / "formats" / "tar-compressed" / "fixtures" / "docs.tgz"
+    legacy_archive = tmp_path / "legacy-add.tgz"
+    shutil.copyfile(sample, legacy_archive)
+    legacy_payload = tmp_path / "legacy-payload.txt"
+    legacy_payload.write_bytes(b"legacy TAR.GZ add path")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_begin(
+            writer, str(legacy_archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_add_file(
+            writer, str(legacy_payload).encode(), b"legacy-added.txt") == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    with tarfile.open(legacy_archive, "r:gz") as legacy:
+        assert legacy.extractfile("legacy-added.txt").read() == legacy_payload.read_bytes()
+    checked = subprocess.run(
+        [seven_zip, "t", str(legacy_archive)], capture_output=True,
+        text=True, timeout=60)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+
+    updated_archive = tmp_path / "updated.tgz"
+    sample_hash = _sha256_file(sample)
+    shutil.copyfile(sample, updated_archive)
+    assert writer_lib.peare_writer_can_add_files(str(updated_archive).encode()) == 1
+    with tarfile.open(sample, "r:gz") as original:
+        original_rows = {member.name for member in original.getmembers()}
+    replacement = ROOT / "AGENTS.md"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(
+            writer, str(updated_archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"README.md") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"README.md", b"RENAMED.md") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(payload).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"docs/TESTING.md", 0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with tarfile.open(updated_archive, "r:gz") as updated:
+        rows = {member.name: member for member in updated.getmembers()}
+        assert set(rows) == (original_rows - {"README.md", "docs/TESTING.md"}) | {
+            "RENAMED.md", "added.txt"}
+        assert updated.extractfile(rows["RENAMED.md"]).read() == replacement.read_bytes()
+        assert updated.extractfile(rows["added.txt"]).read() == payload.read_bytes()
+    checked = subprocess.run(
+        [seven_zip, "t", str(updated_archive)], capture_output=True,
+        text=True, timeout=60)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert _sha256_file(sample) == sample_hash
+    opened = peare_lib.open_file(str(updated_archive))
+    assert opened is not None
+    try:
+        rows = {row["path"]: row["sha256"] for row in opened.normalized_tree()}
+        assert rows["archive.tar/RENAMED.md"] == hashlib.sha256(
+            replacement.read_bytes()).hexdigest()
+        assert rows["archive.tar/added.txt"] == hashlib.sha256(
+            payload.read_bytes()).hexdigest()
+        assert "archive.tar/docs/TESTING.md" not in rows
+    finally:
+        opened.close()
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_tar_gzip_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
+                                tmp_path, view):
+    sample = ROOT / "tests" / "formats" / "tar-compressed" / "fixtures" / "docs.tgz"
+    sources = [ROOT / "README.md", ROOT / "AGENTS.md"]
+    scenario = {
+        "view": view,
+        "target_index": 0,
+        "operations": [
+            {"type": "create_directory", "name": "PeareUiCud"},
+            {"type": "add_files", "view_path": "archive.tar",
+             "destination": "PeareUiCud",
+             "sources": [str(source) for source in sources],
+             "expect_present": "archive.tar/PeareUiCud/README.md"},
+            {"type": "replace",
+             "path": "archive.tar/PeareUiCud/README.md",
+             "view_path": "archive.tar/PeareUiCud",
+             "source": str(ROOT / "docs" / "SUPPORTED_FORMATS.md"),
+             "expect_present": "archive.tar/PeareUiCud/README.md"},
+            {"type": "rename",
+             "path": "archive.tar/PeareUiCud/README.md",
+             "view_path": "archive.tar/PeareUiCud", "name": "renamed.txt",
+             "expect_present": "archive.tar/PeareUiCud/renamed.txt",
+             "expect_absent": "archive.tar/PeareUiCud/README.md"},
+            {"type": "create_file", "parent": "archive.tar/PeareUiCud",
+             "view_path": "archive.tar/PeareUiCud", "name": "delete.txt",
+             "expect_present": "archive.tar/PeareUiCud/delete.txt"},
+            {"type": "delete", "path": "archive.tar/PeareUiCud/delete.txt",
+             "view_path": "archive.tar/PeareUiCud",
+             "expect_absent": "archive.tar/PeareUiCud/delete.txt"},
+        ],
+    }
+    scenario_path = tmp_path / f"tar-gzip-gui-{view}.json"
+    scenario_path.write_text(json.dumps(scenario), encoding="utf-8")
+    output_dir = tmp_path / f"tar-gzip-gui-{view}"
+    runner = ROOT / "tests" / "run_gui_writer_tests.py"
+    result = subprocess.run(
+        [sys.executable, str(runner), "--exe", str(peare_gui_path),
+         "--image", str(sample), "--scenario", str(scenario_path),
+         "--output-dir", str(output_dir)],
+        capture_output=True, text=True, timeout=240)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    assert all(operation["passed"] for operation in report["operations"])
+    image = report["image"]
+    opened = peare_lib.open_file(image)
+    assert opened is not None
+    try:
+        rows = {row["path"]: row["sha256"] for row in opened.normalized_tree()}
+        for source in sources:
+            name = source.name
+            if name == "README.md":
+                assert rows["archive.tar/PeareUiCud/renamed.txt"] == hashlib.sha256(
+                    (ROOT / "docs" / "SUPPORTED_FORMATS.md").read_bytes()).hexdigest()
+            else:
+                assert rows[f"archive.tar/PeareUiCud/{name}"] == hashlib.sha256(
+                    source.read_bytes()).hexdigest()
+        assert "archive.tar/PeareUiCud/delete.txt" not in rows
+    finally:
+        opened.close()
+
 def _create_gnu_tar_v7_sample(tar_tool, archive, source):
     cygpath = Path(tar_tool).with_name("cygpath.exe")
     assert cygpath.is_file()

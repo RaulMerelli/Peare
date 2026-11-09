@@ -186,6 +186,9 @@ struct peare_writer_handle_s {
     std::unique_ptr<QSaveFile> output;
     std::unique_ptr<QTemporaryFile> zipStage;
     std::unique_ptr<QTemporaryFile> tarStage;
+    std::unique_ptr<QTemporaryFile> tarGzipStage;
+    std::unique_ptr<QTemporaryFile> tarOutputStage;
+    std::unique_ptr<QTemporaryFile> tarGzipInput;
     std::unique_ptr<QTemporaryFile> cpioStage;
     std::unique_ptr<QTemporaryFile> arStage;
     std::unique_ptr<QTemporaryFile> wadStage;
@@ -216,10 +219,11 @@ struct peare_writer_handle_s {
     bool active = false;
     bool updateMode = false;
     bool archiveDirty = false;
+    bool gzipWrappedTar = false;
     bool fatTargetSpecified = false;
     size_t fatTargetIndex = 0;
     enum class Mode { None, ZipCreate, ZipUpdate, GzipCreate, Bzip2Create, ZstdCreate, XzCreate, LzmaAloneCreate, UnixCompressCreate, TarCreate, TarUpdate, CpioCreate,
-                      CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate,
+                      CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate, TarGzipCreate,
                       FatCreate, DiskUpdate } mode = Mode::None;
 };
 
@@ -242,6 +246,9 @@ peare_writer_status fail(peare_writer_handle_s* writer, peare_writer_status stat
             }
             writer->zipStage.reset();
             writer->tarStage.reset();
+            writer->tarGzipStage.reset();
+            writer->tarOutputStage.reset();
+            writer->tarGzipInput.reset();
             writer->cpioStage.reset();
             writer->arStage.reset();
             writer->wadStage.reset();
@@ -263,6 +270,7 @@ peare_writer_status fail(peare_writer_handle_s* writer, peare_writer_status stat
             writer->mode = peare_writer_handle_s::Mode::None;
             writer->updateMode = false;
             writer->archiveDirty = false;
+            writer->gzipWrappedTar = false;
             writer->tarContentEnd = 0;
             writer->updatePath.clear();
         }
@@ -273,6 +281,9 @@ peare_writer_status fail(peare_writer_handle_s* writer, peare_writer_status stat
 peare_writer_status finishNoOpArchiveUpdate(peare_writer_handle_s* writer) {
     writer->zipStage.reset();
     writer->tarStage.reset();
+    writer->tarGzipStage.reset();
+    writer->tarOutputStage.reset();
+    writer->tarGzipInput.reset();
     writer->cpioStage.reset();
     writer->arStage.reset();
     writer->wadStage.reset();
@@ -289,6 +300,7 @@ peare_writer_status finishNoOpArchiveUpdate(peare_writer_handle_s* writer) {
     writer->active = false;
     writer->updateMode = false;
     writer->archiveDirty = false;
+    writer->gzipWrappedTar = false;
     writer->mode = peare_writer_handle_s::Mode::None;
     writer->tarContentEnd = 0;
     writer->updatePath.clear();
@@ -433,6 +445,203 @@ peare_writer_status loadExistingTar(peare_writer_handle_s* writer, QFile* input)
                     QStringLiteral("The file is not a supported TAR archive."), false);
     writer->names = std::move(names);
     writer->tarContentEnd = contentEnd;
+    return PEARE_WRITER_OK;
+}
+
+bool isTarGzipCandidate(QFile* input) {
+    if (!input || !input->seek(0)) return false;
+    const QString name = QFileInfo(input->fileName()).fileName().toLower();
+    if (name.endsWith(QStringLiteral(".tgz")) ||
+        name.endsWith(QStringLiteral(".tar.gz")) ||
+        name.endsWith(QStringLiteral(".tar.gzip"))) {
+        input->seek(0);
+        return true;
+    }
+
+    char fixed[10] = {};
+    if (input->read(fixed, sizeof(fixed)) != qint64(sizeof(fixed)) ||
+        quint8(fixed[0]) != 0x1f || quint8(fixed[1]) != 0x8b ||
+        quint8(fixed[2]) != 8 || (quint8(fixed[3]) & 0xe0) != 0) {
+        input->seek(0);
+        return false;
+    }
+    const quint8 flags = quint8(fixed[3]);
+    if (flags & 4) {
+        char lengthBytes[2] = {};
+        if (input->read(lengthBytes, 2) != 2) {
+            input->seek(0);
+            return false;
+        }
+        const quint16 length = quint16(quint8(lengthBytes[0])) |
+            (quint16(quint8(lengthBytes[1])) << 8);
+        if (!input->seek(input->pos() + length)) {
+            input->seek(0);
+            return false;
+        }
+    }
+    if (!(flags & 8)) {
+        input->seek(0);
+        return false;
+    }
+    QByteArray memberName;
+    while (memberName.size() < 1024 * 1024) {
+        char byte = 0;
+        if (input->read(&byte, 1) != 1) {
+            input->seek(0);
+            return false;
+        }
+        if (!byte) {
+            input->seek(0);
+            return memberName.toLower().endsWith(QByteArrayLiteral(".tar"));
+        }
+        memberName.append(byte);
+    }
+    input->seek(0);
+    return false;
+}
+
+bool gunzipToFile(QFile* input, QTemporaryFile* output) {
+    if (!input || !output || !input->seek(0) || !output->seek(0) ||
+        !output->resize(0)) return false;
+    bool sawMember = false;
+    for (;;) {
+        quint32 headerCrc = 0xffffffffu;
+        quint64 headerSize = 0;
+        auto readHeaderByte = [&](quint8* value) {
+            char byte = 0;
+            if (input->read(&byte, 1) != 1) return false;
+            *value = quint8(byte);
+            headerCrc = crc32Update(headerCrc, &byte, 1);
+            ++headerSize;
+            return true;
+        };
+        quint8 fixed[10] = {};
+        char firstByte = 0;
+        const qint64 firstCount = input->read(&firstByte, 1);
+        if (firstCount < 0) return false;
+        if (!firstCount) return sawMember && input->atEnd() && output->flush();
+        fixed[0] = quint8(firstByte);
+        headerCrc = crc32Update(headerCrc, &firstByte, 1);
+        ++headerSize;
+        for (size_t i = 1; i < sizeof(fixed); ++i)
+            if (!readHeaderByte(&fixed[i])) return false;
+        if (fixed[0] != 0x1f || fixed[1] != 0x8b || fixed[2] != 8 ||
+            (fixed[3] & 0xe0) != 0) return false;
+        const quint8 flags = fixed[3];
+        if (flags & 4) {
+            quint8 low = 0;
+            quint8 high = 0;
+            if (!readHeaderByte(&low) || !readHeaderByte(&high)) return false;
+            const quint16 length = quint16(low) | (quint16(high) << 8);
+            for (quint32 i = 0; i < length; ++i) {
+                quint8 ignored = 0;
+                if (!readHeaderByte(&ignored)) return false;
+            }
+        }
+        for (quint8 field = 0; field < 2; ++field) {
+            const quint8 mask = field == 0 ? 8 : 16;
+            if (!(flags & mask)) continue;
+            bool terminated = false;
+            while (headerSize < 1024 * 1024) {
+                quint8 byte = 0;
+                if (!readHeaderByte(&byte)) return false;
+                if (!byte) {
+                    terminated = true;
+                    break;
+                }
+            }
+            if (!terminated) return false;
+        }
+        if (flags & 2) {
+            char crcBytes[2] = {};
+            if (input->read(crcBytes, 2) != 2) return false;
+            const quint16 expected = quint16(quint8(crcBytes[0])) |
+                (quint16(quint8(crcBytes[1])) << 8);
+            if (expected != quint16((headerCrc ^ 0xffffffffu) & 0xffffu)) return false;
+        }
+
+        mz_stream stream = {};
+        if (mz_inflateInit2(&stream, -MZ_DEFAULT_WINDOW_BITS) != MZ_OK) return false;
+        QByteArray inputBuffer(int(kChunkSize), '\0');
+        QByteArray outputBuffer(int(kChunkSize), '\0');
+        quint32 payloadCrc = 0xffffffffu;
+        quint64 payloadSize = 0;
+        bool decoded = false;
+        bool ok = true;
+        for (;;) {
+            if (!stream.avail_in) {
+                const qint64 count = input->read(inputBuffer.data(), inputBuffer.size());
+                if (count <= 0) {
+                    ok = false;
+                    break;
+                }
+                stream.next_in = reinterpret_cast<const unsigned char*>(inputBuffer.constData());
+                stream.avail_in = mz_uint(count);
+            }
+            stream.next_out = reinterpret_cast<unsigned char*>(outputBuffer.data());
+            stream.avail_out = mz_uint(outputBuffer.size());
+            const int status = mz_inflate(&stream, MZ_NO_FLUSH);
+            const qint64 produced = outputBuffer.size() - stream.avail_out;
+            if (produced) {
+                payloadCrc = crc32Update(payloadCrc, outputBuffer.constData(), size_t(produced));
+                payloadSize += quint64(produced);
+                if (!writeAll(output, outputBuffer.constData(), produced)) ok = false;
+            }
+            if (!ok) break;
+            if (status == MZ_STREAM_END) {
+                decoded = true;
+                break;
+            }
+            if (status != MZ_OK) {
+                ok = false;
+                break;
+            }
+        }
+        const qint64 compressedEnd = input->pos() - qint64(stream.avail_in);
+        mz_inflateEnd(&stream);
+        if (!ok || !decoded || compressedEnd < 0 || !input->seek(compressedEnd)) return false;
+        char trailer[8] = {};
+        if (input->read(trailer, sizeof(trailer)) != qint64(sizeof(trailer))) return false;
+        const quint32 expectedCrc = qFromLittleEndian<quint32>(
+            reinterpret_cast<const uchar*>(trailer));
+        const quint32 expectedSize = qFromLittleEndian<quint32>(
+            reinterpret_cast<const uchar*>(trailer + 4));
+        if (expectedCrc != (payloadCrc ^ 0xffffffffu) ||
+            expectedSize != quint32(payloadSize)) return false;
+        sawMember = true;
+        if (input->atEnd()) return output->flush();
+    }
+}
+
+peare_writer_status loadExistingTarOrGzip(peare_writer_handle_s* writer, QFile* input,
+                                          QTemporaryFile* decompressed,
+                                          bool* gzipWrapped) {
+    if (!writer || !input || !decompressed || !gzipWrapped)
+        return PEARE_WRITER_INVALID_ARGUMENT;
+    peare_writer_status status = loadExistingTar(writer, input);
+    if (status == PEARE_WRITER_OK) {
+        *gzipWrapped = false;
+        return status;
+    }
+    writer->tarEntries.clear();
+    writer->names.clear();
+    writer->error.clear();
+    writer->errorUtf8.clear();
+    if (!isTarGzipCandidate(input))
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("The file is not a supported TAR or TAR.GZ archive."),
+                    false);
+    if (!decompressed->open() || !gunzipToFile(input, decompressed))
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("The file is not a supported TAR or TAR.GZ archive."), false);
+    status = loadExistingTar(writer, decompressed);
+    if (status != PEARE_WRITER_OK)
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("The GZIP stream does not contain a supported TAR archive."),
+                    false);
+    *gzipWrapped = true;
+    writer->error.clear();
+    writer->errorUtf8.clear();
     return PEARE_WRITER_OK;
 }
 
@@ -1417,7 +1626,9 @@ peare_writer_status writeTarFile(peare_writer_handle_s* writer,
     header[155] = ' ';
     QIODevice* output = writer->mode == peare_writer_handle_s::Mode::TarUpdate
         ? static_cast<QIODevice*>(writer->tarStage.get())
-        : static_cast<QIODevice*>(writer->output.get());
+        : writer->mode == peare_writer_handle_s::Mode::TarGzipCreate
+            ? static_cast<QIODevice*>(writer->tarGzipStage.get())
+            : static_cast<QIODevice*>(writer->output.get());
     if (!output || !output->isOpen())
         return fail(writer, PEARE_WRITER_IO_ERROR, QStringLiteral("The TAR output is unavailable."));
     const qint64 recordOffset = output->pos();
@@ -1489,7 +1700,9 @@ peare_writer_status writeTarDirectory(peare_writer_handle_s* writer, const char*
     header[155] = ' ';
     QIODevice* output = writer->mode == peare_writer_handle_s::Mode::TarUpdate
         ? static_cast<QIODevice*>(writer->tarStage.get())
-        : static_cast<QIODevice*>(writer->output.get());
+        : writer->mode == peare_writer_handle_s::Mode::TarGzipCreate
+            ? static_cast<QIODevice*>(writer->tarGzipStage.get())
+            : static_cast<QIODevice*>(writer->output.get());
     if (!output) return fail(writer, PEARE_WRITER_IO_ERROR,
                              QStringLiteral("The TAR output is unavailable."));
     TarEntry entry;
@@ -4088,7 +4301,7 @@ peare_writer_status peare_writer_create(peare_writer_handle* outWriter) {
     }
 }
 
-size_t peare_writer_create_format_count(void) { return 17; }
+size_t peare_writer_create_format_count(void) { return 18; }
 
 peare_writer_status peare_writer_get_create_format(size_t index,
                                                     peare_writer_format* outFormat) {
@@ -4110,7 +4323,8 @@ peare_writer_status peare_writer_get_create_format(size_t index,
         {"vhdx", "VHDX virtual disk", "vhdx"},
         {"vmdk", "VMDK virtual disk", "vmdk"},
         {"wad", "Doom WAD archive", "wad"},
-        {"unix-compress", "Unix compress stream", "Z"}
+        {"unix-compress", "Unix compress stream", "Z"},
+        {"tar-gzip", "TAR.GZ archive", "tgz"}
     };
     if (index >= sizeof(formats) / sizeof(formats[0]))
         return PEARE_WRITER_INVALID_ARGUMENT;
@@ -4128,6 +4342,7 @@ size_t peare_writer_create_variant_count(const char* formatIdUtf8) {
     if (std::strcmp(formatIdUtf8, "lzma") == 0) return 9;
     if (std::strcmp(formatIdUtf8, "unix-compress") == 0) return 16;
     if (std::strcmp(formatIdUtf8, "tar") == 0) return 1;
+    if (std::strcmp(formatIdUtf8, "tar-gzip") == 0) return 1;
     if (std::strcmp(formatIdUtf8, "cpio") == 0) return 6;
     if (std::strcmp(formatIdUtf8, "ar") == 0) return 2;
     if (std::strcmp(formatIdUtf8, "wad") == 0) return 2;
@@ -4282,6 +4497,10 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
         return PEARE_WRITER_OK;
     }
     if (std::strcmp(formatIdUtf8, "tar") == 0 && index == 0) {
+        *outVariant = tarVariants[0];
+        return PEARE_WRITER_OK;
+    }
+    if (std::strcmp(formatIdUtf8, "tar-gzip") == 0 && index == 0) {
         *outVariant = tarVariants[0];
         return PEARE_WRITER_OK;
     }
@@ -4773,7 +4992,8 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
             return PEARE_WRITER_OK;
         });
     }
-    if (std::strcmp(formatIdUtf8, "tar") != 0)
+    const bool gzipWrappedTar = std::strcmp(formatIdUtf8, "tar-gzip") == 0;
+    if (!gzipWrappedTar && std::strcmp(formatIdUtf8, "tar") != 0)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("The requested archive format is not supported."), false);
     if (variant && std::strcmp(variant, "ustar") != 0)
@@ -4789,7 +5009,16 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
         writer->tarEntries.clear();
         writer->names.clear();
         writer->tarStage.reset();
+        writer->tarGzipStage.reset();
+        writer->gzipWrappedTar = false;
         writer->archiveComment.clear();
+        if (gzipWrappedTar) {
+            writer->tarGzipStage.reset(new (std::nothrow) QTemporaryFile);
+            if (!writer->tarGzipStage || !writer->tarGzipStage->open())
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                    writer->tarGzipStage ? writer->tarGzipStage->errorString()
+                        : QStringLiteral("Could not allocate TAR.GZ staging."), false);
+        }
         writer->output.reset(new (std::nothrow) QSaveFile(QString::fromUtf8(outputPathUtf8)));
         if (!writer->output)
             return fail(writer, PEARE_WRITER_ALLOCATION_FAILED,
@@ -4801,7 +5030,8 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
         }
         writer->active = true;
         writer->updateMode = false;
-        writer->mode = peare_writer_handle_s::Mode::TarCreate;
+        writer->mode = gzipWrappedTar ? peare_writer_handle_s::Mode::TarGzipCreate
+                                     : peare_writer_handle_s::Mode::TarCreate;
         return PEARE_WRITER_OK;
     });
 }
@@ -4837,7 +5067,10 @@ int peare_writer_can_add_files(const char* containerPathUtf8) {
         probe.entries.clear();
         probe.names.clear();
         probe.archiveComment.clear();
-        if (loadExistingTar(&probe, &input) == PEARE_WRITER_OK) return 1;
+        QTemporaryFile tarGzipInput;
+        bool gzipWrappedTar = false;
+        if (loadExistingTarOrGzip(&probe, &input, &tarGzipInput,
+                                  &gzipWrappedTar) == PEARE_WRITER_OK) return 1;
         probe.tarEntries.clear();
         probe.names.clear();
         if (loadExistingCpio(&probe, &input) == PEARE_WRITER_OK) return 1;
@@ -4913,7 +5146,10 @@ peare_writer_status peare_writer_get_update_capabilities(
             probe.entries.clear();
             probe.names.clear();
             probe.archiveComment.clear();
-            if (input.isOpen() && loadExistingTar(&probe, &input) == PEARE_WRITER_OK) {
+            QTemporaryFile tarGzipInput;
+            bool gzipWrappedTar = false;
+            if (input.isOpen() && loadExistingTarOrGzip(
+                    &probe, &input, &tarGzipInput, &gzipWrappedTar) == PEARE_WRITER_OK) {
                 *outCapabilities |= PEARE_WRITER_CAP_CREATE_DIRECTORY |
                                     PEARE_WRITER_CAP_UPDATE_FILE |
                                     PEARE_WRITER_CAP_RENAME_ENTRY |
@@ -5003,24 +5239,36 @@ peare_writer_status peare_writer_add_files_begin(peare_writer_handle writer,
             return beginDiskImageUpdate(writer, QString::fromUtf8(containerPathUtf8),
                                         targetSpecified, targetIndex);
         }
-        QFile input(QString::fromUtf8(containerPathUtf8));
-        if (!input.open(QIODevice::ReadOnly))
-            return fail(writer, PEARE_WRITER_IO_ERROR, input.errorString(), false);
-        peare_writer_status parsed = loadExistingZip(writer, &input);
+        QFile physicalInput(QString::fromUtf8(containerPathUtf8));
+        if (!physicalInput.open(QIODevice::ReadOnly))
+            return fail(writer, PEARE_WRITER_IO_ERROR, physicalInput.errorString(), false);
+        QFile* input = &physicalInput;
+        writer->tarGzipInput.reset();
+        writer->gzipWrappedTar = false;
+        peare_writer_status parsed = loadExistingZip(writer, input);
         auto mode = peare_writer_handle_s::Mode::ZipUpdate;
         if (parsed == PEARE_WRITER_OK) writer->zipMethod = 8;
         if (parsed != PEARE_WRITER_OK) {
             writer->entries.clear();
             writer->names.clear();
             writer->archiveComment.clear();
-            parsed = loadExistingTar(writer, &input);
+            writer->tarGzipInput.reset(new (std::nothrow) QTemporaryFile);
+            if (!writer->tarGzipInput)
+                return fail(writer, PEARE_WRITER_ALLOCATION_FAILED,
+                            QStringLiteral("Could not allocate TAR.GZ input staging."), false);
+            parsed = loadExistingTarOrGzip(writer, input, writer->tarGzipInput.get(),
+                                           &writer->gzipWrappedTar);
             mode = peare_writer_handle_s::Mode::TarUpdate;
+            if (parsed == PEARE_WRITER_OK && writer->gzipWrappedTar)
+                input = writer->tarGzipInput.get();
+            else
+                writer->tarGzipInput.reset();
             if (parsed != PEARE_WRITER_OK) {
                 writer->entries.clear();
                 writer->tarEntries.clear();
                 writer->names.clear();
                 writer->archiveComment.clear();
-                parsed = loadExistingCpio(writer, &input);
+                parsed = loadExistingCpio(writer, input);
                 mode = peare_writer_handle_s::Mode::CpioUpdate;
                 if (parsed != PEARE_WRITER_OK) {
                     writer->entries.clear();
@@ -5028,18 +5276,18 @@ peare_writer_status peare_writer_add_files_begin(peare_writer_handle writer,
                     writer->cpioEntries.clear();
                     writer->names.clear();
                     writer->archiveComment.clear();
-                    parsed = loadExistingAr(writer, &input);
+                    parsed = loadExistingAr(writer, input);
                     mode = peare_writer_handle_s::Mode::ArUpdate;
                     if (parsed != PEARE_WRITER_OK) {
                         writer->arEntries.clear();
                         writer->names.clear();
-                        parsed = loadExistingWad(writer, &input);
+                        parsed = loadExistingWad(writer, input);
                         mode = peare_writer_handle_s::Mode::WadUpdate;
                         if (parsed != PEARE_WRITER_OK) {
                             writer->wadEntries.clear();
                             writer->wadStage.reset();
                             writer->fatTargetSpecified = false;
-                            input.close();
+                            input->close();
                             return beginDiskImageUpdate(writer, QString::fromUtf8(containerPathUtf8),
                                                         false, 0);
                         }
@@ -5118,17 +5366,17 @@ peare_writer_status peare_writer_add_files_begin(peare_writer_handle writer,
         writer->archiveDirty = false;
         writer->mode = mode;
         if (mode == peare_writer_handle_s::Mode::WadUpdate) return PEARE_WRITER_OK;
-        if (!input.seek(0))
-            return fail(writer, PEARE_WRITER_IO_ERROR, input.errorString());
+        if (!input->seek(0))
+            return fail(writer, PEARE_WRITER_IO_ERROR, input->errorString());
         std::vector<char> chunk(kChunkSize);
         qint64 remaining = mode == peare_writer_handle_s::Mode::TarUpdate
-            ? writer->tarContentEnd : input.size();
+            ? writer->tarContentEnd : input->size();
         while (true) {
             const qint64 request = qMin<qint64>(qint64(chunk.size()), remaining);
             if (request == 0) break;
-            const qint64 count = input.read(chunk.data(), request);
+            const qint64 count = input->read(chunk.data(), request);
             if (count < 0)
-                return fail(writer, PEARE_WRITER_IO_ERROR, input.errorString());
+                return fail(writer, PEARE_WRITER_IO_ERROR, input->errorString());
             if (!count)
                 return fail(writer, PEARE_WRITER_IO_ERROR,
                             QStringLiteral("The container ended while it was being copied."));
@@ -5215,6 +5463,7 @@ peare_writer_status peare_writer_add_file(peare_writer_handle writer,
         return fail(writer, PEARE_WRITER_NOT_ACTIVE,
                     QStringLiteral("No container write is active."), false);
     if (writer->mode == peare_writer_handle_s::Mode::TarCreate ||
+        writer->mode == peare_writer_handle_s::Mode::TarGzipCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarUpdate)
         return cBoundary(writer, [&] { return writeTarFile(writer, sourcePathUtf8, entryNameUtf8); });
     if (writer->mode == peare_writer_handle_s::Mode::CpioCreate ||
@@ -5313,6 +5562,7 @@ peare_writer_status peare_writer_create_directory(peare_writer_handle writer,
         writer->mode == peare_writer_handle_s::Mode::ZipUpdate)
         return peare_writer_zip_add_directory(writer, entryNameUtf8);
     if (writer->mode == peare_writer_handle_s::Mode::TarCreate ||
+        writer->mode == peare_writer_handle_s::Mode::TarGzipCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarUpdate)
         return cBoundary(writer, [&] { return writeTarDirectory(writer, entryNameUtf8); });
     if (writer->mode == peare_writer_handle_s::Mode::CpioCreate ||
@@ -6061,6 +6311,7 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
             return PEARE_WRITER_OK;
         });
     if (writer->mode == peare_writer_handle_s::Mode::TarCreate ||
+        writer->mode == peare_writer_handle_s::Mode::TarGzipCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             if (writer->mode == peare_writer_handle_s::Mode::TarUpdate) {
@@ -6071,9 +6322,27 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
                     return fail(writer, PEARE_WRITER_IO_ERROR,
                                 writer->output ? writer->output->errorString()
                                                : QStringLiteral("Could not allocate TAR output."));
+                if (writer->gzipWrappedTar) {
+                    writer->tarOutputStage.reset(new (std::nothrow) QTemporaryFile);
+                    if (!writer->tarOutputStage || !writer->tarOutputStage->open())
+                        return fail(writer, PEARE_WRITER_IO_ERROR,
+                            writer->tarOutputStage ? writer->tarOutputStage->errorString()
+                                : QStringLiteral("Could not allocate TAR.GZ output staging."));
+                }
+            }
+            QIODevice* archiveOutput = writer->mode == peare_writer_handle_s::Mode::TarGzipCreate
+                ? static_cast<QIODevice*>(writer->tarGzipStage.get())
+                : writer->mode == peare_writer_handle_s::Mode::TarUpdate &&
+                    writer->gzipWrappedTar
+                    ? static_cast<QIODevice*>(writer->tarOutputStage.get())
+                    : static_cast<QIODevice*>(writer->output.get());
+            if (!archiveOutput || !archiveOutput->isOpen())
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            QStringLiteral("The TAR output is unavailable."));
+            if (writer->mode == peare_writer_handle_s::Mode::TarUpdate) {
                 std::vector<char> chunk(kChunkSize);
                 for (const TarEntry& entry : writer->tarEntries) {
-                    if (!writeAll(writer->output.get(), entry.header.constData(), entry.header.size()))
+                    if (!writeAll(archiveOutput, entry.header.constData(), entry.header.size()))
                         return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
                     if (!writer->tarStage->seek(entry.offset + qint64(kTarBlockSize)))
                         return fail(writer, PEARE_WRITER_IO_ERROR, writer->tarStage->errorString());
@@ -6084,31 +6353,57 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
                         if (count != request)
                             return fail(writer, PEARE_WRITER_IO_ERROR,
                                         QStringLiteral("The TAR staging data is incomplete."));
-                        if (!writeAll(writer->output.get(), chunk.data(), count))
+                        if (!writeAll(archiveOutput, chunk.data(), count))
                             return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
                         remaining -= quint64(count);
                     }
                     const quint64 padding = (kTarBlockSize - (entry.size % kTarBlockSize)) % kTarBlockSize;
                     if (padding) {
                         const QByteArray zeros(int(padding), '\0');
-                        if (!writeAll(writer->output.get(), zeros.constData(), zeros.size()))
+                        if (!writeAll(archiveOutput, zeros.constData(), zeros.size()))
                             return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
                     }
                 }
             }
             const QByteArray end(int(kTarBlockSize * 2), '\0');
-            if (!writeAll(writer->output.get(), end.constData(), end.size()))
+            if (!writeAll(archiveOutput, end.constData(), end.size()))
                 return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+            if (writer->mode == peare_writer_handle_s::Mode::TarGzipCreate) {
+                const QString tarPath = writer->tarGzipStage->fileName();
+                if (!writer->tarGzipStage->flush())
+                    return fail(writer, PEARE_WRITER_IO_ERROR,
+                                writer->tarGzipStage->errorString());
+                writer->tarGzipStage->close();
+                const QByteArray tarPathUtf8 = tarPath.toUtf8();
+                const peare_writer_status compressed = writeGzipMember(
+                    writer, tarPathUtf8.constData(), "archive.tar");
+                if (compressed != PEARE_WRITER_OK) return compressed;
+            } else if (writer->mode == peare_writer_handle_s::Mode::TarUpdate &&
+                       writer->gzipWrappedTar) {
+                const QString tarPath = writer->tarOutputStage->fileName();
+                if (!writer->tarOutputStage->flush())
+                    return fail(writer, PEARE_WRITER_IO_ERROR,
+                                writer->tarOutputStage->errorString());
+                writer->tarOutputStage->close();
+                const QByteArray tarPathUtf8 = tarPath.toUtf8();
+                const peare_writer_status compressed = writeGzipMember(
+                    writer, tarPathUtf8.constData(), "archive.tar");
+                if (compressed != PEARE_WRITER_OK) return compressed;
+            }
             if (!writer->output->commit())
                 return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
             writer->output.reset();
             writer->tarStage.reset();
+            writer->tarGzipStage.reset();
+            writer->tarOutputStage.reset();
+            writer->tarGzipInput.reset();
             writer->tarEntries.clear();
             writer->entries.clear();
             writer->names.clear();
             writer->active = false;
             writer->updateMode = false;
             writer->archiveDirty = false;
+            writer->gzipWrappedTar = false;
             writer->mode = peare_writer_handle_s::Mode::None;
             writer->tarContentEnd = 0;
             writer->updatePath.clear();

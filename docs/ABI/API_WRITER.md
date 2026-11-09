@@ -52,7 +52,7 @@ peare_writer_status peare_writer_add_file(
 peare_writer_status peare_writer_finish(peare_writer_handle writer);
 ```
 
-The create backends are ZIP, GZIP, BZIP2, Unix compress, LZMA-alone, XZ, Zstandard, TAR, GNU and BSD ar, Doom IWAD and PWAD, all six CPIO variants (`newc`, CRC, `odc`, afio
+The create backends are ZIP, GZIP, BZIP2, Unix compress, LZMA-alone, XZ, Zstandard, TAR, TAR.GZ, GNU and BSD ar, Doom IWAD and PWAD, all six CPIO variants (`newc`, CRC, `odc`, afio
 large ASCII, binary little-endian, and binary big-endian), standalone FAT, floppy images,
 raw MBR/GPT disks, VHD, VHDX, and VMDK. Format descriptors and their strings remain valid
 for the process lifetime. Floppy images support the 12 geometries in the Writer
@@ -65,6 +65,11 @@ are checked before Peare publishes the new disk. Floppy images use FAT12.
 
 GZIP creation writes one RFC 1952 member per selected input file. The GZIP
 stream is not an archive with independently editable entries.
+
+TAR.GZ creation writes a USTAR archive in one RFC 1952 GZIP member. The Writer
+can also update supported TAR.GZ and TGZ files. It validates each input member's
+header, Deflate stream, CRC32, and uncompressed size before it accepts the
+decompressed TAR data. Updates write one GZIP member and USTAR headers.
 
 BZIP2 creation writes one compressed stream per selected input file. The output
 uses concatenated BZIP2 streams and the selected block level from 1 to 9.

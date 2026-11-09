@@ -2788,6 +2788,7 @@ QString MainWindow::writerEntryPath(QTreeWidgetItem* item) const {
     if (!item || folderMode_ || !currentSession_.isOpen() || currentFilePath_.isEmpty())
         return {};
     pearegui::Session* itemSession = sessionOf(item);
+    QVector<QTreeWidgetItem*> transparentOwners;
     if (item->data(0, TypeRole).toString() == QStringLiteral("DISK_PARTITION")) return {};
     while (itemSession && itemSession != &currentSession_) {
         const quintptr sessionId = reinterpret_cast<quintptr>(itemSession);
@@ -2801,17 +2802,23 @@ QString MainWindow::writerEntryPath(QTreeWidgetItem* item) const {
         }
         if (!owner) return {};
         const QString ownerType = owner->data(0, TypeRole).toString();
-        if (ownerType != QStringLiteral("DISK_PARTITION") &&
+        pearegui::Session* parentSession = sessionOf(owner);
+        if (!parentSession || parentSession == itemSession) return {};
+        const bool gzipTarWrapper = ownerType == QStringLiteral("GZIP_FILE") &&
+            itemSession->containerFormat() == PEARE_CONTAINER_TAR &&
+            parentSession->containerFormat() == PEARE_CONTAINER_GZIP;
+        if (gzipTarWrapper) {
+            transparentOwners.push_back(owner);
+        } else if (ownerType != QStringLiteral("DISK_PARTITION") &&
             !ownerType.endsWith(QStringLiteral("_DIR"), Qt::CaseInsensitive)) {
             return {};
         }
-        pearegui::Session* parentSession = sessionOf(owner);
-        if (!parentSession || parentSession == itemSession) return {};
         itemSession = parentSession;
     }
     if (itemSession != &currentSession_) return {};
     QStringList segments;
     for (QTreeWidgetItem* current = item; current; current = current->parent()) {
+        if (transparentOwners.contains(current)) continue;
         if (current->data(0, TypeRole).toString() == QStringLiteral("DISK_PARTITION"))
             break;
         QString name = current->data(0, NameRole).toString();
