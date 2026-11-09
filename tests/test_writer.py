@@ -5176,7 +5176,7 @@ def test_tar_lzma_create_all_levels_and_7zip(writer_lib, peare_lib, tmp_path):
     assert writer_lib.peare_writer_create_variant_count(b"tar-lzma") == 9
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for level in range(1, 10):
-        archive = tmp_path / f"created-level-{level}.tlz"
+        archive = tmp_path / f"created-level-{level}.tar.lzma"
         writer = _HANDLE()
         assert writer_lib.peare_writer_create(C.byref(writer)) == 0
         try:

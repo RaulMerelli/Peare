@@ -126,7 +126,7 @@ package-specific limits on ZIP-based files.
 | TAR.ZST / TZST / TAR.ZSTD | USTAR archive in a Zstandard frame; compression levels -5 to 22 | Yes | Yes |
 | TAR.Z / TAZ | USTAR archive in a Unix compress stream; block and non-block modes, code widths 9-16 bits | Yes | Yes |
 | TAR.XZ / TXZ | USTAR archive in an XZ stream; no check, CRC32, CRC64, or SHA-256 checks | Yes | Yes |
-| TAR.LZMA / TLZ | USTAR archive in an LZMA-alone stream; compression levels 1-9 | Yes | Yes |
+| TAR.LZMA | USTAR archive in an LZMA-alone stream; compression levels 1-9 | Yes | Yes |
 | OS/2 WarpIN (WPI) | Raw revision 3 and 4 packages; stored and bzip2-compressed payloads. Self-extracting EXE packages are not included. | Yes | No |
 | RPM | RPM v3/v4 packages with CPIO payloads | Yes | No |
 | Microsoft Cabinet | Uncompressed, MSZIP, LZX (window sizes 15 to 21), and Quantum (window sizes 10 to 21) | Yes | No |

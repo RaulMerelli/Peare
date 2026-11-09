@@ -1214,8 +1214,7 @@ bool decompressLzmaAloneToFile(QFile* input, QTemporaryFile* output,
 bool isTarLzmaCandidate(QFile* input) {
     if (!input || !input->seek(0)) return false;
     const QString name = QFileInfo(input->fileName()).fileName().toLower();
-    const bool matches = name.endsWith(QStringLiteral(".tlz")) ||
-        name.endsWith(QStringLiteral(".tar.lzma")) ||
+    const bool matches = name.endsWith(QStringLiteral(".tar.lzma")) ||
         name.endsWith(QStringLiteral(".lzma"));
     input->seek(0);
     return matches;
@@ -4952,7 +4951,7 @@ peare_writer_status peare_writer_get_create_format(size_t index,
         {"tar-zstd", "TAR.ZST archive", "tar.zst"},
         {"tar-unix-compress", "TAR.Z archive", "taz"},
         {"tar-xz", "TAR.XZ archive", "txz"},
-        {"tar-lzma", "TAR.LZMA archive", "tlz"}
+        {"tar-lzma", "TAR.LZMA archive", "tar.lzma"}
     };
     if (index >= sizeof(formats) / sizeof(formats[0]))
         return PEARE_WRITER_INVALID_ARGUMENT;

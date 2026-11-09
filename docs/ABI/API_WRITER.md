@@ -93,7 +93,7 @@ update TAR.XZ and TXZ files. It validates the XZ stream and the decompressed TAR
 before an update. The Writer supports no check, CRC32, CRC64, and SHA-256 checks.
 
 TAR.LZMA creation writes a USTAR archive in one LZMA-alone stream. The Writer
-can also update TAR.LZMA and TLZ files. It validates the compressed stream and
+can also update `.tar.lzma` files. It validates the compressed stream and
 the decompressed TAR before an update. The Writer supports compression levels
 1 through 9.
 
