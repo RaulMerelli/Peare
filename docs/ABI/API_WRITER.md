@@ -57,7 +57,7 @@ Zstandard, TAR, TAR.GZ, TAR.BZ2, TAR.ZST, TAR.Z, TAR.XZ, TAR.LZMA, GNU and BSD a
 all six CPIO variants (`newc`, CRC, `odc`, afio
 large ASCII, binary little-endian, and binary big-endian), UUencode, Intel HEX,
 standalone FAT, floppy images,
-raw MBR/GPT disks, VHD, VHDX, and VMDK. Format descriptors and their strings remain valid
+raw MBR/GPT disks, VHD, VHDX, VMDK, and Debian packages. Format descriptors and their strings remain valid
 for the process lifetime. Floppy images support the 12 geometries in the Writer
 variant list. Raw disks support MBR and GPT layouts. VHD and VHDX support fixed
 and dynamic variants. VMDK supports monolithic sparse and split sparse creation.
@@ -65,6 +65,12 @@ Split creation uses one external extent with a 2 GiB maximum. VHD, VHDX, VMDK,
 and raw MBR/GPT creation support FAT12, FAT16, FAT32, exFAT, and NTFS. NTFS
 volumes are formatted by the bundled NTFS-3G formatter on the staged image and
 are checked before Peare publishes the new disk. Floppy images use FAT12.
+
+Debian package creation writes version 2.0 `.deb` files with generated package
+metadata and one control TAR plus one data TAR. The ABI offers 24 combinations
+of raw, GZIP, XZ, or Zstandard control TAR and raw, GZIP, XZ, Zstandard, BZIP2,
+or LZMA data TAR. Debian package creation creates a new package; it does not
+modify an existing package.
 
 GZIP creation writes one RFC 1952 member per selected input file. The GZIP
 stream is not an archive with independently editable entries.

@@ -2,6 +2,7 @@
 #include "modules/Compat.h"
 
 #include "modules/ModuleFactory.h"
+#include "modules/LzmaModule.h"
 #include "modules/Ps2RomdirParser.h"
 #include "modules/MsiModule.h"
 #include "modules/MsgModule.h"
@@ -394,6 +395,9 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
             nestedFormat = header.isEmpty() ? ModuleFormat::Unknown
                 : ModuleFormatDetector::detectBuffer(header).format;
         }
+        if (nestedFormat == ModuleFormat::Unknown && entry.isEmbeddedFile &&
+            LzmaModule::hasExtension(entry.name))
+            nestedFormat = ModuleFormat::LZMA;
 
         // Validate PS2 ROMDIR against the full lazy store, not a truncated prefix.
         // Restrict the scan to plausible image names and bounded file sizes.

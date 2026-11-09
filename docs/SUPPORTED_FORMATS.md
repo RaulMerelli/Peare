@@ -145,7 +145,7 @@ package-specific limits on ZIP-based files.
 | ARJ | Methods 0-4, legacy, GOST40, GOST256, and GOST256L password encryption, and split volumes | Yes | No |
 | XAR | XAR archives and Apple flat installer packages | Yes | No |
 | CPIO | SVR4 `newc` and CRC, POSIX `odc`, afio large ASCII, and old binary little- and big-endian archives | Yes | Yes |
-| Debian package | `.deb` and `.udeb`, version 2.0; raw or gzip/xz/zstd control TAR, plus raw/gzip/xz/zstd/bzip2/lzma data TAR | Yes | No |
+| Debian package | `.deb` and `.udeb`, version 2.0; raw or gzip/xz/zstd control TAR, plus raw/gzip/xz/zstd/bzip2/lzma data TAR | Yes | Yes |
 | LHA / LZH | LHA and LZH archives | Yes | No |
 | Doom WAD | IWAD and PWAD archives | Yes | Yes |
 | Quake WAD2 | WAD2 archives | Yes | No |

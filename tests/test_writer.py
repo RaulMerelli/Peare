@@ -4681,7 +4681,7 @@ def test_tar_bzip2_create_and_cud_roundtrip_with_7zip(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 26
+    assert writer_lib.peare_writer_create_format_count() == 27
     assert writer_lib.peare_writer_create_variant_count(b"tar-bzip2") == 9
     for level in range(1, 10):
         archive = tmp_path / f"created-level-{level}.tbz2"
@@ -4818,7 +4818,7 @@ def test_tar_zstd_create_and_cud_roundtrip_with_independent_decoder(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 26
+    assert writer_lib.peare_writer_create_format_count() == 27
     assert writer_lib.peare_writer_create_variant_count(b"tar-zstd") == 27
     variants = [f"fast-{level}" for level in range(5, 0, -1)] + [
         f"level-{level}" for level in range(1, 23)]
@@ -5057,7 +5057,7 @@ def test_tar_xz_create_all_checks_and_7zip(writer_lib, peare_lib, tmp_path):
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     checks = ("none", "crc32", "crc64", "sha256")
-    assert writer_lib.peare_writer_create_format_count() == 26
+    assert writer_lib.peare_writer_create_format_count() == 27
     assert writer_lib.peare_writer_create_variant_count(b"tar-xz") == len(checks)
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for check in checks:
@@ -5188,7 +5188,7 @@ def test_tar_lzma_create_all_levels_and_7zip(writer_lib, peare_lib, tmp_path):
         pytest.skip("7-Zip is required for independent TAR.LZMA validation")
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    assert writer_lib.peare_writer_create_format_count() == 26
+    assert writer_lib.peare_writer_create_format_count() == 27
     assert writer_lib.peare_writer_create_variant_count(b"tar-lzma") == 9
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for level in range(1, 10):
@@ -5305,7 +5305,7 @@ def test_lzip_writer_all_levels_and_winrar(
     source = ROOT / "README.md"
     expected = source.read_bytes()
     expected_hash = hashlib.sha256(expected).hexdigest()
-    assert writer_lib.peare_writer_create_format_count() == 26
+    assert writer_lib.peare_writer_create_format_count() == 27
     assert writer_lib.peare_writer_create_variant_count(b"lzip") == 10
     variants = []
     for index in range(10):
@@ -5422,8 +5422,8 @@ def test_lzip_writer_concatenates_selected_inputs(writer_lib, peare_lib, tmp_pat
     "classic", "classic-encoded-name", "base64", "base64-encoded-name"])
 def test_uuencode_writer_roundtrip_all_headers(
         writer_lib, peare_lib, peare_gui_path, tmp_path, variant):
-    assert writer_lib.peare_writer_create_format_count() == 26
-    formats = (_WriterFormat * 26)()
+    assert writer_lib.peare_writer_create_format_count() == 27
+    formats = (_WriterFormat * 27)()
     assert all(writer_lib.peare_writer_get_create_format(
         index, C.byref(formats[index])) == 0 for index in range(len(formats)))
     assert {item.id for item in formats} >= {b"uuencode", b"ihex"}
@@ -5629,6 +5629,111 @@ def test_ihex_writer_empty_input(writer_lib, peare_lib, tmp_path):
     with peare_lib.open_file(str(output)) as opener:
         rows = opener.normalized_tree()
         assert len(rows) == 1 and rows[0]["size"] == 0
+
+
+def _ar_members(path):
+    data = path.read_bytes()
+    assert data.startswith(b"!<arch>\n")
+    offset = 8
+    members = {}
+    while offset < len(data):
+        header = data[offset:offset + 60]
+        assert len(header) == 60 and header[58:60] == b"`\n"
+        name = header[:16].decode("ascii").strip().rstrip("/")
+        size = int(header[48:58].decode("ascii").strip())
+        offset += 60
+        members[name] = data[offset:offset + size]
+        offset += size + (size & 1)
+    assert offset == len(data)
+    return members
+
+
+def _deb_tar_payload(data, codec):
+    if codec == "raw":
+        return data
+    if codec == "gzip":
+        return gzip.decompress(data)
+    if codec == "xz":
+        return lzma.decompress(data, format=lzma.FORMAT_XZ)
+    if codec == "zstd":
+        with zstandard.ZstdDecompressor().stream_reader(io.BytesIO(data)) as reader:
+            return reader.read()
+    if codec == "bzip2":
+        return bz2.decompress(data)
+    if codec == "lzma":
+        return lzma.decompress(data, format=lzma.FORMAT_ALONE)
+    raise AssertionError(codec)
+
+
+def _tar_members(data):
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
+        return {member.name.rstrip("/"): archive.extractfile(member).read()
+                for member in archive.getmembers() if member.isfile()}
+
+
+@pytest.mark.parametrize("control_codec", ["raw", "gzip", "xz", "zstd"])
+@pytest.mark.parametrize("data_codec", ["raw", "gzip", "xz", "zstd", "bzip2", "lzma"])
+def test_deb_writer_all_compression_combinations(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, control_codec, data_codec):
+    source = ROOT / "README.md"
+    payload = source.read_bytes()
+    variant = f"control-{control_codec}+data-{data_codec}"
+    output = tmp_path / f"package-{control_codec}-{data_codec}.deb"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_variant_count(b"deb") == 24
+        if control_codec == "raw" and data_codec == "raw":
+            source_item = _WriterInputFile(
+                str(source).encode(), b"usr/share/peare/README.md")
+            status = writer_lib.peare_writer_add_files_to(
+                writer, str(output).encode(), b"deb", variant.encode(), 0,
+                C.byref(source_item), 1)
+            assert status == 0, writer_lib.peare_writer_last_error(writer)
+        else:
+            status = writer_lib.peare_writer_create_begin_variant(
+                writer, b"deb", variant.encode(), str(output).encode())
+            assert status == 0, writer_lib.peare_writer_last_error(writer)
+            assert writer_lib.peare_writer_create_directory(
+                writer, b"usr/share/peare") == 0
+            assert writer_lib.peare_writer_create_file(
+                writer, str(source).encode(), b"usr/share/peare/README.md") == 0
+            assert writer_lib.peare_writer_finish(writer) == 0, \
+                writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    members = _ar_members(output)
+    suffixes = {"raw": "", "gzip": ".gz", "xz": ".xz", "zstd": ".zst",
+                "bzip2": ".bz2", "lzma": ".lzma"}
+    assert list(members) == ["debian-binary", f"control.tar{suffixes[control_codec]}",
+                             f"data.tar{suffixes[data_codec]}"]
+    assert members["debian-binary"] == b"2.0\n"
+    control_name = next(name for name in members if name.startswith("control.tar"))
+    data_name = next(name for name in members if name.startswith("data.tar"))
+    control = _tar_members(_deb_tar_payload(members[control_name], control_codec))
+    data = _tar_members(_deb_tar_payload(members[data_name], data_codec))
+    assert control["control"].startswith(b"Package: peare-generated\n")
+    assert data["usr/share/peare/README.md"] == payload
+
+    with peare_lib.open_file(str(output)) as opener:
+        assert opener.container_format() == "DEB"
+        rows = opener.normalized_tree()
+    leaf = next(row for row in rows if row["path"].endswith("usr/share/peare/README.md"))
+    assert leaf["sha256"] == hashlib.sha256(payload).hexdigest()
+    if control_codec == "raw" and data_codec == "raw":
+        seven_zip = _seven_zip_executable()
+        assert seven_zip
+        check = subprocess.run([seven_zip, "t", str(output)], capture_output=True,
+                               text=True, timeout=60)
+        assert check.returncode == 0, check.stdout + check.stderr
+        gui_output = tmp_path / "gui-preview"
+        gui_check = subprocess.run(
+            [sys.executable, str(ROOT / "tests" / "run_gui_preview_tests.py"),
+             "--exe", str(peare_gui_path), "--case", "deb-writer-raw-raw",
+             str(output), leaf["path"], "--output-dir", str(gui_output)],
+            capture_output=True, text=True, timeout=120, check=False)
+        assert gui_check.returncode == 0, gui_check.stdout + gui_check.stderr
 
 @pytest.mark.parametrize(("sample_name", "tar_root"), [
     ("docs.tgz", "archive.tar"), ("docs.tbz2", "writer-test-copy.tbz2"),

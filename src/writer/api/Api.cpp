@@ -26,6 +26,7 @@
 #include <QDateTime>
 #include <QMap>
 #include <QTemporaryFile>
+#include <QTemporaryDir>
 #include <QtEndian>
 
 #include <algorithm>
@@ -160,6 +161,11 @@ struct WadEntry {
     qint64 dataOffset = 0;
 };
 
+struct DebEntry {
+    QString sourcePath;
+    QByteArray name;
+};
+
 struct CpioEntry {
     QString key;
     QByteArray name;
@@ -210,11 +216,14 @@ struct peare_writer_handle_s {
     std::unique_ptr<QTemporaryFile> cpioStage;
     std::unique_ptr<QTemporaryFile> arStage;
     std::unique_ptr<QTemporaryFile> wadStage;
+    std::unique_ptr<QTemporaryDir> debStage;
     std::vector<Entry> entries;
     std::vector<TarEntry> tarEntries;
     std::vector<CpioEntry> cpioEntries;
     std::vector<ArEntry> arEntries;
     std::vector<WadEntry> wadEntries;
+    std::vector<DebEntry> debEntries;
+    std::vector<QByteArray> debDirectories;
     CpioFormat cpioFormat = CpioFormat::Newc;
     ArFormat arFormat = ArFormat::Gnu;
     WadFormat wadFormat = WadFormat::Pwad;
@@ -248,12 +257,15 @@ struct peare_writer_handle_s {
     bool uuencodeHasData = false;
     bool ihexPayloadWritten = false;
     unsigned ihexRecordSize = 16;
+    int debControlCodec = 0;
+    int debDataCodec = 0;
+    QString createPath;
     bool xzWrappedTar = false;
     bool lzmaWrappedTar = false;
     bool fatTargetSpecified = false;
     size_t fatTargetIndex = 0;
     enum class Mode { None, ZipCreate, ZipUpdate, GzipCreate, Bzip2Create, ZstdCreate, XzCreate, LzmaAloneCreate, LzipCreate, UnixCompressCreate, TarCreate, TarUpdate, CpioCreate,
-                      CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate, UuencodeCreate, IhexCreate, TarGzipCreate,
+                      CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate, UuencodeCreate, IhexCreate, DebCreate, TarGzipCreate,
                       TarBzip2Create, TarZstdCreate, TarUnixCompressCreate,
                       TarXzCreate, TarLzmaCreate,
                       FatCreate, DiskUpdate } mode = Mode::None;
@@ -299,6 +311,7 @@ peare_writer_status fail(peare_writer_handle_s* writer, peare_writer_status stat
             writer->cpioStage.reset();
             writer->arStage.reset();
             writer->wadStage.reset();
+            writer->debStage.reset();
             if (writer->diskUpdate) {
                 writer->diskUpdate->abort();
                 writer->diskUpdate.reset();
@@ -308,6 +321,8 @@ peare_writer_status fail(peare_writer_handle_s* writer, peare_writer_status stat
             writer->cpioEntries.clear();
             writer->arEntries.clear();
             writer->wadEntries.clear();
+            writer->debEntries.clear();
+            writer->debDirectories.clear();
             writer->cpioFormat = CpioFormat::Newc;
             writer->cpioOpaqueOffset = 0;
             writer->cpioOpaqueSize = 0;
@@ -326,6 +341,7 @@ peare_writer_status fail(peare_writer_handle_s* writer, peare_writer_status stat
             writer->lzmaWrappedTar = false;
             writer->tarContentEnd = 0;
             writer->updatePath.clear();
+            writer->createPath.clear();
         }
     }
     return status;
@@ -4500,6 +4516,180 @@ peare_writer_status writeIhexMember(peare_writer_handle_s* writer,
     return PEARE_WRITER_OK;
 }
 
+bool copyFile(QFile& input, QIODevice* output) {
+    std::array<char, kChunkSize> buffer{};
+    while (true) {
+        const qint64 count = input.read(buffer.data(), qint64(buffer.size()));
+        if (count < 0) return false;
+        if (count == 0) return input.error() == QFileDevice::NoError;
+        if (!writeAll(output, buffer.data(), count)) return false;
+    }
+}
+
+const char* debTarFormat(int codec) {
+    static const char* formats[] = {
+        "tar", "tar-gzip", "tar-xz", "tar-zstd", "tar-bzip2", "tar-lzma"};
+    return codec >= 0 && codec < int(sizeof(formats) / sizeof(formats[0]))
+        ? formats[codec] : nullptr;
+}
+
+QByteArray debTarMemberName(int codec, bool control) {
+    static const char* extensions[] = {
+        "tar", "tar.gz", "tar.xz", "tar.zst", "tar.bz2", "tar.lzma"};
+    if (codec < 0 || codec >= int(sizeof(extensions) / sizeof(extensions[0]))) return {};
+    return QByteArray(control ? "control." : "data.") + extensions[codec];
+}
+
+QString debEntryKey(const QByteArray& name) {
+    QString key = QString::fromUtf8(name);
+    while (key.endsWith(QLatin1Char('/'))) key.chop(1);
+    return key;
+}
+
+bool debPathConflict(const peare_writer_handle_s* writer, const QString& key,
+                     bool directory) {
+    const QString childPrefix = key + QLatin1Char('/');
+    for (const DebEntry& entry : writer->debEntries) {
+        const QString file = debEntryKey(entry.name);
+        if (file == key || key.startsWith(file + QLatin1Char('/')) ||
+            (!directory && file.startsWith(childPrefix))) return true;
+    }
+    for (const QByteArray& entry : writer->debDirectories) {
+        const QString existing = debEntryKey(entry);
+        if (existing == key || (!directory && existing.startsWith(childPrefix)))
+            return true;
+    }
+    return false;
+}
+
+const char* debTarVariant(int codec) {
+    return codec == 1 ? "ustar" : codec == 2 ? "crc64" :
+        codec == 3 ? "level-3" : codec == 4 ? "level-9" :
+        codec == 5 ? "level-5" : "ustar";
+}
+
+peare_writer_status writeDebTar(const QString& outputPath, int codec,
+                                const std::vector<DebEntry>& files,
+                                const std::vector<QByteArray>& directories,
+                                const QString* controlFile, QString* error) {
+    peare_writer_handle inner = nullptr;
+    peare_writer_status status = peare_writer_create(&inner);
+    if (status == PEARE_WRITER_OK)
+        status = peare_writer_create_begin_variant(inner, debTarFormat(codec),
+                                                    debTarVariant(codec),
+                                                    outputPath.toUtf8().constData());
+    for (const QByteArray& directory : directories) {
+        if (status != PEARE_WRITER_OK) break;
+        status = peare_writer_create_directory(inner, directory.constData());
+    }
+    if (controlFile && status == PEARE_WRITER_OK)
+        status = peare_writer_create_file(inner, controlFile->toUtf8().constData(), "control");
+    for (const DebEntry& entry : files) {
+        if (status != PEARE_WRITER_OK) break;
+        status = peare_writer_create_file(inner, entry.sourcePath.toUtf8().constData(),
+                                          entry.name.constData());
+    }
+    if (status == PEARE_WRITER_OK) status = peare_writer_finish(inner);
+    if (status != PEARE_WRITER_OK && error && inner)
+        *error = QString::fromUtf8(peare_writer_last_error(inner));
+    if (inner) peare_writer_destroy(inner);
+    return status;
+}
+
+peare_writer_status writeDebPackage(peare_writer_handle_s* writer) {
+    if (!writer->debStage || !writer->debStage->isValid())
+        return fail(writer, PEARE_WRITER_IO_ERROR,
+                    QStringLiteral("Could not create Debian package staging."));
+    const QString binaryPath = writer->debStage->filePath(QStringLiteral("debian-binary"));
+    QFile binary(binaryPath);
+    if (!binary.open(QIODevice::WriteOnly) || binary.write("2.0\n", 4) != 4 ||
+        !binary.flush())
+        return fail(writer, PEARE_WRITER_IO_ERROR,
+                    binary.isOpen() ? binary.errorString()
+                                    : QStringLiteral("Could not write debian-binary."));
+    binary.close();
+
+    const QString controlPath = writer->debStage->filePath(QStringLiteral("control"));
+    QFile control(controlPath);
+    static const char controlText[] =
+        "Package: peare-generated\n"
+        "Version: 1.0\n"
+        "Section: misc\n"
+        "Priority: optional\n"
+        "Architecture: all\n"
+        "Maintainer: Peare <writer@peare.invalid>\n"
+        "Description: Package generated by Peare\n";
+    if (!control.open(QIODevice::WriteOnly) ||
+        control.write(controlText, qint64(sizeof(controlText) - 1)) !=
+            qint64(sizeof(controlText) - 1) || !control.flush())
+        return fail(writer, PEARE_WRITER_IO_ERROR,
+                    control.isOpen() ? control.errorString()
+                                     : QStringLiteral("Could not write Debian control data."));
+    control.close();
+
+    const QString controlTar = writer->debStage->filePath(
+        QString::fromLatin1(debTarMemberName(writer->debControlCodec, true)));
+    const QString dataTar = writer->debStage->filePath(
+        QString::fromLatin1(debTarMemberName(writer->debDataCodec, false)));
+    QString error;
+    if (writeDebTar(controlTar, writer->debControlCodec, {}, {}, &controlPath, &error) !=
+            PEARE_WRITER_OK)
+        return fail(writer, PEARE_WRITER_IO_ERROR, error);
+    if (writeDebTar(dataTar, writer->debDataCodec, writer->debEntries,
+                    writer->debDirectories, nullptr, &error) != PEARE_WRITER_OK)
+        return fail(writer, PEARE_WRITER_IO_ERROR, error);
+
+    const QString archivePath = writer->debStage->filePath(QStringLiteral("package.a"));
+    const QByteArray binaryName("debian-binary");
+    const QByteArray controlName = debTarMemberName(writer->debControlCodec, true);
+    const QByteArray dataName = debTarMemberName(writer->debDataCodec, false);
+    const QByteArray binaryPathUtf8 = binaryPath.toUtf8();
+    const QByteArray controlPathUtf8 = controlTar.toUtf8();
+    const QByteArray dataPathUtf8 = dataTar.toUtf8();
+    peare_writer_input_file members[3] = {
+        {binaryPathUtf8.constData(), binaryName.constData()},
+        {controlPathUtf8.constData(), controlName.constData()},
+        {dataPathUtf8.constData(), dataName.constData()}
+    };
+    peare_writer_handle ar = nullptr;
+    peare_writer_status status = peare_writer_create(&ar);
+    if (status == PEARE_WRITER_OK)
+        status = peare_writer_add_files_to(ar, archivePath.toUtf8().constData(),
+                                           "ar", "gnu", 0, members, 3);
+    if (status != PEARE_WRITER_OK) {
+        if (ar) {
+            error = QString::fromUtf8(peare_writer_last_error(ar));
+            peare_writer_destroy(ar);
+        } else {
+            error = QStringLiteral("Could not allocate the Debian package ar writer.");
+        }
+        return fail(writer, status, error);
+    }
+    peare_writer_destroy(ar);
+
+    QFile package(archivePath);
+    if (!package.open(QIODevice::ReadOnly))
+        return fail(writer, PEARE_WRITER_IO_ERROR, package.errorString());
+    writer->output.reset(new (std::nothrow) QSaveFile(writer->createPath));
+    if (!writer->output || !writer->output->open(QIODevice::WriteOnly))
+        return fail(writer, PEARE_WRITER_IO_ERROR,
+                    writer->output ? writer->output->errorString()
+                                   : QStringLiteral("Could not allocate Debian package output."));
+    if (!copyFile(package, writer->output.get()) || !writer->output->commit())
+        return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+    writer->output.reset();
+    writer->active = false;
+    writer->mode = peare_writer_handle_s::Mode::None;
+    writer->debStage.reset();
+    writer->debEntries.clear();
+    writer->debDirectories.clear();
+    writer->names.clear();
+    writer->createPath.clear();
+    writer->error.clear();
+    writer->errorUtf8.clear();
+    return PEARE_WRITER_OK;
+}
+
 peare_writer_status writeLzmaAloneMember(peare_writer_handle_s* writer,
                                          const char* sourcePathUtf8,
                                          const char* entryNameUtf8) {
@@ -5182,7 +5372,7 @@ peare_writer_status peare_writer_create(peare_writer_handle* outWriter) {
     }
 }
 
-size_t peare_writer_create_format_count(void) { return 26; }
+size_t peare_writer_create_format_count(void) { return 27; }
 
 peare_writer_status peare_writer_get_create_format(size_t index,
                                                     peare_writer_format* outFormat) {
@@ -5213,7 +5403,8 @@ peare_writer_status peare_writer_get_create_format(size_t index,
         {"tar-lzma", "TAR.LZMA archive", "tar.lzma"},
         {"lzip", "Lzip compressed file", "lz"},
         {"uuencode", "UUencoded file", "uue"},
-        {"ihex", "Intel HEX firmware image", "hex"}
+        {"ihex", "Intel HEX firmware image", "hex"},
+        {"deb", "Debian package", "deb"}
     };
     if (index >= sizeof(formats) / sizeof(formats[0]))
         return PEARE_WRITER_INVALID_ARGUMENT;
@@ -5232,6 +5423,7 @@ size_t peare_writer_create_variant_count(const char* formatIdUtf8) {
     if (std::strcmp(formatIdUtf8, "lzip") == 0) return 10;
     if (std::strcmp(formatIdUtf8, "uuencode") == 0) return 4;
     if (std::strcmp(formatIdUtf8, "ihex") == 0) return 3;
+    if (std::strcmp(formatIdUtf8, "deb") == 0) return 24;
     if (std::strcmp(formatIdUtf8, "unix-compress") == 0) return 16;
     if (std::strcmp(formatIdUtf8, "tar") == 0) return 1;
     if (std::strcmp(formatIdUtf8, "tar-gzip") == 0) return 1;
@@ -5339,6 +5531,32 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
         {"record-32", "32-byte records"},
         {"record-64", "64-byte records"}
     };
+    static const peare_writer_variant debVariants[] = {
+        {"control-raw+data-raw", "Control raw, data raw"},
+        {"control-raw+data-gzip", "Control raw, data GZIP"},
+        {"control-raw+data-xz", "Control raw, data XZ"},
+        {"control-raw+data-zstd", "Control raw, data Zstandard"},
+        {"control-raw+data-bzip2", "Control raw, data BZIP2"},
+        {"control-raw+data-lzma", "Control raw, data LZMA"},
+        {"control-gzip+data-raw", "Control GZIP, data raw"},
+        {"control-gzip+data-gzip", "Control GZIP, data GZIP"},
+        {"control-gzip+data-xz", "Control GZIP, data XZ"},
+        {"control-gzip+data-zstd", "Control GZIP, data Zstandard"},
+        {"control-gzip+data-bzip2", "Control GZIP, data BZIP2"},
+        {"control-gzip+data-lzma", "Control GZIP, data LZMA"},
+        {"control-xz+data-raw", "Control XZ, data raw"},
+        {"control-xz+data-gzip", "Control XZ, data GZIP"},
+        {"control-xz+data-xz", "Control XZ, data XZ"},
+        {"control-xz+data-zstd", "Control XZ, data Zstandard"},
+        {"control-xz+data-bzip2", "Control XZ, data BZIP2"},
+        {"control-xz+data-lzma", "Control XZ, data LZMA"},
+        {"control-zstd+data-raw", "Control Zstandard, data raw"},
+        {"control-zstd+data-gzip", "Control Zstandard, data GZIP"},
+        {"control-zstd+data-xz", "Control Zstandard, data XZ"},
+        {"control-zstd+data-zstd", "Control Zstandard, data Zstandard"},
+        {"control-zstd+data-bzip2", "Control Zstandard, data BZIP2"},
+        {"control-zstd+data-lzma", "Control Zstandard, data LZMA"}
+    };
     static const peare_writer_variant tarVariants[] = { {"ustar", "USTAR"} };
     static const peare_writer_variant cpioVariants[] = {
         {"newc", "SVR4 newc"}, {"crc", "SVR4 CRC"},
@@ -5417,6 +5635,10 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
     }
     if (std::strcmp(formatIdUtf8, "ihex") == 0 && index < 3) {
         *outVariant = ihexVariants[index];
+        return PEARE_WRITER_OK;
+    }
+    if (std::strcmp(formatIdUtf8, "deb") == 0 && index < 24) {
+        *outVariant = debVariants[index];
         return PEARE_WRITER_OK;
     }
     if ((std::strcmp(formatIdUtf8, "unix-compress") == 0 ||
@@ -5849,6 +6071,44 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
             writer->active = true;
             writer->updateMode = false;
             writer->mode = peare_writer_handle_s::Mode::IhexCreate;
+            return PEARE_WRITER_OK;
+        });
+    }
+    if (std::strcmp(formatIdUtf8, "deb") == 0) {
+        const char* requested = variant ? variant : "control-raw+data-raw";
+        size_t selected = 24;
+        peare_writer_variant item{};
+        for (size_t i = 0; i < 24; ++i) {
+            if (peare_writer_get_create_variant("deb", i, &item) == PEARE_WRITER_OK &&
+                std::strcmp(requested, item.id) == 0) {
+                selected = i;
+                break;
+            }
+        }
+        if (selected == 24)
+            return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                        QStringLiteral("The requested Debian package variant is invalid."),
+                        false);
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (writer->active)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("A writer operation is already active."), false);
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            writer->debStage.reset(new (std::nothrow) QTemporaryDir);
+            if (!writer->debStage || !writer->debStage->isValid()) {
+                writer->debStage.reset();
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            QStringLiteral("Could not allocate Debian package staging."), false);
+            }
+            writer->debControlCodec = int(selected / 6);
+            writer->debDataCodec = int(selected % 6);
+            writer->debEntries.clear();
+            writer->debDirectories.clear();
+            writer->createPath = QString::fromUtf8(outputPathUtf8);
+            writer->active = true;
+            writer->updateMode = false;
+            writer->mode = peare_writer_handle_s::Mode::DebCreate;
             return PEARE_WRITER_OK;
         });
     }
@@ -6812,6 +7072,33 @@ peare_writer_status peare_writer_add_file(peare_writer_handle writer,
     if (!writer->active)
         return fail(writer, PEARE_WRITER_NOT_ACTIVE,
                     QStringLiteral("No container write is active."), false);
+    if (writer->mode == peare_writer_handle_s::Mode::DebCreate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("A source file and package path are required."));
+            QByteArray name;
+            if (!normalizedEntryName(entryNameUtf8, false, &name))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The Debian package path is invalid or unsafe."));
+            const QString key = debEntryKey(name);
+            if (debPathConflict(writer, key, false))
+                return fail(writer, PEARE_WRITER_DUPLICATE_ENTRY,
+                            QStringLiteral("The Debian package path already exists."));
+            QFile input(QString::fromUtf8(sourcePathUtf8));
+            if (!input.open(QIODevice::ReadOnly))
+                return fail(writer, PEARE_WRITER_IO_ERROR, input.errorString());
+            const QString stagedPath = writer->debStage->filePath(
+                QStringLiteral("input-%1").arg(writer->debEntries.size()));
+            QFile staged(stagedPath);
+            if (!staged.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+                !copyFile(input, &staged) || !staged.flush())
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            staged.isOpen() ? staged.errorString() : input.errorString());
+            writer->names.insert(key);
+            writer->debEntries.push_back({stagedPath, name});
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::TarCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarGzipCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarBzip2Create ||
@@ -6925,6 +7212,20 @@ peare_writer_status peare_writer_create_directory(peare_writer_handle writer,
     if (!entryNameUtf8 || !*entryNameUtf8)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("An entry name is required."));
+    if (writer->mode == peare_writer_handle_s::Mode::DebCreate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray name;
+            if (!normalizedEntryName(entryNameUtf8, true, &name))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The Debian package directory is invalid or unsafe."));
+            const QString key = debEntryKey(name);
+            if (debPathConflict(writer, key, true))
+                return fail(writer, PEARE_WRITER_DUPLICATE_ENTRY,
+                            QStringLiteral("The Debian package path already exists."));
+            writer->names.insert(key);
+            writer->debDirectories.push_back(name);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::ZipCreate ||
         writer->mode == peare_writer_handle_s::Mode::ZipUpdate)
         return peare_writer_zip_add_directory(writer, entryNameUtf8);
@@ -7717,6 +8018,8 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
             writer->errorUtf8.clear();
             return PEARE_WRITER_OK;
         });
+    if (writer->mode == peare_writer_handle_s::Mode::DebCreate)
+        return cBoundary(writer, [&] { return writeDebPackage(writer); });
     if (writer->mode == peare_writer_handle_s::Mode::TarCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarGzipCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarBzip2Create ||
@@ -8400,6 +8703,7 @@ void peare_writer_abort(peare_writer_handle writer) {
     writer->cpioStage.reset();
     writer->arStage.reset();
     writer->wadStage.reset();
+    writer->debStage.reset();
     if (writer->diskUpdate) {
         writer->diskUpdate->abort();
         writer->diskUpdate.reset();
@@ -8409,12 +8713,15 @@ void peare_writer_abort(peare_writer_handle writer) {
     writer->cpioEntries.clear();
     writer->arEntries.clear();
     writer->wadEntries.clear();
+    writer->debEntries.clear();
+    writer->debDirectories.clear();
     writer->cpioFormat = CpioFormat::Newc;
     writer->cpioOpaqueOffset = 0;
     writer->cpioOpaqueSize = 0;
     writer->names.clear();
     writer->archiveComment.clear();
     writer->updatePath.clear();
+    writer->createPath.clear();
     writer->active = false;
     writer->updateMode = false;
     writer->archiveDirty = false;
