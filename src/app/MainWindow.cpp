@@ -2814,7 +2814,9 @@ QString MainWindow::writerEntryPath(QTreeWidgetItem* item) const {
              (ownerType == QStringLiteral("UNIX_COMPRESS_FILE") &&
               parentSession->containerFormat() == PEARE_CONTAINER_UNIX_COMPRESS) ||
              (ownerType == QStringLiteral("XZ_FILE") &&
-              parentSession->containerFormat() == PEARE_CONTAINER_XZ)) &&
+              parentSession->containerFormat() == PEARE_CONTAINER_XZ) ||
+             (ownerType == QStringLiteral("LZMA_FILE") &&
+              parentSession->containerFormat() == PEARE_CONTAINER_LZMA)) &&
             itemSession->containerFormat() == PEARE_CONTAINER_TAR;
         if (compressedTarWrapper) {
             transparentOwners.push_back(owner);

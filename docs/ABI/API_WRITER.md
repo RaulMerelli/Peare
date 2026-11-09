@@ -53,7 +53,7 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer);
 ```
 
 The create backends are ZIP, GZIP, BZIP2, Unix compress, LZMA-alone, XZ,
-Zstandard, TAR, TAR.GZ, TAR.BZ2, TAR.ZST, TAR.Z, TAR.XZ, GNU and BSD ar, Doom IWAD and PWAD,
+Zstandard, TAR, TAR.GZ, TAR.BZ2, TAR.ZST, TAR.Z, TAR.XZ, TAR.LZMA, GNU and BSD ar, Doom IWAD and PWAD,
 all six CPIO variants (`newc`, CRC, `odc`, afio
 large ASCII, binary little-endian, and binary big-endian), standalone FAT, floppy images,
 raw MBR/GPT disks, VHD, VHDX, and VMDK. Format descriptors and their strings remain valid
@@ -91,6 +91,11 @@ with code widths from 9 through 16 bits.
 TAR.XZ creation writes a USTAR archive in one XZ stream. The Writer can also
 update TAR.XZ and TXZ files. It validates the XZ stream and the decompressed TAR
 before an update. The Writer supports no check, CRC32, CRC64, and SHA-256 checks.
+
+TAR.LZMA creation writes a USTAR archive in one LZMA-alone stream. The Writer
+can also update TAR.LZMA and TLZ files. It validates the compressed stream and
+the decompressed TAR before an update. The Writer supports compression levels
+1 through 9.
 
 BZIP2 creation writes one compressed stream per selected input file. The output
 uses concatenated BZIP2 streams and the selected block level from 1 to 9.

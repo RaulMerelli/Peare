@@ -9,6 +9,7 @@
 #include "../third_party/lzma/XzCrc64.h"
 #include "../third_party/lzma/XzEnc.h"
 #include "../third_party/lzma/Xz.h"
+#include "../third_party/lzma/LzmaDec.h"
 #include "../third_party/lzma/Ppmd8.h"
 #include "../third_party/zstd/zstd.h"
 #include "../../opener/compression/third_party/packmp3/packmp3lib.h"
@@ -203,6 +204,9 @@ struct peare_writer_handle_s {
     std::unique_ptr<QTemporaryFile> tarXzStage;
     std::unique_ptr<QTemporaryFile> tarXzOutput;
     std::unique_ptr<QTemporaryFile> tarXzInput;
+    std::unique_ptr<QTemporaryFile> tarLzmaStage;
+    std::unique_ptr<QTemporaryFile> tarLzmaOutput;
+    std::unique_ptr<QTemporaryFile> tarLzmaInput;
     std::unique_ptr<QTemporaryFile> cpioStage;
     std::unique_ptr<QTemporaryFile> arStage;
     std::unique_ptr<QTemporaryFile> wadStage;
@@ -239,12 +243,13 @@ struct peare_writer_handle_s {
     bool unixCompressWrappedTar = false;
     bool unixCompressPayloadWritten = false;
     bool xzWrappedTar = false;
+    bool lzmaWrappedTar = false;
     bool fatTargetSpecified = false;
     size_t fatTargetIndex = 0;
     enum class Mode { None, ZipCreate, ZipUpdate, GzipCreate, Bzip2Create, ZstdCreate, XzCreate, LzmaAloneCreate, UnixCompressCreate, TarCreate, TarUpdate, CpioCreate,
                       CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate, TarGzipCreate,
                       TarBzip2Create, TarZstdCreate, TarUnixCompressCreate,
-                      TarXzCreate,
+                      TarXzCreate, TarLzmaCreate,
                       FatCreate, DiskUpdate } mode = Mode::None;
 };
 
@@ -282,6 +287,9 @@ peare_writer_status fail(peare_writer_handle_s* writer, peare_writer_status stat
             writer->tarXzStage.reset();
             writer->tarXzOutput.reset();
             writer->tarXzInput.reset();
+            writer->tarLzmaStage.reset();
+            writer->tarLzmaOutput.reset();
+            writer->tarLzmaInput.reset();
             writer->cpioStage.reset();
             writer->arStage.reset();
             writer->wadStage.reset();
@@ -309,6 +317,7 @@ peare_writer_status fail(peare_writer_handle_s* writer, peare_writer_status stat
             writer->unixCompressWrappedTar = false;
             writer->unixCompressPayloadWritten = false;
             writer->xzWrappedTar = false;
+            writer->lzmaWrappedTar = false;
             writer->tarContentEnd = 0;
             writer->updatePath.clear();
         }
@@ -334,6 +343,9 @@ peare_writer_status finishNoOpArchiveUpdate(peare_writer_handle_s* writer) {
     writer->tarXzStage.reset();
     writer->tarXzOutput.reset();
     writer->tarXzInput.reset();
+    writer->tarLzmaStage.reset();
+    writer->tarLzmaOutput.reset();
+    writer->tarLzmaInput.reset();
     writer->cpioStage.reset();
     writer->arStage.reset();
     writer->wadStage.reset();
@@ -356,6 +368,7 @@ peare_writer_status finishNoOpArchiveUpdate(peare_writer_handle_s* writer) {
     writer->unixCompressWrappedTar = false;
     writer->unixCompressPayloadWritten = false;
     writer->xzWrappedTar = false;
+    writer->lzmaWrappedTar = false;
     writer->mode = peare_writer_handle_s::Mode::None;
     writer->tarContentEnd = 0;
     writer->updatePath.clear();
@@ -1072,6 +1085,166 @@ peare_writer_status loadExistingTarOrXz(peare_writer_handle_s* writer,
     if (status != PEARE_WRITER_OK)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("The XZ stream does not contain a supported TAR archive."),
+                    false);
+    *wrapped = true;
+    writer->error.clear();
+    writer->errorUtf8.clear();
+    return PEARE_WRITER_OK;
+}
+
+struct LzmaDecoderScope {
+    CLzmaDec decoder;
+    LzmaDecoderScope() { LzmaDec_Construct(&decoder); }
+    ~LzmaDecoderScope() { LzmaDec_Free(&decoder, &kXzAllocator); }
+};
+
+bool decompressLzmaAloneToFile(QFile* input, QTemporaryFile* output,
+                               QString* error) {
+    if (!input || !output || !input->seek(0) || !output->seek(0) ||
+        !output->resize(0)) return false;
+    char header[LZMA_PROPS_SIZE + 8] = {};
+    if (input->read(header, sizeof(header)) != qint64(sizeof(header))) {
+        if (error) *error = QStringLiteral("The LZMA-alone header is truncated.");
+        return false;
+    }
+    quint64 unpackedSize = 0;
+    for (unsigned i = 0; i < 8; ++i)
+        unpackedSize |= quint64(static_cast<quint8>(header[LZMA_PROPS_SIZE + i])) << (i * 8);
+    const bool sizeKnown = unpackedSize != std::numeric_limits<quint64>::max();
+    if (sizeKnown && unpackedSize > quint64((std::numeric_limits<qint64>::max)())) {
+        if (error) *error = QStringLiteral("The LZMA-alone output size is too large.");
+        return false;
+    }
+
+    LzmaDecoderScope scope;
+    if (LzmaDec_Allocate(&scope.decoder,
+            reinterpret_cast<const Byte*>(header), LZMA_PROPS_SIZE,
+            &kXzAllocator) != SZ_OK) {
+        if (error) *error = QStringLiteral("The LZMA-alone properties are invalid or unsupported.");
+        return false;
+    }
+    LzmaDec_Init(&scope.decoder);
+    std::vector<Byte> packed(128 * 1024);
+    std::vector<Byte> decoded(256 * 1024);
+    SizeT packedSize = 0;
+    SizeT packedPosition = 0;
+    quint64 totalOutput = 0;
+    bool inputEnded = false;
+    bool finished = false;
+    while (!finished) {
+        if (packedPosition == packedSize && !inputEnded) {
+            const qint64 count = input->read(reinterpret_cast<char*>(packed.data()),
+                                             qint64(packed.size()));
+            if (count < 0) {
+                if (error) *error = input->errorString();
+                return false;
+            }
+            packedSize = SizeT(count);
+            packedPosition = 0;
+            inputEnded = count == 0;
+        }
+        if (inputEnded && packedPosition == packedSize) {
+            if (error) *error = QStringLiteral("The LZMA-alone stream is truncated.");
+            return false;
+        }
+        SizeT sourceSize = packedSize - packedPosition;
+        SizeT destinationSize = SizeT(decoded.size());
+        if (sizeKnown) {
+            const quint64 remaining = unpackedSize - totalOutput;
+            if (remaining == 0) {
+                if (error) *error = QStringLiteral("The LZMA-alone stream exceeds its declared size.");
+                return false;
+            }
+            destinationSize = SizeT(std::min<quint64>(remaining, destinationSize));
+        }
+        ELzmaStatus status = LZMA_STATUS_NOT_SPECIFIED;
+        const ELzmaFinishMode finishMode = sizeKnown &&
+            unpackedSize - totalOutput <= destinationSize
+            ? LZMA_FINISH_END : LZMA_FINISH_ANY;
+        const SRes result = LzmaDec_DecodeToBuf(&scope.decoder, decoded.data(),
+            &destinationSize, packed.data() + packedPosition, &sourceSize,
+            finishMode, &status);
+        packedPosition += sourceSize;
+        if (result != SZ_OK) {
+            if (error) *error = QStringLiteral("LZMA-alone decode failed (%1).").arg(result);
+            return false;
+        }
+        if (destinationSize && !writeAll(output,
+                reinterpret_cast<const char*>(decoded.data()), qint64(destinationSize))) {
+            if (error) *error = output->errorString();
+            return false;
+        }
+        totalOutput += destinationSize;
+        if (status == LZMA_STATUS_FINISHED_WITH_MARK) {
+            finished = !sizeKnown || totalOutput == unpackedSize;
+            if (!finished) {
+                if (error) *error = QStringLiteral("The LZMA-alone size does not match its stream.");
+                return false;
+            }
+        } else if (sizeKnown && totalOutput == unpackedSize) {
+            finished = status == LZMA_STATUS_MAYBE_FINISHED_WITHOUT_MARK ||
+                       status == LZMA_STATUS_NOT_FINISHED;
+            if (!finished) {
+                if (error) *error = QStringLiteral("The LZMA-alone stream did not finish cleanly.");
+                return false;
+            }
+        } else if (status == LZMA_STATUS_NEEDS_MORE_INPUT && inputEnded &&
+                   packedPosition == packedSize) {
+            if (error) *error = QStringLiteral("The LZMA-alone stream is truncated.");
+            return false;
+        } else if (sourceSize == 0 && destinationSize == 0 && inputEnded) {
+            if (error) *error = QStringLiteral("The LZMA-alone stream is truncated.");
+            return false;
+        }
+    }
+    if (packedPosition != packedSize || !inputEnded) {
+        if (packedPosition != packedSize || input->read(1).size() != 0) {
+            if (error) *error = QStringLiteral("The LZMA-alone stream has trailing data.");
+            return false;
+        }
+    }
+    if (input->error() != QFileDevice::NoError || !output->flush()) {
+        if (error) *error = input->error() != QFileDevice::NoError
+            ? input->errorString() : output->errorString();
+        return false;
+    }
+    return true;
+}
+
+bool isTarLzmaCandidate(QFile* input) {
+    if (!input || !input->seek(0)) return false;
+    const QString name = QFileInfo(input->fileName()).fileName().toLower();
+    const bool matches = name.endsWith(QStringLiteral(".tlz")) ||
+        name.endsWith(QStringLiteral(".tar.lzma")) ||
+        name.endsWith(QStringLiteral(".lzma"));
+    input->seek(0);
+    return matches;
+}
+
+peare_writer_status loadExistingTarOrLzma(peare_writer_handle_s* writer,
+                                          QFile* input, QTemporaryFile* decompressed,
+                                          bool* wrapped) {
+    if (!writer || !input || !decompressed || !wrapped)
+        return PEARE_WRITER_INVALID_ARGUMENT;
+    peare_writer_status status = loadExistingTar(writer, input);
+    if (status == PEARE_WRITER_OK) {
+        *wrapped = false;
+        return status;
+    }
+    writer->tarEntries.clear();
+    writer->names.clear();
+    writer->error.clear();
+    writer->errorUtf8.clear();
+    if (!isTarLzmaCandidate(input) || !decompressed->open())
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("The file is not a supported TAR.LZMA archive."), false);
+    QString decodeError;
+    if (!decompressLzmaAloneToFile(input, decompressed, &decodeError))
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT, decodeError, false);
+    status = loadExistingTar(writer, decompressed);
+    if (status != PEARE_WRITER_OK)
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("The LZMA-alone stream does not contain a supported TAR archive."),
                     false);
     *wrapped = true;
     writer->error.clear();
@@ -2070,6 +2243,8 @@ peare_writer_status writeTarFile(peare_writer_handle_s* writer,
                 ? static_cast<QIODevice*>(writer->tarUnixCompressStage.get())
             : writer->mode == peare_writer_handle_s::Mode::TarXzCreate
                 ? static_cast<QIODevice*>(writer->tarXzStage.get())
+            : writer->mode == peare_writer_handle_s::Mode::TarLzmaCreate
+                ? static_cast<QIODevice*>(writer->tarLzmaStage.get())
             : static_cast<QIODevice*>(writer->output.get());
     if (!output || !output->isOpen())
         return fail(writer, PEARE_WRITER_IO_ERROR, QStringLiteral("The TAR output is unavailable."));
@@ -2152,6 +2327,8 @@ peare_writer_status writeTarDirectory(peare_writer_handle_s* writer, const char*
                 ? static_cast<QIODevice*>(writer->tarUnixCompressStage.get())
             : writer->mode == peare_writer_handle_s::Mode::TarXzCreate
                 ? static_cast<QIODevice*>(writer->tarXzStage.get())
+            : writer->mode == peare_writer_handle_s::Mode::TarLzmaCreate
+                ? static_cast<QIODevice*>(writer->tarLzmaStage.get())
             : static_cast<QIODevice*>(writer->output.get());
     if (!output) return fail(writer, PEARE_WRITER_IO_ERROR,
                              QStringLiteral("The TAR output is unavailable."));
@@ -4747,7 +4924,7 @@ peare_writer_status peare_writer_create(peare_writer_handle* outWriter) {
     }
 }
 
-size_t peare_writer_create_format_count(void) { return 22; }
+size_t peare_writer_create_format_count(void) { return 24; }
 
 peare_writer_status peare_writer_get_create_format(size_t index,
                                                     peare_writer_format* outFormat) {
@@ -4774,7 +4951,8 @@ peare_writer_status peare_writer_get_create_format(size_t index,
         {"tar-bzip2", "TAR.BZ2 archive", "tar.bz2"},
         {"tar-zstd", "TAR.ZST archive", "tar.zst"},
         {"tar-unix-compress", "TAR.Z archive", "taz"},
-        {"tar-xz", "TAR.XZ archive", "txz"}
+        {"tar-xz", "TAR.XZ archive", "txz"},
+        {"tar-lzma", "TAR.LZMA archive", "tlz"}
     };
     if (index >= sizeof(formats) / sizeof(formats[0]))
         return PEARE_WRITER_INVALID_ARGUMENT;
@@ -4797,6 +4975,7 @@ size_t peare_writer_create_variant_count(const char* formatIdUtf8) {
     if (std::strcmp(formatIdUtf8, "tar-zstd") == 0) return 27;
     if (std::strcmp(formatIdUtf8, "tar-unix-compress") == 0) return 16;
     if (std::strcmp(formatIdUtf8, "tar-xz") == 0) return 4;
+    if (std::strcmp(formatIdUtf8, "tar-lzma") == 0) return 9;
     if (std::strcmp(formatIdUtf8, "cpio") == 0) return 6;
     if (std::strcmp(formatIdUtf8, "ar") == 0) return 2;
     if (std::strcmp(formatIdUtf8, "wad") == 0) return 2;
@@ -4969,6 +5148,10 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
     }
     if (std::strcmp(formatIdUtf8, "tar-xz") == 0 && index < 4) {
         *outVariant = xzVariants[index];
+        return PEARE_WRITER_OK;
+    }
+    if (std::strcmp(formatIdUtf8, "tar-lzma") == 0 && index < 9) {
+        *outVariant = lzmaVariants[index];
         return PEARE_WRITER_OK;
     }
     if (std::strcmp(formatIdUtf8, "cpio") == 0 && index < 6) {
@@ -5466,8 +5649,9 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
     const bool unixCompressWrappedTar =
         std::strcmp(formatIdUtf8, "tar-unix-compress") == 0;
     const bool xzWrappedTar = std::strcmp(formatIdUtf8, "tar-xz") == 0;
+    const bool lzmaWrappedTar = std::strcmp(formatIdUtf8, "tar-lzma") == 0;
     if (!gzipWrappedTar && !bzip2WrappedTar && !zstdWrappedTar &&
-        !unixCompressWrappedTar && !xzWrappedTar &&
+        !unixCompressWrappedTar && !xzWrappedTar && !lzmaWrappedTar &&
         std::strcmp(formatIdUtf8, "tar") != 0)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("The requested archive format is not supported."), false);
@@ -5484,6 +5668,7 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
     }
     int zstdLevel = 3;
     int unixCompressMaxBits = 16;
+    int lzmaLevel = 5;
     bool unixCompressBlockMode = true;
     unsigned xzCheckId = XZ_CHECK_CRC64;
     if (zstdWrappedTar && variant) {
@@ -5534,6 +5719,13 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
             return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                         QStringLiteral("The requested TAR.XZ integrity check is invalid."), false);
     }
+    if (lzmaWrappedTar && variant) {
+        if (std::strlen(variant) != 7 || std::strncmp(variant, "level-", 6) != 0 ||
+            variant[6] < '1' || variant[6] > '9')
+            return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                        QStringLiteral("The requested TAR.LZMA level is invalid."), false);
+        lzmaLevel = variant[6] - '0';
+    }
     return cBoundary(writer, [&]() -> peare_writer_status {
         if (writer->active)
             return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
@@ -5549,11 +5741,13 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
         writer->tarZstdStage.reset();
         writer->tarUnixCompressStage.reset();
         writer->tarXzStage.reset();
+        writer->tarLzmaStage.reset();
         writer->gzipWrappedTar = false;
         writer->bzip2WrappedTar = false;
         writer->zstdWrappedTar = false;
         writer->unixCompressWrappedTar = false;
         writer->xzWrappedTar = false;
+        writer->lzmaWrappedTar = false;
         writer->unixCompressPayloadWritten = false;
         writer->archiveComment.clear();
         if (gzipWrappedTar) {
@@ -5591,11 +5785,19 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
                     writer->tarXzStage ? writer->tarXzStage->errorString()
                         : QStringLiteral("Could not allocate TAR.XZ staging."), false);
         }
+        if (lzmaWrappedTar) {
+            writer->tarLzmaStage.reset(new (std::nothrow) QTemporaryFile);
+            if (!writer->tarLzmaStage || !writer->tarLzmaStage->open())
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                    writer->tarLzmaStage ? writer->tarLzmaStage->errorString()
+                        : QStringLiteral("Could not allocate TAR.LZMA staging."), false);
+        }
         writer->bzip2Level = bzip2Level;
         writer->zstdLevel = zstdLevel;
         writer->unixCompressMaxBits = unixCompressMaxBits;
         writer->unixCompressBlockMode = unixCompressBlockMode;
         writer->xzCheckId = xzCheckId;
+        writer->lzmaLevel = lzmaLevel;
         writer->output.reset(new (std::nothrow) QSaveFile(QString::fromUtf8(outputPathUtf8)));
         if (!writer->output)
             return fail(writer, PEARE_WRITER_ALLOCATION_FAILED,
@@ -5613,6 +5815,7 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
             : unixCompressWrappedTar
                 ? peare_writer_handle_s::Mode::TarUnixCompressCreate
             : xzWrappedTar ? peare_writer_handle_s::Mode::TarXzCreate
+            : lzmaWrappedTar ? peare_writer_handle_s::Mode::TarLzmaCreate
             : peare_writer_handle_s::Mode::TarCreate;
         return PEARE_WRITER_OK;
     });
@@ -5677,6 +5880,12 @@ int peare_writer_can_add_files(const char* containerPathUtf8) {
         bool xzWrappedTar = false;
         if (loadExistingTarOrXz(&probe, &input, &tarXzInput,
                                 &xzWrappedTar) == PEARE_WRITER_OK) return 1;
+        probe.tarEntries.clear();
+        probe.names.clear();
+        QTemporaryFile tarLzmaInput;
+        bool lzmaWrappedTar = false;
+        if (loadExistingTarOrLzma(&probe, &input, &tarLzmaInput,
+                                  &lzmaWrappedTar) == PEARE_WRITER_OK) return 1;
         probe.tarEntries.clear();
         probe.names.clear();
         if (loadExistingCpio(&probe, &input) == PEARE_WRITER_OK) return 1;
@@ -5801,6 +6010,15 @@ peare_writer_status peare_writer_get_update_capabilities(
         }
         probe.tarEntries.clear();
         probe.names.clear();
+        QTemporaryFile tarLzmaInput;
+        bool lzmaWrappedTar = false;
+        if (loadExistingTarOrLzma(&probe, &input, &tarLzmaInput,
+                                  &lzmaWrappedTar) == PEARE_WRITER_OK) {
+            setArchiveCapabilities();
+            return PEARE_WRITER_OK;
+        }
+        probe.tarEntries.clear();
+        probe.names.clear();
         if (loadExistingCpio(&probe, &input) == PEARE_WRITER_OK) {
             setArchiveCapabilities();
             return PEARE_WRITER_OK;
@@ -5886,11 +6104,13 @@ peare_writer_status peare_writer_add_files_begin(peare_writer_handle writer,
         writer->tarZstdInput.reset();
         writer->tarUnixCompressInput.reset();
         writer->tarXzInput.reset();
+        writer->tarLzmaInput.reset();
         writer->gzipWrappedTar = false;
         writer->bzip2WrappedTar = false;
         writer->zstdWrappedTar = false;
         writer->unixCompressWrappedTar = false;
         writer->xzWrappedTar = false;
+        writer->lzmaWrappedTar = false;
         peare_writer_status parsed = loadExistingZip(writer, input);
         auto mode = peare_writer_handle_s::Mode::ZipUpdate;
         if (parsed == PEARE_WRITER_OK) writer->zipMethod = 8;
@@ -5979,6 +6199,29 @@ peare_writer_status peare_writer_add_files_begin(peare_writer_handle writer,
                             xzError.isEmpty()
                                 ? QStringLiteral("The XZ stream does not contain a supported TAR archive.")
                                 : xzError, false);
+                }
+            }
+            if (parsed != PEARE_WRITER_OK) {
+                writer->entries.clear();
+                writer->tarEntries.clear();
+                writer->names.clear();
+                writer->archiveComment.clear();
+                writer->tarLzmaInput.reset(new (std::nothrow) QTemporaryFile);
+                if (!writer->tarLzmaInput)
+                    return fail(writer, PEARE_WRITER_ALLOCATION_FAILED,
+                                QStringLiteral("Could not allocate TAR.LZMA input staging."), false);
+                parsed = loadExistingTarOrLzma(
+                    writer, input, writer->tarLzmaInput.get(), &writer->lzmaWrappedTar);
+                if (parsed == PEARE_WRITER_OK && writer->lzmaWrappedTar)
+                    input = writer->tarLzmaInput.get();
+                else {
+                    const QString lzmaError = writer->error;
+                    writer->tarLzmaInput.reset();
+                    if (isTarLzmaCandidate(input))
+                        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            lzmaError.isEmpty()
+                                ? QStringLiteral("The LZMA-alone stream does not contain a supported TAR archive.")
+                                : lzmaError, false);
                 }
             }
             if (parsed != PEARE_WRITER_OK) {
@@ -6186,6 +6429,7 @@ peare_writer_status peare_writer_add_file(peare_writer_handle writer,
         writer->mode == peare_writer_handle_s::Mode::TarZstdCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarUnixCompressCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarXzCreate ||
+        writer->mode == peare_writer_handle_s::Mode::TarLzmaCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarUpdate)
         return cBoundary(writer, [&] { return writeTarFile(writer, sourcePathUtf8, entryNameUtf8); });
     if (writer->mode == peare_writer_handle_s::Mode::CpioCreate ||
@@ -6289,6 +6533,7 @@ peare_writer_status peare_writer_create_directory(peare_writer_handle writer,
         writer->mode == peare_writer_handle_s::Mode::TarZstdCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarUnixCompressCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarXzCreate ||
+        writer->mode == peare_writer_handle_s::Mode::TarLzmaCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarUpdate)
         return cBoundary(writer, [&] { return writeTarDirectory(writer, entryNameUtf8); });
     if (writer->mode == peare_writer_handle_s::Mode::CpioCreate ||
@@ -7042,6 +7287,7 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
         writer->mode == peare_writer_handle_s::Mode::TarZstdCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarUnixCompressCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarXzCreate ||
+        writer->mode == peare_writer_handle_s::Mode::TarLzmaCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             if (writer->mode == peare_writer_handle_s::Mode::TarUpdate) {
@@ -7089,6 +7335,13 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
                             writer->tarXzOutput ? writer->tarXzOutput->errorString()
                                 : QStringLiteral("Could not allocate TAR.XZ output staging."));
                 }
+                if (writer->lzmaWrappedTar) {
+                    writer->tarLzmaOutput.reset(new (std::nothrow) QTemporaryFile);
+                    if (!writer->tarLzmaOutput || !writer->tarLzmaOutput->open())
+                        return fail(writer, PEARE_WRITER_IO_ERROR,
+                            writer->tarLzmaOutput ? writer->tarLzmaOutput->errorString()
+                                : QStringLiteral("Could not allocate TAR.LZMA output staging."));
+                }
             }
             QIODevice* archiveOutput = writer->mode == peare_writer_handle_s::Mode::TarGzipCreate
                 ? static_cast<QIODevice*>(writer->tarGzipStage.get())
@@ -7115,6 +7368,11 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
                 : writer->mode == peare_writer_handle_s::Mode::TarUpdate &&
                     writer->xzWrappedTar
                     ? static_cast<QIODevice*>(writer->tarXzOutput.get())
+                : writer->mode == peare_writer_handle_s::Mode::TarLzmaCreate
+                    ? static_cast<QIODevice*>(writer->tarLzmaStage.get())
+                : writer->mode == peare_writer_handle_s::Mode::TarUpdate &&
+                    writer->lzmaWrappedTar
+                    ? static_cast<QIODevice*>(writer->tarLzmaOutput.get())
                     : static_cast<QIODevice*>(writer->output.get());
             if (!archiveOutput || !archiveOutput->isOpen())
                 return fail(writer, PEARE_WRITER_IO_ERROR,
@@ -7225,6 +7483,20 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
                 const peare_writer_status compressed = writeXzMember(
                     writer, tarPathUtf8.constData(), "archive.tar");
                 if (compressed != PEARE_WRITER_OK) return compressed;
+            } else if (writer->mode == peare_writer_handle_s::Mode::TarLzmaCreate ||
+                       (writer->mode == peare_writer_handle_s::Mode::TarUpdate &&
+                        writer->lzmaWrappedTar)) {
+                QTemporaryFile* tarFile = writer->mode ==
+                    peare_writer_handle_s::Mode::TarLzmaCreate
+                    ? writer->tarLzmaStage.get() : writer->tarLzmaOutput.get();
+                const QString tarPath = tarFile->fileName();
+                if (!tarFile->flush())
+                    return fail(writer, PEARE_WRITER_IO_ERROR, tarFile->errorString());
+                tarFile->close();
+                const QByteArray tarPathUtf8 = tarPath.toUtf8();
+                const peare_writer_status compressed = writeLzmaAloneMember(
+                    writer, tarPathUtf8.constData(), "archive.tar");
+                if (compressed != PEARE_WRITER_OK) return compressed;
             }
             if (!writer->output->commit())
                 return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
@@ -7245,6 +7517,9 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
             writer->tarXzStage.reset();
             writer->tarXzOutput.reset();
             writer->tarXzInput.reset();
+            writer->tarLzmaStage.reset();
+            writer->tarLzmaOutput.reset();
+            writer->tarLzmaInput.reset();
             writer->tarEntries.clear();
             writer->entries.clear();
             writer->names.clear();
@@ -7256,6 +7531,7 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
             writer->zstdWrappedTar = false;
             writer->unixCompressWrappedTar = false;
             writer->xzWrappedTar = false;
+            writer->lzmaWrappedTar = false;
             writer->unixCompressPayloadWritten = false;
             writer->mode = peare_writer_handle_s::Mode::None;
             writer->tarContentEnd = 0;

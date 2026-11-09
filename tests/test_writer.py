@@ -4802,7 +4802,7 @@ def test_tar_zstd_create_and_cud_roundtrip_with_independent_decoder(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 22
+    assert writer_lib.peare_writer_create_format_count() == 24
     assert writer_lib.peare_writer_create_variant_count(b"tar-zstd") == 27
     variants = [f"fast-{level}" for level in range(5, 0, -1)] + [
         f"level-{level}" for level in range(1, 23)]
@@ -5041,7 +5041,7 @@ def test_tar_xz_create_all_checks_and_7zip(writer_lib, peare_lib, tmp_path):
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     checks = ("none", "crc32", "crc64", "sha256")
-    assert writer_lib.peare_writer_create_format_count() == 22
+    assert writer_lib.peare_writer_create_format_count() == 24
     assert writer_lib.peare_writer_create_variant_count(b"tar-xz") == len(checks)
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for check in checks:
@@ -5156,6 +5156,124 @@ def test_tar_xz_cud_from_independent_sample(writer_lib, peare_lib,
         scenario_path = tmp_path / f"tar-xz-gui-{view}.json"
         scenario_path.write_text(json.dumps(scenario), encoding="utf-8")
         output_dir = tmp_path / f"tar-xz-gui-{view}"
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+             "--exe", str(peare_gui_path), "--image", str(sample),
+             "--scenario", str(scenario_path), "--output-dir", str(output_dir)],
+            capture_output=True, text=True, timeout=240)
+        assert result.returncode == 0, result.stdout + result.stderr
+        report = json.loads((output_dir / "writer-test-report.json").read_text(
+            encoding="utf-8"))
+        assert all(operation["passed"] for operation in report["operations"])
+
+def test_tar_lzma_create_all_levels_and_7zip(writer_lib, peare_lib, tmp_path):
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required for independent TAR.LZMA validation")
+    source = ROOT / "README.md"
+    payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    assert writer_lib.peare_writer_create_format_count() == 24
+    assert writer_lib.peare_writer_create_variant_count(b"tar-lzma") == 9
+    item = _WriterInputFile(str(source).encode(), source.name.encode())
+    for level in range(1, 10):
+        archive = tmp_path / f"created-level-{level}.tlz"
+        writer = _HANDLE()
+        assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+        try:
+            assert writer_lib.peare_writer_add_files_to(
+                writer, str(archive).encode(), b"tar-lzma",
+                f"level-{level}".encode(), 0, C.byref(item), 1) == 0, \
+                writer_lib.peare_writer_last_error(writer)
+        finally:
+            writer_lib.peare_writer_destroy(writer)
+        checked = subprocess.run(
+            [seven_zip, "t", str(archive)], capture_output=True,
+            text=True, timeout=60)
+        assert checked.returncode == 0, checked.stdout + checked.stderr
+        with lzma.open(archive, "rb") as compressed:
+            with tarfile.open(fileobj=io.BytesIO(compressed.read()), mode="r:") as tar:
+                member = tar.extractfile("README.md")
+                assert member is not None
+                assert hashlib.sha256(member.read()).hexdigest() == payload_hash
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = opener.normalized_tree()
+            assert any(row["path"].endswith("/README.md") and
+                       row["sha256"] == payload_hash for row in rows)
+
+def test_tar_lzma_cud_from_independent_sample(writer_lib, peare_lib,
+                                               peare_gui_path, tmp_path):
+    sample = ROOT / "tests" / "formats" / "lzma" / "fixtures" / "docs.tar.lzma"
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required for independent TAR.LZMA validation")
+    updated = tmp_path / "updated.tar.lzma"
+    original_hash = _sha256_file(sample)
+    shutil.copyfile(sample, updated)
+    assert writer_lib.peare_writer_can_add_files(str(updated).encode()) == 1
+    replacement = ROOT / "AGENTS.md"
+    added = ROOT / "THIRDPARTY.md"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(
+            writer, str(updated).encode()) == 0, writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"README.md") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"docs/TESTING.md", b"docs/TESTING-renamed.md") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(added).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"tests/POLICY.md", 0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    checked = subprocess.run(
+        [seven_zip, "t", str(updated)], capture_output=True,
+        text=True, timeout=60)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert _sha256_file(sample) == original_hash
+    with lzma.open(updated, "rb") as compressed:
+        with tarfile.open(fileobj=io.BytesIO(compressed.read()), mode="r:") as tar:
+            rows = {member.name: tar.extractfile(member).read()
+                    for member in tar.getmembers() if member.isfile()}
+    assert rows["README.md"] == replacement.read_bytes()
+    assert rows["added.txt"] == added.read_bytes()
+    assert "docs/TESTING-renamed.md" in rows
+    assert "docs/TESTING.md" not in rows
+    assert "tests/POLICY.md" not in rows
+    with peare_lib.open_file(str(updated)) as opener:
+        paths = {row["path"]: row["sha256"] for row in opener.normalized_tree()}
+        replacement_hash = hashlib.sha256(replacement.read_bytes()).hexdigest()
+        assert any(path.endswith("/README.md") and value == replacement_hash
+                   for path, value in paths.items())
+        assert any(path.endswith("/docs/TESTING-renamed.md") for path in paths)
+        assert not any(path.endswith("/tests/POLICY.md") for path in paths)
+
+    for view in ("tree", "details"):
+        scenario = {
+            "view": view,
+            "target_index": 0,
+            "operations": [
+                {"type": "create_directory", "view_path": "writer-test-copy",
+                 "name": "WriterTest"},
+                {"type": "add_files", "view_path": "writer-test-copy",
+                 "destination": "WriterTest", "sources": [str(added)],
+                 "expect_present": "writer-test-copy/WriterTest/THIRDPARTY.md"},
+                {"type": "rename",
+                 "path": "writer-test-copy/WriterTest/THIRDPARTY.md",
+                 "view_path": "writer-test-copy/WriterTest", "name": "renamed.txt",
+                 "expect_present": "writer-test-copy/WriterTest/renamed.txt"},
+                {"type": "delete",
+                 "path": "writer-test-copy/WriterTest/renamed.txt",
+                 "view_path": "writer-test-copy/WriterTest",
+                 "expect_absent": "writer-test-copy/WriterTest/renamed.txt"},
+            ],
+        }
+        scenario_path = tmp_path / f"tar-lzma-gui-{view}.json"
+        scenario_path.write_text(json.dumps(scenario), encoding="utf-8")
+        output_dir = tmp_path / f"tar-lzma-gui-{view}"
         result = subprocess.run(
             [sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
              "--exe", str(peare_gui_path), "--image", str(sample),

@@ -28,6 +28,7 @@ QString payloadName(const QString& logicalName)
 {
     QString name = QFileInfo(logicalName).fileName();
     if (name.endsWith(QStringLiteral(".lzma"), Qt::CaseInsensitive)) name.chop(5);
+    else if (name.endsWith(QStringLiteral(".tlz"), Qt::CaseInsensitive)) name.chop(4);
     return name.isEmpty() ? QStringLiteral("lzma_payload") : name;
 }
 
@@ -54,7 +55,9 @@ bool readAll(const fs::ByteStorePtr& source, std::vector<std::uint8_t>* data)
 
 bool LzmaModule::hasExtension(const QString& fileName)
 {
-    return QFileInfo(fileName).suffix().compare(QLatin1String("lzma"), Qt::CaseInsensitive) == 0;
+    const QString suffix = QFileInfo(fileName).suffix();
+    return suffix.compare(QLatin1String("lzma"), Qt::CaseInsensitive) == 0 ||
+           suffix.compare(QLatin1String("tlz"), Qt::CaseInsensitive) == 0;
 }
 
 ModulePtr LzmaModule::open(const QString& filePath)
