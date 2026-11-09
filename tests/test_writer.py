@@ -38,6 +38,8 @@ import zlib
 
 import lzma
 
+import zstandard
+
 import pytest
 
 import peare_opener as po
@@ -4788,12 +4790,129 @@ def test_tar_bzip2_create_and_cud_roundtrip_with_7zip(
     assert checked.returncode == 0, checked.stdout + checked.stderr
     assert _sha256_file(tbz_sample) == tbz_hash
 
+def test_tar_zstd_create_and_cud_roundtrip_with_independent_decoder(
+        writer_lib, peare_lib, tmp_path):
+    def read_tar(path):
+        with path.open("rb") as compressed:
+            with zstandard.ZstdDecompressor().stream_reader(compressed) as reader:
+                decoded = reader.read()
+        with tarfile.open(fileobj=io.BytesIO(decoded), mode="r:") as archive:
+            return {member.name: archive.extractfile(member).read()
+                    for member in archive.getmembers() if member.isfile()}
+
+    payload = tmp_path / "payload.txt"
+    payload.write_bytes((ROOT / "README.md").read_bytes())
+    assert writer_lib.peare_writer_create_format_count() == 20
+    assert writer_lib.peare_writer_create_variant_count(b"tar-zstd") == 27
+    variants = [f"fast-{level}" for level in range(5, 0, -1)] + [
+        f"level-{level}" for level in range(1, 23)]
+    for variant in variants:
+        archive = tmp_path / f"created-{variant}.tar.zst"
+        writer = _HANDLE()
+        assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+        try:
+            assert writer_lib.peare_writer_create_begin_variant(
+                writer, b"tar-zstd", variant.encode(), str(archive).encode()) == 0, \
+                writer_lib.peare_writer_last_error(writer)
+            assert writer_lib.peare_writer_create_file(
+                writer, str(payload).encode(), b"payload.txt") == 0
+            assert writer_lib.peare_writer_finish(writer) == 0, \
+                writer_lib.peare_writer_last_error(writer)
+        finally:
+            writer_lib.peare_writer_destroy(writer)
+        created = read_tar(archive)
+        assert list(created) == ["payload.txt"]
+        assert created["payload.txt"] == payload.read_bytes()
+
+    batch_archive = tmp_path / "batch.tar.zst"
+    batch_input = _WriterInputFile(str(payload).encode(), b"batch.txt")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_to(
+            writer, str(batch_archive).encode(), b"tar-zstd", b"level-3", 0,
+            C.byref(batch_input), 1) == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    batch = read_tar(batch_archive)
+    assert list(batch) == ["batch.txt"]
+    assert batch["batch.txt"] == payload.read_bytes()
+
+    plain_zstd = ROOT / "tests" / "formats" / "zstd" / "fixtures" / "readme.zst"
+    assert writer_lib.peare_writer_can_add_files(str(plain_zstd).encode()) == 0
+    sample = ROOT / "tests" / "formats" / "zstd" / "fixtures" / "docs.tar.zst"
+    updated_archive = tmp_path / "updated.tar.zst"
+    sample_hash = _sha256_file(sample)
+    shutil.copyfile(sample, updated_archive)
+    assert writer_lib.peare_writer_can_add_files(str(updated_archive).encode()) == 1
+    replacement = ROOT / "AGENTS.md"
+    original_rows = set(read_tar(sample))
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(
+            writer, str(updated_archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"README.md") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"README.md", b"RENAMED.md") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(payload).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"docs/TESTING.md", 0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    rows = read_tar(updated_archive)
+    assert set(rows) == (original_rows - {"README.md", "docs/TESTING.md"}) | {
+        "RENAMED.md", "added.txt"}
+    assert rows["RENAMED.md"] == replacement.read_bytes()
+    assert rows["added.txt"] == payload.read_bytes()
+    assert _sha256_file(sample) == sample_hash
+    opened = peare_lib.open_file(str(updated_archive))
+    assert opened is not None
+    try:
+        rows = {row["path"]: row["sha256"] for row in opened.normalized_tree()}
+        assert rows["updated.tar/RENAMED.md"] == hashlib.sha256(
+            replacement.read_bytes()).hexdigest()
+        assert rows["updated.tar/added.txt"] == hashlib.sha256(
+            payload.read_bytes()).hexdigest()
+        assert "updated.tar/docs/TESTING.md" not in rows
+    finally:
+        opened.close()
+
+    for suffix in (".tzst", ".tar.zstd"):
+        alias_archive = tmp_path / f"updated{suffix}"
+        shutil.copyfile(sample, alias_archive)
+        assert writer_lib.peare_writer_can_add_files(
+            str(alias_archive).encode()) == 1
+        writer = _HANDLE()
+        assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+        try:
+            assert writer_lib.peare_writer_update_begin(
+                writer, str(alias_archive).encode()) == 0, \
+                writer_lib.peare_writer_last_error(writer)
+            assert writer_lib.peare_writer_create_file(
+                writer, str(payload).encode(), b"alias-added.txt") == 0
+            assert writer_lib.peare_writer_update_finish(writer) == 0, \
+                writer_lib.peare_writer_last_error(writer)
+        finally:
+            writer_lib.peare_writer_destroy(writer)
+        assert read_tar(alias_archive)["alias-added.txt"] == payload.read_bytes()
+
 @pytest.mark.parametrize(("sample_name", "tar_root"), [
-    ("docs.tgz", "archive.tar"), ("docs.tbz2", "writer-test-copy.tbz2")])
+    ("docs.tgz", "archive.tar"), ("docs.tbz2", "writer-test-copy.tbz2"),
+    ("docs.tar.zst", "writer-test-copy")])
 @pytest.mark.parametrize("view", ["tree", "details"])
 def test_compressed_tar_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
                                       tmp_path, sample_name, tar_root, view):
-    sample = ROOT / "tests" / "formats" / "tar-compressed" / "fixtures" / sample_name
+    sample_root = (ROOT / "tests" / "formats" / "zstd" / "fixtures"
+                   if sample_name == "docs.tar.zst" else
+                   ROOT / "tests" / "formats" / "tar-compressed" / "fixtures")
+    sample = sample_root / sample_name
     prefix = f"{tar_root}/"
     sources = [ROOT / "README.md", ROOT / "AGENTS.md"]
     scenario = {

@@ -901,6 +901,10 @@ add_library(PeareWriter SHARED
     src/writer/third_party/zstd/common/threading.c
     src/writer/third_party/zstd/common/xxhash.c
     src/writer/third_party/zstd/common/zstd_common.c
+    src/opener/compression/third_party/zstd/decompress/huf_decompress.c
+    src/opener/compression/third_party/zstd/decompress/zstd_decompress.c
+    src/opener/compression/third_party/zstd/decompress/zstd_decompress_block.c
+    src/opener/compression/third_party/zstd/decompress/zstd_ddict.c
     src/writer/third_party/zstd/compress/fse_compress.c
     src/writer/third_party/zstd/compress/hist.c
     src/writer/third_party/zstd/compress/huf_compress.c

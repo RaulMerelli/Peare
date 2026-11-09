@@ -55,11 +55,14 @@ sample evidence.
 | `tests/test_xar_samples_abi.py` | Checks XAR corpus samples with stored, zlib, and bzip2 members through the Opener ABI. |
 | `tests/test_deb_samples_abi.py` | Opens official Debian binary packages through the Opener ABI and checks nested control and data TAR members. Set `PEARE_DEB_SAMPLE_ROOT` to the local sample directory. |
 | `tests/test_rpm_samples_abi.py` | Opens RPM packages from ArcaOS, Red Hat EL3, and Fedora 42 through the Opener ABI and checks CPIO members. Set `PEARE_RPM_SAMPLE_ROOT` to the local sample directory. |
-| `tests/test_writer.py` | Runs CUD operations on disposable disk-image copies. Checks GZIP, BZIP2, Unix compress, LZMA-alone, XZ, and Zstandard with independent tools. Checks supported VMDK output with VMware when configured. Set `PEARE_ZSTD_TEST_EXECUTABLE` to the Zstandard CLI path when 7-Zip is older than 24.01. |
+| `tests/test_writer.py` | Runs CUD operations on disposable disk-image copies. Checks GZIP, BZIP2, Unix compress, LZMA-alone, XZ, and Zstandard with independent tools. Checks TAR.ZST creation and updates with `python-zstandard`. Checks supported VMDK output with VMware when configured. Set `PEARE_ZSTD_TEST_EXECUTABLE` to a Zstandard CLI path when 7-Zip is older than 24.01. |
 | `tests/test_android_package.py` | Checks the ELF architecture of native libraries in a built Android APK. It does not run the APK on a device. |
 | `tests/run_tests.py` | Runs pytest and stores pytest files and Python bytecode in `tmp/test-output`. |
 | `tests/run_gui_preview_tests.py` | Runs offscreen GUI previews for arbitrary source files and full resource-tree paths. |
 | `tests/run_gui_writer_tests.py` | Runs a manifest-driven CUD scenario through the GUI on a disposable image copy. |
+
+The writer tests require `pytest` and `zstandard` from PyPI. The Zstandard
+package acts as an independent decoder for Zstandard Writer output.
 
 The repository golden tests use fixtures under `tests/formats`. Each fixture
 must include its source and redistribution terms. Samples with unknown origins
