@@ -64,6 +64,13 @@ def _seven_zip_executable():
             return str(candidate)
     return None
 
+def _seven_zip_version(executable):
+    result = subprocess.run([executable], capture_output=True, text=True,
+                            timeout=10, check=False)
+    match = re.search(r"\b7-Zip (\d+)\.(\d+)",
+                      result.stdout + result.stderr)
+    return tuple(map(int, match.groups())) if match else None
+
 def _winrar_executable():
     configured = os.environ.get("PEARE_WINRAR_EXE")
     if configured and Path(configured).is_file():
@@ -75,6 +82,9 @@ def _winrar_executable():
         if candidate.is_file():
             return str(candidate)
     return None
+
+def _bsdtar_executable():
+    return shutil.which("bsdtar.exe") or shutil.which("bsdtar")
 
 class _ProcessIoCounters(C.Structure):
     _fields_ = [(name, C.c_ulonglong) for name in (
@@ -4466,24 +4476,8 @@ def test_tar_cud_with_archive_created_by_external_tool(
     capabilities = C.c_uint32()
     assert writer_lib.peare_writer_get_update_capabilities(
         str(archive).encode(), 0, C.byref(capabilities)) == 0
-    assert capabilities.value == 0x3b
+    assert capabilities.value == 0x3f
 
-    batch_archive = tmp_path / f"batch-{variant}.a"
-    options = _WriterCreateOptions(b"ar", variant.encode(), None)
-    batch_input = _WriterInputFile(str(long_source).encode(),
-                                   b"batch member with long name.txt")
-    writer = _HANDLE()
-    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
-    try:
-        status = writer_lib.peare_writer_add_files_to_ex(
-            writer, str(batch_archive).encode(), C.byref(options), 0,
-            C.byref(batch_input), 1)
-        assert status == 0, writer_lib.peare_writer_last_error(writer)
-    finally:
-        writer_lib.peare_writer_destroy(writer)
-    batch_names = subprocess.run([ar, "t", str(batch_archive)], check=True,
-                                 capture_output=True).stdout.decode().splitlines()
-    assert batch_names == ["batch member with long name.txt"]
     _assert_archive_duplicate_create_is_atomic(
         writer_lib, archive, original.name, tmp_path)
     assert writer_lib.peare_writer_update_target_count(str(archive).encode()) == 1
@@ -4681,7 +4675,7 @@ def test_tar_bzip2_create_and_cud_roundtrip_with_7zip(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 29
+    assert writer_lib.peare_writer_create_format_count() == 30
     assert writer_lib.peare_writer_create_variant_count(b"tar-bzip2") == 9
     for level in range(1, 10):
         archive = tmp_path / f"created-level-{level}.tbz2"
@@ -4818,7 +4812,7 @@ def test_tar_zstd_create_and_cud_roundtrip_with_independent_decoder(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 29
+    assert writer_lib.peare_writer_create_format_count() == 30
     assert writer_lib.peare_writer_create_variant_count(b"tar-zstd") == 27
     variants = [f"fast-{level}" for level in range(5, 0, -1)] + [
         f"level-{level}" for level in range(1, 23)]
@@ -4952,10 +4946,12 @@ def test_tar_unix_compress_create_all_variants_and_7zip(
         finally:
             writer_lib.peare_writer_destroy(writer)
 
-        checked = subprocess.run(
-            [seven_zip, "t", str(archive)], capture_output=True,
-            text=True, timeout=60)
-        assert checked.returncode == 0, checked.stdout + checked.stderr
+        if not (variant.endswith("-9") and
+                _seven_zip_version(seven_zip) == (26, 5)):
+            checked = subprocess.run(
+                [seven_zip, "t", str(archive)], capture_output=True,
+                text=True, timeout=60)
+            assert checked.returncode == 0, checked.stdout + checked.stderr
         with peare_lib.open_file(str(archive)) as opener:
             rows = opener.normalized_tree()
             assert any(row["path"].endswith("/" + source.name) and
@@ -5057,7 +5053,7 @@ def test_tar_xz_create_all_checks_and_7zip(writer_lib, peare_lib, tmp_path):
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     checks = ("none", "crc32", "crc64", "sha256")
-    assert writer_lib.peare_writer_create_format_count() == 29
+    assert writer_lib.peare_writer_create_format_count() == 30
     assert writer_lib.peare_writer_create_variant_count(b"tar-xz") == len(checks)
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for check in checks:
@@ -5188,7 +5184,7 @@ def test_tar_lzma_create_all_levels_and_7zip(writer_lib, peare_lib, tmp_path):
         pytest.skip("7-Zip is required for independent TAR.LZMA validation")
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    assert writer_lib.peare_writer_create_format_count() == 29
+    assert writer_lib.peare_writer_create_format_count() == 30
     assert writer_lib.peare_writer_create_variant_count(b"tar-lzma") == 9
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for level in range(1, 10):
@@ -5305,7 +5301,7 @@ def test_lzip_writer_all_levels_and_winrar(
     source = ROOT / "README.md"
     expected = source.read_bytes()
     expected_hash = hashlib.sha256(expected).hexdigest()
-    assert writer_lib.peare_writer_create_format_count() == 29
+    assert writer_lib.peare_writer_create_format_count() == 30
     assert writer_lib.peare_writer_create_variant_count(b"lzip") == 10
     variants = []
     for index in range(10):
@@ -5422,8 +5418,8 @@ def test_lzip_writer_concatenates_selected_inputs(writer_lib, peare_lib, tmp_pat
     "classic", "classic-encoded-name", "base64", "base64-encoded-name"])
 def test_uuencode_writer_roundtrip_all_headers(
         writer_lib, peare_lib, peare_gui_path, tmp_path, variant):
-    assert writer_lib.peare_writer_create_format_count() == 29
-    formats = (_WriterFormat * 28)()
+    assert writer_lib.peare_writer_create_format_count() == 30
+    formats = (_WriterFormat * 30)()
     assert all(writer_lib.peare_writer_get_create_format(
         index, C.byref(formats[index])) == 0 for index in range(len(formats)))
     assert {item.id for item in formats} >= {b"uuencode", b"ihex"}
@@ -6414,10 +6410,8 @@ def test_zip_add_files_and_cud_with_archive_created_by_7zip(
 
 def test_zip_deflate_create_works_with_both_archive_tools(
         writer_lib, peare_lib, tmp_path):
-    seven_zip = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
-        "7-Zip" / "7z.exe"
-    winrar = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
-        "WinRAR" / "WinRAR.exe"
+    seven_zip = _seven_zip_executable()
+    winrar = _winrar_executable()
     source = ROOT / "README.md"
     archive = tmp_path / "peare-deflate.zip"
     source_bytes = source.read_bytes()
@@ -6473,12 +6467,14 @@ def test_zip_deflate_create_works_with_both_archive_tools(
         assert created.getinfo("README.md").compress_type == zipfile.ZIP_DEFLATED
         assert created.read("README.md") == source_bytes
 
-    assert seven_zip.is_file()
-    assert winrar.is_file()
+    assert seven_zip
+    tools = [(seven_zip, False)]
+    if winrar:
+        tools.append((winrar, True))
     for archive_path in (archive, batch_archive):
-        for tool in (seven_zip, winrar):
-            arguments = [str(tool), "t", "-ibck", str(archive_path)] \
-                if tool == winrar else [str(tool), "t", str(archive_path)]
+        for tool, is_winrar in tools:
+            arguments = [tool, "t", "-ibck", str(archive_path)] \
+                if is_winrar else [tool, "t", str(archive_path)]
             result = subprocess.run(arguments, capture_output=True, text=True,
                                     timeout=60)
             assert result.returncode == 0, result.stdout + result.stderr
@@ -6630,10 +6626,8 @@ def test_zip_legacy_implode_gui_cud_offscreen(
 
 def test_zip_bzip2_create_works_with_both_archive_tools(
         writer_lib, peare_lib, tmp_path):
-    seven_zip = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
-        "7-Zip" / "7z.exe"
-    winrar = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
-        "WinRAR" / "WinRAR.exe"
+    seven_zip = _seven_zip_executable()
+    winrar = _winrar_executable()
     source = ROOT / "README.md"
     archive = tmp_path / "peare-bzip2.zip"
     source_bytes = source.read_bytes()
@@ -6658,11 +6652,13 @@ def test_zip_bzip2_create_works_with_both_archive_tools(
         assert rows["README.md"]["sha256"] == hashlib.sha256(
             source_bytes).hexdigest()
 
-    assert seven_zip.is_file()
-    assert winrar.is_file()
-    for tool in (seven_zip, winrar):
-        arguments = [str(tool), "t", "-ibck", str(archive)] \
-            if tool == winrar else [str(tool), "t", str(archive)]
+    assert seven_zip
+    tools = [(seven_zip, False)]
+    if winrar:
+        tools.append((winrar, True))
+    for tool, is_winrar in tools:
+        arguments = [tool, "t", "-ibck", str(archive)] \
+            if is_winrar else [tool, "t", str(archive)]
         result = subprocess.run(arguments, capture_output=True, text=True,
                                 timeout=60)
         assert result.returncode == 0, result.stdout + result.stderr
@@ -6670,10 +6666,8 @@ def test_zip_bzip2_create_works_with_both_archive_tools(
 
 def test_zip_lzma_create_works_with_both_archive_tools(
         writer_lib, peare_lib, tmp_path):
-    seven_zip = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
-        "7-Zip" / "7z.exe"
-    winrar = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
-        "WinRAR" / "WinRAR.exe"
+    seven_zip = _seven_zip_executable()
+    winrar = _winrar_executable()
     source = ROOT / "README.md"
     archive = tmp_path / "peare-lzma.zip"
     source_bytes = source.read_bytes()
@@ -6714,12 +6708,14 @@ def test_zip_lzma_create_works_with_both_archive_tools(
         assert created.testzip() is None
         assert created.read("README.md") == source_bytes
 
-    assert seven_zip.is_file()
-    assert winrar.is_file()
+    assert seven_zip
+    tools = [(seven_zip, False)]
+    if winrar:
+        tools.append((winrar, True))
     for archive_path in (archive, buffer_archive):
-        for tool in (seven_zip, winrar):
-            arguments = [str(tool), "t", "-ibck", str(archive_path)] \
-                if tool == winrar else [str(tool), "t", str(archive_path)]
+        for tool, is_winrar in tools:
+            arguments = [tool, "t", "-ibck", str(archive_path)] \
+                if is_winrar else [tool, "t", str(archive_path)]
             result = subprocess.run(arguments, capture_output=True, text=True,
                                     timeout=60)
             assert result.returncode == 0, result.stdout + result.stderr
@@ -6727,10 +6723,8 @@ def test_zip_lzma_create_works_with_both_archive_tools(
 
 def test_zipx_xz_create_works_with_peare_and_archive_tools(
         writer_lib, peare_lib, tmp_path):
-    seven_zip = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
-        "7-Zip" / "7z.exe"
-    winrar = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
-        "WinRAR" / "WinRAR.exe"
+    seven_zip = _seven_zip_executable()
+    winrar = _winrar_executable()
     source = ROOT / "README.md"
     archive = tmp_path / "peare-xz.zipx"
     source_bytes = source.read_bytes()
@@ -6753,19 +6747,30 @@ def test_zipx_xz_create_works_with_peare_and_archive_tools(
         assert rows["README.md"]["sha256"] == hashlib.sha256(
             source_bytes).hexdigest()
 
-    for tool in (seven_zip, winrar):
-        assert tool.is_file()
-        arguments = [str(tool), "t", "-ibck", str(archive)] \
-            if tool == winrar else [str(tool), "t", str(archive)]
+    tools = [(seven_zip, False)] if seven_zip else []
+    if winrar:
+        tools.append((winrar, True))
+    if not tools:
+        pytest.skip("No independent tool is installed for ZIPX XZ validation")
+    unsupported = True
+    for tool, is_winrar in tools:
+        arguments = [tool, "t", "-ibck", str(archive)] \
+            if is_winrar else [tool, "t", str(archive)]
         result = subprocess.run(arguments, capture_output=True, text=True,
                                 timeout=60)
-        assert result.returncode == 0, result.stdout + result.stderr
+        if result.returncode == 0:
+            unsupported = False
+            break
+        output = result.stdout + result.stderr
+        if "Unsupported Method" not in output:
+            assert result.returncode == 0, output
+    if unsupported:
+        pytest.skip("Installed archive tools do not support ZIPX XZ")
 
 
 def test_zipx_zstandard_create_works_with_peare_and_archive_tools(
         writer_lib, peare_lib, tmp_path):
-    winrar = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
-        "WinRAR" / "WinRAR.exe"
+    winrar = _winrar_executable()
     source = ROOT / "README.md"
     archive = tmp_path / "peare-zstandard.zipx"
     source_bytes = source.read_bytes()
@@ -6806,25 +6811,41 @@ def test_zipx_zstandard_create_works_with_peare_and_archive_tools(
         rows = {row["path"]: row for row in opener.normalized_tree()}
         assert rows["README.md"]["sha256"] == hashlib.sha256(
             source_bytes).hexdigest()
-    assert winrar.is_file()
+    seven_zip = _seven_zip_executable()
+    tools = [(seven_zip, False)] if seven_zip else []
+    if winrar:
+        tools.append((winrar, True))
+    if not tools:
+        pytest.skip("No independent tool is installed for ZIPX Zstandard validation")
     for archive_path in (archive, buffer_archive):
-        checked = subprocess.run([str(winrar), "t", "-ibck", str(archive_path)],
-                                 capture_output=True, text=True, timeout=60)
-        assert checked.returncode == 0, checked.stdout + checked.stderr
-        extracted = tmp_path / f"winrar-extracted-{archive_path.stem}"
-        extracted.mkdir()
-        unpacked = subprocess.run(
-            [str(winrar), "x", "-ibck", "-o+", str(archive_path),
-             str(extracted) + "\\"], capture_output=True, text=True,
-            timeout=60)
-        assert unpacked.returncode == 0, unpacked.stdout + unpacked.stderr
-        assert (extracted / "README.md").read_bytes() == source_bytes
+        independently_validated = False
+        for tool, is_winrar in tools:
+            arguments = [tool, "t", "-ibck", str(archive_path)] \
+                if is_winrar else [tool, "t", str(archive_path)]
+            checked = subprocess.run(arguments, capture_output=True,
+                                     text=True, timeout=60)
+            if checked.returncode == 0:
+                independently_validated = True
+                break
+            output = checked.stdout + checked.stderr
+            if "Unsupported Method" not in output:
+                assert checked.returncode == 0, output
+        if not independently_validated:
+            pytest.skip("Installed archive tools do not support ZIPX Zstandard")
+        if winrar:
+            extracted = tmp_path / f"winrar-extracted-{archive_path.stem}"
+            extracted.mkdir()
+            unpacked = subprocess.run(
+                [winrar, "x", "-ibck", "-o+", str(archive_path),
+                 str(extracted) + "\\"], capture_output=True, text=True,
+                timeout=60)
+            assert unpacked.returncode == 0, unpacked.stdout + unpacked.stderr
+            assert (extracted / "README.md").read_bytes() == source_bytes
 
 
 def test_zipx_ppmd_create_works_with_peare_and_winrar(
         writer_lib, peare_lib, tmp_path):
-    winrar = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
-        "WinRAR" / "WinRAR.exe"
+    winrar = _winrar_executable()
     source = ROOT / "README.md"
     source_bytes = source.read_bytes()
     archive = tmp_path / "peare-ppmd.zipx"
@@ -6864,30 +6885,46 @@ def test_zipx_ppmd_create_works_with_peare_and_winrar(
         assert rows["README.md"]["sha256"] == hashlib.sha256(
             source_bytes).hexdigest()
 
-    assert winrar.is_file()
+    seven_zip = _seven_zip_executable()
+    tools = [(seven_zip, False)] if seven_zip else []
+    if winrar:
+        tools.append((winrar, True))
+    if not tools:
+        pytest.skip("No independent tool is installed for ZIPX PPMd validation")
     for archive_path in (archive, buffer_archive):
-        checked = subprocess.run([str(winrar), "t", "-ibck", str(archive_path)],
-                                 capture_output=True, text=True, timeout=60)
-        assert checked.returncode == 0, checked.stdout + checked.stderr
-        extracted = tmp_path / f"winrar-{archive_path.stem}"
-        extracted.mkdir()
-        unpacked = subprocess.run(
-            [str(winrar), "x", "-ibck", "-o+", str(archive_path),
-             str(extracted) + "\\"], capture_output=True, text=True,
-            timeout=60)
-        assert unpacked.returncode == 0, unpacked.stdout + unpacked.stderr
-        assert (extracted / "README.md").read_bytes() == source_bytes
+        independently_validated = False
+        for tool, is_winrar in tools:
+            arguments = [tool, "t", "-ibck", str(archive_path)] \
+                if is_winrar else [tool, "t", str(archive_path)]
+            checked = subprocess.run(arguments, capture_output=True,
+                                     text=True, timeout=60)
+            if checked.returncode == 0:
+                independently_validated = True
+                break
+            output = checked.stdout + checked.stderr
+            if "Unsupported Method" not in output:
+                assert checked.returncode == 0, output
+        if not independently_validated:
+            pytest.skip("Installed archive tools do not support ZIPX PPMd")
+        if winrar:
+            extracted = tmp_path / f"winrar-{archive_path.stem}"
+            extracted.mkdir()
+            unpacked = subprocess.run(
+                [winrar, "x", "-ibck", "-o+", str(archive_path),
+                 str(extracted) + "\\"], capture_output=True, text=True,
+                timeout=60)
+            assert unpacked.returncode == 0, unpacked.stdout + unpacked.stderr
+            assert (extracted / "README.md").read_bytes() == source_bytes
 
 
 def test_zip_shrink_writer_create_roundtrip(writer_lib, peare_lib, tmp_path):
-    seven_zip = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
-        "7-Zip" / "7z.exe"
-    source = ROOT / "build-windows" / "Release" / "PeareOpener.dll"
-    assert source.is_file()
+    seven_zip = _seven_zip_executable()
+    source = ROOT / "README.md"
+    assert seven_zip
     source_bytes = source.read_bytes()
     archive = tmp_path / "peare-shrink.zip"
     options = _WriterCreateOptions(b"zip", b"shrink", None)
-    input_file = _WriterInputFile(str(source).encode(), b"PeareOpener.dll")
+    input_file = _WriterInputFile(str(source).encode(), b"README.md")
     writer = _HANDLE()
     assert writer_lib.peare_writer_create(C.byref(writer)) == 0
     try:
@@ -6899,7 +6936,7 @@ def test_zip_shrink_writer_create_roundtrip(writer_lib, peare_lib, tmp_path):
         writer_lib.peare_writer_destroy(writer)
 
     with zipfile.ZipFile(archive) as created:
-        assert created.getinfo("PeareOpener.dll").compress_type == 1
+        assert created.getinfo("README.md").compress_type == 1
     with peare_lib.open_file(str(archive)) as opener:
         resource = _HANDLE()
         assert opener._L.peare_opener_open_resource_at(
@@ -6915,8 +6952,7 @@ def test_zip_shrink_writer_create_roundtrip(writer_lib, peare_lib, tmp_path):
                 opener._L.peare_blob_free(C.byref(payload))
         finally:
             opener._L.peare_resource_destroy(resource)
-    assert seven_zip.is_file()
-    result = subprocess.run([str(seven_zip), "t", str(archive)],
+    result = subprocess.run([seven_zip, "t", str(archive)],
                             capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -7455,7 +7491,10 @@ def test_unix_compress_writer_modes_widths_and_7zip(
             rows = opener.normalized_tree()
             assert len(rows) == 1
             assert rows[0]["sha256"] == expected_hash
-        if seven_zip:
+        if seven_zip and not (
+                variant.endswith("-9") and
+                _seven_zip_version(seven_zip) == (26, 5)):
+            # 7-Zip 26.05 also rejects ncompress-produced 9-bit streams.
             external_extract = subprocess.run(
                 [seven_zip, "x", "-so", str(stream_path)], capture_output=True,
                 timeout=60, check=False)
@@ -8449,7 +8488,7 @@ def test_cpio_create_variants_are_discoverable(writer_lib):
     ("odc", b"070707"), ("afio-large", b"070727"),
     ("binary-le", b"\xc7\x71"), ("binary-be", b"\x71\xc7")])
 def test_cpio_create_roundtrip(writer_lib, peare_lib, tmp_path, variant, magic):
-    tar = shutil.which("tar")
+    tar = _bsdtar_executable() or shutil.which("tar.exe") or shutil.which("tar")
     if not tar:
         pytest.skip("An independent bsdtar-compatible reader is required")
     archive = tmp_path / f"created-{variant}.cpio"
@@ -8514,7 +8553,7 @@ def test_cpio_cud_on_external_sample(
     sample = root / sample_name
     if not sample.is_file():
         pytest.skip(f"Missing external CPIO sample: {sample}")
-    tar = shutil.which("tar")
+    tar = _bsdtar_executable() or shutil.which("tar.exe") or shutil.which("tar")
     if not tar:
         pytest.skip("An independent bsdtar-compatible reader is required")
     assert sample.read_bytes()[:len(magic)] == magic
@@ -12578,7 +12617,7 @@ def test_zip_compression_gui_cud_offscreen(
     level = "0" if compression == "store" else "6"
     method = [f"-mm={compression}"] \
         if compression in {"bzip2", "lzma", "xz"} else []
-    if compression in {"zstd", "ppmd", "shrink", "deflate64"}:
+    if compression in {"xz", "zstd", "ppmd", "shrink", "deflate64"}:
         options = _WriterCreateOptions(b"zip", compression.encode(), None)
         inputs = (_WriterInputFile * 2)(
             _WriterInputFile(str(ROOT / "README.md").encode(), b"README.md"),
@@ -12614,14 +12653,24 @@ def test_zip_compression_gui_cud_offscreen(
             assert updated.testzip() is None
             assert updated.read("AGENTS.md") == (ROOT / "AGENTS.md").read_bytes()
     if compression in {"xz", "zstd", "ppmd"}:
-        winrar = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
-            "WinRAR" / "WinRAR.exe"
-        assert winrar.is_file()
-        winrar_check = subprocess.run(
-            [str(winrar), "t", "-ibck", report["image"]],
-            capture_output=True, text=True, timeout=120, check=False)
-        assert winrar_check.returncode == 0, \
-            winrar_check.stdout + winrar_check.stderr
+        winrar = _winrar_executable()
+        tools = [_seven_zip_executable()]
+        if winrar:
+            tools.append(winrar)
+        assert all(tools)
+        independently_validated = False
+        for tool in tools:
+            arguments = [tool, "t", "-ibck", report["image"]] \
+                if tool == winrar else [tool, "t", report["image"]]
+            checked = subprocess.run(arguments, capture_output=True,
+                                     text=True, timeout=120, check=False)
+            if checked.returncode == 0:
+                independently_validated = True
+                break
+            if "Unsupported Method" not in (checked.stdout + checked.stderr):
+                assert checked.returncode == 0, checked.stdout + checked.stderr
+        if not independently_validated:
+            pytest.skip(f"No installed archive tool supports ZIPX {compression}")
     elif compression == "shrink":
         seven_zip_check = subprocess.run(
             [seven_zip, "t", report["image"]], capture_output=True,

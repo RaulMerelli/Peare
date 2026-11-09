@@ -45,8 +45,14 @@ jobs:
           cp LICENSE COPYRIGHT.md THIRDPARTY.md dist/
           ls -la dist
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Run Opener tests
         run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-tools p7zip-full
           python3 -m pip install --upgrade --quiet pytest zstandard
           python3 tests/run_tests.py -q
         env:
@@ -110,6 +116,10 @@ jobs:
           if errorlevel 2 exit /b 1
           if not exist dist\filetypes\archive.ico (echo File association icons were not staged & exit /b 1)
           dir dist
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Run Opener tests
         shell: cmd

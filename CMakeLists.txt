@@ -808,6 +808,8 @@ add_library(PeareWriter SHARED
     src/opener/compression/third_party/winzipjpeg/JPEG.h
     src/writer/formats/DiskImageWriter.h
     src/writer/formats/DiskImageWriter.cpp
+    src/writer/formats/IsoImageWriter.h
+    src/writer/formats/IsoImageWriter.cpp
     src/writer/formats/ExtVolumeUpdate.h
     src/writer/formats/ExtVolumeUpdate.cpp
     src/writer/formats/NtfsVolumeUpdate.h

@@ -1,6 +1,7 @@
 #include "peare/peare_writer.h"
 #include "../../common/compression/UnixCompress.h"
 #include "formats/DiskImageWriter.h"
+#include "formats/IsoImageWriter.h"
 #include "formats/WinZipJpegEncoder.h"
 #include "../third_party/miniz/miniz.h"
 #include "../third_party/bzip2/bzlib.h"
@@ -210,6 +211,13 @@ struct XarEntry {
     bool directory = false;
 };
 
+struct IsoEntry {
+    QString sourcePath;
+    QString stagedPath;
+    QByteArray name;
+    bool directory = false;
+};
+
 struct XarNode {
     QString name;
     int entryIndex = -1;
@@ -269,6 +277,7 @@ struct peare_writer_handle_s {
     std::unique_ptr<QTemporaryDir> debStage;
     std::unique_ptr<QTemporaryDir> rpmStage;
     std::unique_ptr<QTemporaryDir> xarStage;
+    std::unique_ptr<QTemporaryDir> isoStage;
     std::vector<Entry> entries;
     std::vector<TarEntry> tarEntries;
     std::vector<CpioEntry> cpioEntries;
@@ -277,6 +286,7 @@ struct peare_writer_handle_s {
     std::vector<DebEntry> debEntries;
     std::vector<RpmEntry> rpmEntries;
     std::vector<XarEntry> xarEntries;
+    std::vector<IsoEntry> isoEntries;
     std::vector<QByteArray> debDirectories;
     CpioFormat cpioFormat = CpioFormat::Newc;
     ArFormat arFormat = ArFormat::Gnu;
@@ -321,7 +331,7 @@ struct peare_writer_handle_s {
     bool fatTargetSpecified = false;
     size_t fatTargetIndex = 0;
     enum class Mode { None, ZipCreate, ZipUpdate, GzipCreate, Bzip2Create, ZstdCreate, XzCreate, LzmaAloneCreate, LzipCreate, UnixCompressCreate, TarCreate, TarUpdate, CpioCreate,
-                      CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate, UuencodeCreate, IhexCreate, DebCreate, RpmCreate, XarCreate, TarGzipCreate,
+                      CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate, UuencodeCreate, IhexCreate, DebCreate, RpmCreate, XarCreate, IsoCreate, TarGzipCreate,
                       TarBzip2Create, TarZstdCreate, TarUnixCompressCreate,
                       TarXzCreate, TarLzmaCreate,
                       FatCreate, DiskUpdate } mode = Mode::None;
@@ -370,6 +380,7 @@ peare_writer_status fail(peare_writer_handle_s* writer, peare_writer_status stat
             writer->debStage.reset();
             writer->rpmStage.reset();
             writer->xarStage.reset();
+            writer->isoStage.reset();
             if (writer->diskUpdate) {
                 writer->diskUpdate->abort();
                 writer->diskUpdate.reset();
@@ -382,6 +393,7 @@ peare_writer_status fail(peare_writer_handle_s* writer, peare_writer_status stat
             writer->debEntries.clear();
             writer->rpmEntries.clear();
             writer->xarEntries.clear();
+            writer->isoEntries.clear();
             writer->debDirectories.clear();
             writer->cpioFormat = CpioFormat::Newc;
             writer->cpioOpaqueOffset = 0;
@@ -4426,13 +4438,6 @@ peare_writer_status writeUnixCompressMember(peare_writer_handle_s* writer,
                 ++codeWidth;
                 bits.beginWidthSection();
             }
-        } else if (writer->unixCompressBlockMode) {
-            if (!bits.writeCode(256, codeWidth) || !bits.flushClearBoundary(codeWidth))
-                return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
-            dictionary.clear();
-            nextCode = 257;
-            codeWidth = 9;
-            bits.beginWidthSection();
         }
         phrase = value;
     }
@@ -5163,6 +5168,22 @@ bool xarPathConflict(const std::vector<XarEntry>& entries, const QByteArray& nam
     return false;
 }
 
+bool isoPathConflict(const std::vector<IsoEntry>& entries, QByteArray name,
+                     bool directory) {
+    if (directory && name.endsWith('/')) name.chop(1);
+    const QString candidate = QString::fromUtf8(name).toCaseFolded();
+    for (const IsoEntry& entry : entries) {
+        QByteArray existingBytes = entry.name;
+        if (entry.directory && existingBytes.endsWith('/')) existingBytes.chop(1);
+        const QString existing = QString::fromUtf8(existingBytes).toCaseFolded();
+        if (candidate == existing ||
+            (candidate.startsWith(existing + QLatin1Char('/')) && !entry.directory) ||
+            (existing.startsWith(candidate + QLatin1Char('/')) && !directory))
+            return true;
+    }
+    return false;
+}
+
 void xarWriteNode(QXmlStreamWriter* xml, const XarNode& node,
                   const std::vector<XarEntry>& entries, int codec) {
     xml->writeStartElement(QStringLiteral("file"));
@@ -5819,11 +5840,13 @@ void discardAfterException(peare_writer_handle_s* writer) noexcept {
         writer->output.reset();
     }
     writer->zipStage.reset();
+    writer->isoStage.reset();
     if (writer->diskUpdate) {
         writer->diskUpdate->abort();
         writer->diskUpdate.reset();
     }
     writer->entries.clear();
+    writer->isoEntries.clear();
     writer->names.clear();
     writer->zipMethod = 0;
     writer->archiveComment.clear();
@@ -5974,7 +5997,7 @@ peare_writer_status peare_writer_create(peare_writer_handle* outWriter) {
     }
 }
 
-size_t peare_writer_create_format_count(void) { return 29; }
+size_t peare_writer_create_format_count(void) { return 30; }
 
 peare_writer_status peare_writer_get_create_format(size_t index,
                                                     peare_writer_format* outFormat) {
@@ -6008,7 +6031,8 @@ peare_writer_status peare_writer_get_create_format(size_t index,
         {"ihex", "Intel HEX firmware image", "hex"},
         {"deb", "Debian package", "deb"},
         {"rpm", "RPM package", "rpm"},
-        {"xar", "XAR archive", "xar"}
+        {"xar", "XAR archive", "xar"},
+        {"iso", "ISO 9660 image", "iso"}
     };
     if (index >= sizeof(formats) / sizeof(formats[0]))
         return PEARE_WRITER_INVALID_ARGUMENT;
@@ -6030,6 +6054,7 @@ size_t peare_writer_create_variant_count(const char* formatIdUtf8) {
     if (std::strcmp(formatIdUtf8, "deb") == 0) return 24;
     if (std::strcmp(formatIdUtf8, "rpm") == 0) return 6;
     if (std::strcmp(formatIdUtf8, "xar") == 0) return 3;
+    if (std::strcmp(formatIdUtf8, "iso") == 0) return 1;
     if (std::strcmp(formatIdUtf8, "unix-compress") == 0) return 16;
     if (std::strcmp(formatIdUtf8, "tar") == 0) return 1;
     if (std::strcmp(formatIdUtf8, "tar-gzip") == 0) return 1;
@@ -6066,6 +6091,9 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
     };
     static const peare_writer_variant xarVariants[] = {
         {"store", "Store"}, {"gzip", "Zlib/Deflate"}, {"bzip2", "BZip2"}
+    };
+    static const peare_writer_variant isoVariants[] = {
+        {"joliet", "ISO 9660 with Joliet names"}
     };
     static const peare_writer_variant gzipVariants[] = {
         {"deflate", "Deflate"}
@@ -6261,6 +6289,10 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
     }
     if (std::strcmp(formatIdUtf8, "xar") == 0 && index < 3) {
         *outVariant = xarVariants[index];
+        return PEARE_WRITER_OK;
+    }
+    if (std::strcmp(formatIdUtf8, "iso") == 0 && index == 0) {
+        *outVariant = isoVariants[index];
         return PEARE_WRITER_OK;
     }
     if ((std::strcmp(formatIdUtf8, "unix-compress") == 0 ||
@@ -6793,6 +6825,31 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
             writer->active = true;
             writer->updateMode = false;
             writer->mode = peare_writer_handle_s::Mode::XarCreate;
+            return PEARE_WRITER_OK;
+        });
+    }
+    if (std::strcmp(formatIdUtf8, "iso") == 0) {
+        if (variant && std::strcmp(variant, "joliet") != 0)
+            return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                        QStringLiteral("The requested ISO variant is invalid."), false);
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (writer->active)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("A writer operation is already active."), false);
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            writer->isoStage.reset(new (std::nothrow) QTemporaryDir);
+            if (!writer->isoStage || !writer->isoStage->isValid()) {
+                writer->isoStage.reset();
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            QStringLiteral("Could not allocate ISO staging."), false);
+            }
+            writer->isoEntries.clear();
+            writer->names.clear();
+            writer->createPath = QString::fromUtf8(outputPathUtf8);
+            writer->active = true;
+            writer->updateMode = false;
+            writer->mode = peare_writer_handle_s::Mode::IsoCreate;
             return PEARE_WRITER_OK;
         });
     }
@@ -7823,6 +7880,40 @@ peare_writer_status peare_writer_add_file(peare_writer_handle writer,
             writer->names.insert(key);
             return PEARE_WRITER_OK;
         });
+    if (writer->mode == peare_writer_handle_s::Mode::IsoCreate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("An ISO source file and path are required."));
+            QByteArray name;
+            if (!normalizedEntryName(entryNameUtf8, false, &name))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The ISO path is invalid or unsafe."));
+            if (isoPathConflict(writer->isoEntries, name, false))
+                return fail(writer, PEARE_WRITER_DUPLICATE_ENTRY,
+                            QStringLiteral("The ISO path conflicts with an existing entry."));
+            QFile input(QString::fromUtf8(sourcePathUtf8));
+            if (!input.open(QIODevice::ReadOnly) || !QFileInfo(input).isFile())
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            input.errorString().isEmpty()
+                                ? QStringLiteral("The ISO source must be a regular file.")
+                                : input.errorString());
+            const QString stagedPath = writer->isoStage->filePath(
+                QStringLiteral("input-%1").arg(writer->isoEntries.size()));
+            QFile staged(stagedPath);
+            if (!staged.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+                !copyFile(input, &staged) || !staged.flush())
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            staged.isOpen() ? staged.errorString() : input.errorString());
+            staged.close();
+            IsoEntry entry;
+            entry.sourcePath = QString::fromUtf8(sourcePathUtf8);
+            entry.stagedPath = stagedPath;
+            entry.name = name;
+            entry.directory = false;
+            writer->isoEntries.push_back(std::move(entry));
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::XarCreate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
@@ -8030,6 +8121,22 @@ peare_writer_status peare_writer_create_directory(peare_writer_handle writer,
             entry.directory = true;
             writer->xarEntries.push_back(std::move(entry));
             writer->names.insert(QString::fromUtf8(name));
+            return PEARE_WRITER_OK;
+        });
+    if (writer->mode == peare_writer_handle_s::Mode::IsoCreate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray name;
+            if (!normalizedEntryName(entryNameUtf8, true, &name))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The ISO directory path is invalid or unsafe."));
+            while (name.endsWith('/')) name.chop(1);
+            if (isoPathConflict(writer->isoEntries, name, true))
+                return fail(writer, PEARE_WRITER_DUPLICATE_ENTRY,
+                            QStringLiteral("The ISO directory conflicts with an existing entry."));
+            IsoEntry entry;
+            entry.name = name;
+            entry.directory = true;
+            writer->isoEntries.push_back(std::move(entry));
             return PEARE_WRITER_OK;
         });
     if (writer->mode == peare_writer_handle_s::Mode::ZipCreate ||
@@ -8830,6 +8937,31 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
         return cBoundary(writer, [&] { return writeRpmPackage(writer); });
     if (writer->mode == peare_writer_handle_s::Mode::XarCreate)
         return cBoundary(writer, [&] { return writeXarArchive(writer); });
+    if (writer->mode == peare_writer_handle_s::Mode::IsoCreate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            std::vector<peare::writer::IsoImageEntry> entries;
+            entries.reserve(writer->isoEntries.size());
+            for (const IsoEntry& entry : writer->isoEntries) {
+                peare::writer::IsoImageEntry imageEntry;
+                imageEntry.path = QString::fromUtf8(entry.name);
+                imageEntry.sourcePath = entry.stagedPath;
+                imageEntry.directory = entry.directory;
+                entries.push_back(std::move(imageEntry));
+            }
+            QString error;
+            if (!peare::writer::IsoImageWriter::write(writer->createPath, entries, &error))
+                return fail(writer, PEARE_WRITER_IO_ERROR, error);
+            writer->isoStage.reset();
+            writer->isoEntries.clear();
+            writer->names.clear();
+            writer->createPath.clear();
+            writer->active = false;
+            writer->updateMode = false;
+            writer->mode = peare_writer_handle_s::Mode::None;
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::TarCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarGzipCreate ||
         writer->mode == peare_writer_handle_s::Mode::TarBzip2Create ||
@@ -9516,6 +9648,7 @@ void peare_writer_abort(peare_writer_handle writer) {
     writer->debStage.reset();
     writer->rpmStage.reset();
     writer->xarStage.reset();
+    writer->isoStage.reset();
     if (writer->diskUpdate) {
         writer->diskUpdate->abort();
         writer->diskUpdate.reset();
@@ -9528,6 +9661,7 @@ void peare_writer_abort(peare_writer_handle writer) {
     writer->debEntries.clear();
     writer->rpmEntries.clear();
     writer->xarEntries.clear();
+    writer->isoEntries.clear();
     writer->debDirectories.clear();
     writer->cpioFormat = CpioFormat::Newc;
     writer->cpioOpaqueOffset = 0;

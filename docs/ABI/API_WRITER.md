@@ -55,7 +55,8 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer);
 The create backends include ZIP, GZIP, BZIP2, XZ, Zstandard, TAR, CPIO, ar,
 WAD, UUencode, Intel HEX, standalone FAT, floppy images, disk images, Debian
 packages, RPM packages, and XAR archives. They also include Unix compress,
-LZMA-alone, Lzip, TAR.GZ, TAR.BZ2, TAR.ZST, TAR.Z, TAR.XZ, and TAR.LZMA.
+LZMA-alone, Lzip, ISO 9660 with Joliet, TAR.GZ, TAR.BZ2, TAR.ZST, TAR.Z,
+TAR.XZ, and TAR.LZMA.
 The CPIO backend supports `newc`, CRC, `odc`, afio large ASCII, and binary
 little- and big-endian variants. The ar backend supports GNU and BSD variants.
 The WAD backend supports IWAD and PWAD variants.
@@ -85,6 +86,12 @@ modify an existing package.
 XAR creation supports file and directory entries with Store, zlib, or BZIP2
 data. It writes a SHA-1 table-of-contents checksum and SHA-256 member checksums.
 It does not update existing XAR archives or create Apple package signatures.
+
+ISO creation writes a new 2048-byte-sector image with a primary volume
+descriptor and a Joliet supplementary descriptor. Joliet names use BMP Unicode
+and can contain up to 64 UTF-16 code units. The primary tree uses generated
+short aliases. Each file must fit in one 32-bit ISO extent. The Writer does
+not update existing ISO images.
 
 GZIP creation writes one RFC 1952 member per selected input file. The GZIP
 stream is not an archive with independently editable entries.

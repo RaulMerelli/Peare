@@ -89,7 +89,7 @@ package-specific limits on ZIP-based files.
 | OS/2 XDF floppy DSK | 3.5-inch, 1.84 MiB XDF | Yes | Yes |
 | Raw MBR/GPT disk | MBR and GPT partitioned disks | Yes | Yes |
 | Apple Partition Map | Partitioned disk images | Yes | No |
-| ISO 9660 | ISO 9660 with Joliet, standard and raw Mode 2 images | Yes | No |
+| ISO 9660 | ISO 9660 with Joliet, standard and raw Mode 2 images | Yes | Yes |
 | CDRWIN BIN/CUE | Multi-track optical-disc images | Yes | No |
 | Alcohol MDF/MDS | MDF images with MDS descriptors | Yes | No |
 | Apple DMG / UDIF | UDIF disk images | Yes | No |
