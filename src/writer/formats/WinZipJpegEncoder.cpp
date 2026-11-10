@@ -707,7 +707,7 @@ bool appendMetadataBundle(std::vector<std::uint8_t>* output,
 }
 
 bool encodeScan(const JpegInput& jpeg, std::vector<std::uint8_t>* output) {
-    auto models = std::make_unique<Models>();
+    std::unique_ptr<Models> models(new Models());
     for (unsigned si = 0; si < jpeg.metadata.numscancomponents; ++si) {
         const unsigned ci = unsigned(jpeg.metadata.scancomponents[si].component -
                                      jpeg.metadata.components);
