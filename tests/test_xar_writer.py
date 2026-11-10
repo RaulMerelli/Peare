@@ -238,7 +238,8 @@ def test_xar_real_sample_cud(xar_writer, peare_lib, peare_gui_path, tmp_path):
     assert "setuid.sh" not in files
     assert "empty" in directories and "empty/child" in directories
 
-    tar = shutil.which("tar.exe") or shutil.which("tar")
+    tar = (shutil.which("bsdtar") or shutil.which("bsdtar.exe") or
+           shutil.which("tar.exe") or shutil.which("tar"))
     assert tar
     listing = subprocess.run([tar, "-tf", str(target)], capture_output=True,
                              text=True, timeout=60)
