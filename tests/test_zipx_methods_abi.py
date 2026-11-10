@@ -141,7 +141,7 @@ def test_tool_created_zipx_ppmd_sample_matches_source(peare_lib):
     assert opener is not None
     with opener:
         assert opener.container_format() == "ZIP"
-        assert _payload(peare_lib, opener) == expected.read_bytes()
+        _assert_readme_sample(_payload(peare_lib, opener))
 
 
 def test_winzip_zipx_ppmd_freeze_fixture_matches_source(peare_lib):

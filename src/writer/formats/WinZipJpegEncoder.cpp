@@ -12,6 +12,7 @@ extern std::uint16_t winzipjpeg_alogtbl[1024];
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <numeric>
 
 namespace peare {
@@ -706,7 +707,7 @@ bool appendMetadataBundle(std::vector<std::uint8_t>* output,
 }
 
 bool encodeScan(const JpegInput& jpeg, std::vector<std::uint8_t>* output) {
-    Models models;
+    auto models = std::make_unique<Models>();
     for (unsigned si = 0; si < jpeg.metadata.numscancomponents; ++si) {
         const unsigned ci = unsigned(jpeg.metadata.scancomponents[si].component -
                                      jpeg.metadata.components);
@@ -721,7 +722,8 @@ bool encodeScan(const JpegInput& jpeg, std::vector<std::uint8_t>* output) {
                     &component.blocks[x + std::size_t(y - 1) * component.columns] : nullptr;
                 const WinZipJPEGBlock* west = x ?
                     &component.blocks[x - 1 + std::size_t(y) * component.columns] : nullptr;
-                if (!encodeBlock(&coder, &models, ci, block, north, west, *quantization))
+                if (!encodeBlock(&coder, models.get(), ci, block, north, west,
+                                 *quantization))
                     return false;
             }
         }

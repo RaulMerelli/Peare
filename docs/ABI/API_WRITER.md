@@ -64,8 +64,9 @@ The WAD backend supports IWAD and PWAD variants.
 Format descriptors and their strings remain valid for the process lifetime.
 Floppy images support the 12 geometries in the Writer variant list. Raw disks
 support MBR and GPT layouts. VHD and VHDX support fixed and dynamic variants.
-VMDK supports monolithic sparse and split sparse creation. Split creation uses
-one external extent with a 2 GiB maximum. VHD, VHDX, VMDK, and raw MBR/GPT
+VMDK supports monolithic sparse, split sparse, monolithic flat, split flat, and
+streamOptimized creation. Split extents have a 2 GiB maximum. A created
+streamOptimized image uses a version 3 compressed extent. VHD, VHDX, VMDK, and raw MBR/GPT
 creation support FAT12, FAT16, FAT32, exFAT, and NTFS. NTFS volumes use the
 bundled NTFS-3G formatter on the staged image. Peare checks each volume before
 it publishes the new disk. Floppy images use FAT12.
@@ -73,26 +74,30 @@ it publishes the new disk. Floppy images use FAT12.
 Debian package creation writes version 2.0 `.deb` files with generated package
 metadata and one control TAR plus one data TAR. The ABI offers 24 combinations
 of raw, GZIP, XZ, or Zstandard control TAR and raw, GZIP, XZ, Zstandard, BZIP2,
-or LZMA data TAR. Debian package creation creates a new package; it does not
-modify an existing package.
+or LZMA data TAR. The Writer also updates existing version 2.0 packages. It
+preserves the control TAR and updates the data TAR with its original codec.
 
-RPM creation writes unsigned RPM v3 packages with CPIO CRC payloads. The ABI
+RPM creation writes unsigned RPM v3 packages with CPIO payloads. The ABI
 offers uncompressed, GZIP, BZIP2, XZ, Zstandard, and LZMA-alone payloads. The
-Writer records package metadata, file paths, sizes, modes, and MD5 digests. Its
-RPM MD5 tag covers the main header and compressed payload. It detects data
-changes but does not authenticate the package source. RPM creation does not
-modify an existing package.
+Writer updates existing RPM v3/v4 packages with supported CPIO payloads. It
+preserves package identity and updates file metadata and payload digests. It
+rebuilds the RPM integrity header after each update. Updates remove the original
+cryptographic signature tags. The resulting package is unsigned.
 
-XAR creation supports file and directory entries with Store, zlib, or BZIP2
-data. It writes a SHA-1 table-of-contents checksum and SHA-256 member checksums.
-It does not update existing XAR archives or create Apple package signatures.
+XAR creation and updates support files, directories, and preserved symbolic
+links. File data uses Store, zlib, or BZIP2. The Writer writes a SHA-1
+table-of-contents checksum and SHA-256 member checksums. Updates do not preserve
+Apple package signatures or extended attributes.
 
 ISO creation writes a new 2048-byte-sector image with a primary volume
-descriptor and a Joliet supplementary descriptor. Joliet names use BMP Unicode
-and can contain up to 62 UTF-16 code units for file names and 64 for directory
-names. The primary tree uses generated short aliases. Each file must fit in one
-32-bit ISO extent. The Writer creates new images and does not update existing
-ISO images.
+descriptor and a Joliet supplementary descriptor. ISO updates support file and
+directory creation, file addition and replacement, rename, and recursive delete.
+Updates preserve unchanged file data by copying source extents. Joliet names use
+BMP Unicode and can contain up to 62 UTF-16 code units for file names and 64 for
+directory names. The primary tree uses generated short aliases. Each file must
+fit in one 32-bit ISO extent. The Writer updates Joliet images that use a
+single-extent directory layout; it does not update multi-extent files or raw
+Mode 2 images.
 
 GZIP creation writes one RFC 1952 member per selected input file. The GZIP
 stream is not an archive with independently editable entries.
@@ -145,9 +150,10 @@ level from 0 through 9. Multiple inputs form a concatenated Lzip stream.
 Unix compress creation writes one `.Z` stream for one input file. It supports
 block and non-block modes with code widths from 9 through 16 bits.
 
-UUencode creation writes one file per output. It supports classic and GNU
-Base64 bodies, with plain or Base64-encoded filenames. The batch API rejects
-zero or multiple input files before it creates the output.
+UUencode creation writes one block for each input file. It supports classic
+and GNU Base64 bodies, with plain or Base64-encoded filenames. Update rewrites
+all blocks and supports add, replace, rename, and delete. The flat format has
+no directory entries.
 
 Intel HEX creation writes one file per output. It writes data records, extended
 linear addresses, checksums, and the end-of-file record. It supports 16-, 32-,
@@ -267,6 +273,10 @@ For a container with no selectable volume, the update target count is one and
 its name is `Archive`. Disk-image targets use the discovered volume names. The
 legacy add-target functions remain available for existing clients.
 
+ISO Joliet targets report all six CUD capabilities. The update path rebuilds
+the Joliet and primary directory trees and copies unchanged file extents. It
+preserves unchanged file payloads without loading them into memory.
+
 ZIP update targets report all six CUD capabilities. ZIP replacement writes a
 new member and removes the previous member from the central directory. Rename
 preserves the compressed member data and updates its local and central records.
@@ -343,7 +353,8 @@ FAT32, exFAT, or NTFS and adds the selected files before it publishes the descri
 It supports standalone images, fixed VHD, and standalone dynamic Type 3 VHD.
 It also supports fixed and dynamic VHDX images.
 Supported VMDK layouts include standalone monolithicSparse and
-`twoGbMaxExtentSparse` extents with versions 1 and 2.
+`twoGbMaxExtentSparse` extents with versions 1 and 2, plus monolithicFlat and
+`twoGbMaxExtentFlat` extents.
 Standalone version 3 `streamOptimized` VMDKs are also supported.
 The Writer converts an updated streamOptimized disk to version 1
 `monolithicSparse` with redundant grain directories before publication.

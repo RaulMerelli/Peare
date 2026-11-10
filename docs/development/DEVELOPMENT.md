@@ -88,6 +88,12 @@ Follow the [Opener module guide](ADDING_OPENER.md). The `ModuleFactory` detects
 each nested format. `OpenerSession` opens eligible payloads. Individual modules
 expose their own payloads and do not open child containers.
 
+## Add a Writer format
+
+Follow the [Writer format guide](ADDING_WRITER.md). A request for Writer support
+means complete CUD support for every advertised writable variant. The guide
+covers create-from-zero, existing-target operations, ABI integration, and tests.
+
 ## Pre-release build
 
 Run the Linux build command:

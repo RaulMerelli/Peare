@@ -65,6 +65,7 @@ struct ext4_mkfs_info {
 	uint16_t dsc_size;
 	uint8_t uuid[UUID_SIZE];
 	bool journal;
+	bool custom_features;
 	const char *label;
 };
 

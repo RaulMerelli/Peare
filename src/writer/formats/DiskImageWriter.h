@@ -77,6 +77,8 @@ private:
     qint64 fatSectorSize_ = 512;
     bool xdfVolume_ = false;
     bool vmdkSplitCreate_ = false;
+    bool vmdkStreamOptimizedCreate_ = false;
+    int vmdkFlatCreateMode_ = 0;
     qint64 xdfProtectedOffset_ = 0;
     QByteArray xdfProtectedBytes_;
     std::unique_ptr<VhdxImageWriter> vhdx_;

@@ -1,4 +1,5 @@
 import argparse
+import ctypes
 import hashlib
 import json
 import os
@@ -8,8 +9,48 @@ import shutil
 import struct
 import subprocess
 import sys
+import time
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def process_memory(process):
+    if sys.platform == "win32":
+        from ctypes import wintypes
+
+        class MemoryCounters(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+                ("PrivateUsage", ctypes.c_size_t),
+            ]
+
+        counters = MemoryCounters()
+        counters.cb = ctypes.sizeof(counters)
+        if ctypes.windll.psapi.GetProcessMemoryInfo(
+                wintypes.HANDLE(process._handle), ctypes.byref(counters),
+                counters.cb):
+            return {"working_set_bytes": counters.WorkingSetSize,
+                    "private_bytes": counters.PrivateUsage}
+    elif sys.platform.startswith("linux"):
+        try:
+            status = Path(f"/proc/{process.pid}/status").read_text()
+            values = {}
+            for line in status.splitlines():
+                if line.startswith(("VmRSS:", "VmHWM:")):
+                    key, value, _ = line.split(maxsplit=2)
+                    values[key.rstrip(":").lower() + "_bytes"] = int(value) * 1024
+            return values
+        except (OSError, ValueError):
+            return None
+    return None
 
 
 def sha256(path):
@@ -106,15 +147,52 @@ def main():
     command = [str(executable), "--gui-writer-test", str(copied_image),
                str(scenario), str(report), str(screenshot)]
     try:
-        result = subprocess.run(command, capture_output=True, text=True,
-                                env=environment, timeout=args.timeout, check=False)
-    except subprocess.TimeoutExpired:
+        process = subprocess.Popen(command, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True,
+                                   env=environment)
+    except OSError as error:
+        print(f"Could not start Peare: {error}", file=sys.stderr)
+        return 1
+    started = time.monotonic()
+    memory_samples = []
+    peak_memory = {}
+    completed_count = -1
+    timed_out = False
+    while process.poll() is None:
+        if time.monotonic() - started > args.timeout:
+            timed_out = True
+            process.kill()
+            break
+        memory = process_memory(process)
+        if memory:
+            for key, value in memory.items():
+                peak_memory[key] = max(peak_memory.get(key, 0), value)
+            if report.is_file():
+                try:
+                    progress = json.loads(report.read_text(encoding="utf-8"))
+                    operations = progress.get("operations", [])
+                    if len(operations) != completed_count:
+                        completed_count = len(operations)
+                        memory_samples.append({
+                            "completed_operations": completed_count,
+                            "last_test_id": operations[-1].get("test_id")
+                                if operations else "startup",
+                            **memory,
+                        })
+                except (OSError, json.JSONDecodeError):
+                    pass
+        time.sleep(0.1)
+    stdout, stderr = process.communicate()
+    result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    if timed_out:
         print(f"GUI writer scenario exceeded {args.timeout} seconds.", file=sys.stderr)
         if report.is_file():
             progress = json.loads(report.read_text(encoding="utf-8"))
-            completed = [item.get("type", "?") for item in progress.get("operations", [])]
+            completed = len(progress.get("operations", []))
+            active = progress.get("active_operation", "not recorded")
             print(f"Last GUI stage: {progress.get('stage', 'unknown')}; "
-                  f"completed operations: {completed}", file=sys.stderr)
+                  f"completed operations: {completed}; active: {active}",
+                  file=sys.stderr)
         if sha256(sample) != original_hash:
             print("The original sample changed during GUI writer testing.", file=sys.stderr)
         return 1
@@ -123,6 +201,13 @@ def main():
         return 1
     if result.returncode != 0:
         print((result.stdout + result.stderr).strip(), file=sys.stderr)
+        if report.is_file():
+            progress = json.loads(report.read_text(encoding="utf-8"))
+            completed = len(progress.get("operations", []))
+            active = progress.get("active_operation", "not recorded")
+            print(f"GUI stage: {progress.get('stage', 'unknown')}; "
+                  f"completed operations: {completed}; active: {active}",
+                  file=sys.stderr)
         return result.returncode or 1
     if not report.is_file() or not screenshot.is_file():
         print("Peare did not produce the GUI report and screenshot.", file=sys.stderr)
@@ -143,6 +228,12 @@ def main():
         print("GUI writer report contains a failed or empty operation list.",
               file=sys.stderr)
         return 1
+    if peak_memory:
+        memory_path = output_dir / "writer-test-memory.json"
+        memory_path.write_text(json.dumps({"peak": peak_memory,
+                                          "samples": memory_samples},
+                                         indent=2), encoding="utf-8")
+        print(f"GUI peak memory: {peak_memory}; samples: {len(memory_samples)}")
     print(f"GUI writer scenario: {len(operations)} operations passed; "
           "source sample unchanged.")
     print(f"Disposable image: {copied_image}")

@@ -1,6 +1,7 @@
 import bz2
 import ctypes as C
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -49,6 +50,27 @@ def xar_writer():
     library.peare_writer_create_file.restype = C.c_int
     library.peare_writer_create_directory.argtypes = [handle, C.c_char_p]
     library.peare_writer_create_directory.restype = C.c_int
+    library.peare_writer_can_add_files.argtypes = [C.c_char_p]
+    library.peare_writer_can_add_files.restype = C.c_int
+    library.peare_writer_update_target_count.argtypes = [C.c_char_p]
+    library.peare_writer_update_target_count.restype = C.c_size_t
+    library.peare_writer_get_update_capabilities.argtypes = [
+        C.c_char_p, C.c_size_t, C.POINTER(C.c_uint32)]
+    library.peare_writer_get_update_capabilities.restype = C.c_int
+    library.peare_writer_update_begin.argtypes = [handle, C.c_char_p]
+    library.peare_writer_update_begin.restype = C.c_int
+    library.peare_writer_add_file.argtypes = [handle, C.c_char_p, C.c_char_p]
+    library.peare_writer_add_file.restype = C.c_int
+    library.peare_writer_replace_file.argtypes = [handle, C.c_char_p, C.c_char_p]
+    library.peare_writer_replace_file.restype = C.c_int
+    library.peare_writer_create_empty_file.argtypes = [handle, C.c_char_p]
+    library.peare_writer_create_empty_file.restype = C.c_int
+    library.peare_writer_rename_entry.argtypes = [handle, C.c_char_p, C.c_char_p]
+    library.peare_writer_rename_entry.restype = C.c_int
+    library.peare_writer_delete_entry.argtypes = [handle, C.c_char_p, C.c_int]
+    library.peare_writer_delete_entry.restype = C.c_int
+    library.peare_writer_update_finish.argtypes = [handle]
+    library.peare_writer_update_finish.restype = C.c_int
     library.peare_writer_finish.argtypes = [handle]
     library.peare_writer_finish.restype = C.c_int
     library.peare_writer_last_error.argtypes = [handle]
@@ -83,6 +105,8 @@ def _xar_payloads(archive):
             if item.findtext("type") == "directory":
                 directories.add(path)
                 found.update(collect(item, path))
+                continue
+            if item.findtext("type") == "symlink":
                 continue
             data = item.find("data")
             assert data is not None
@@ -164,3 +188,122 @@ def test_xar_writer_round_trip_all_codecs(
          str(output), "docs/nested/payload.bin", "--output-dir",
          str(tmp_path / "gui")], capture_output=True, text=True, timeout=120)
     assert preview.returncode == 0, preview.stdout + preview.stderr
+
+
+def test_xar_real_sample_cud(xar_writer, peare_lib, peare_gui_path, tmp_path):
+    sample = ROOT / "tests" / "formats" / "xar" / "fixtures" / "mixed.xar"
+    assert sample.is_file()
+    source_hash = hashlib.sha256(sample.read_bytes()).digest()
+    target = tmp_path / "mixed-cud.xar"
+    shutil.copy2(sample, target)
+    replacement = ROOT / "README.md"
+    added = ROOT / ".gitignore"
+    target_bytes = str(target).encode()
+
+    assert xar_writer.peare_writer_can_add_files(target_bytes) == 1
+    assert xar_writer.peare_writer_update_target_count(target_bytes) == 1
+    capabilities = C.c_uint32()
+    assert xar_writer.peare_writer_get_update_capabilities(
+        target_bytes, 0, C.byref(capabilities)) == 0
+    assert capabilities.value == 0x3F
+
+    writer = C.c_void_p()
+    assert xar_writer.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert xar_writer.peare_writer_update_begin(writer, target_bytes) == 0
+        assert xar_writer.peare_writer_add_file(
+            writer, str(added).encode(), b"added/new.txt") == 0
+        assert xar_writer.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"plain.txt") == 0
+        assert xar_writer.peare_writer_create_directory(writer, b"empty/child") == 0
+        assert xar_writer.peare_writer_create_empty_file(
+            writer, b"empty/child/blank.txt") == 0
+        assert xar_writer.peare_writer_rename_entry(
+            writer, b"nested", b"renamed") == 0
+        assert xar_writer.peare_writer_delete_entry(
+            writer, b"setuid.sh", 0) == 0
+        assert xar_writer.peare_writer_delete_entry(
+            writer, b"empty.txt", 0) == 0
+        status = xar_writer.peare_writer_update_finish(writer)
+        assert status == 0, xar_writer.peare_writer_last_error(writer).decode()
+    finally:
+        xar_writer.peare_writer_destroy(writer)
+
+    assert hashlib.sha256(sample.read_bytes()).digest() == source_hash
+    files, directories = _xar_payloads(target.read_bytes())
+    assert files["plain.txt"] == replacement.read_bytes()
+    assert files["added/new.txt"] == added.read_bytes()
+    assert files["renamed/deep/file.txt"] == b"nested content here\n"
+    assert files["empty/child/blank.txt"] == b""
+    assert "setuid.sh" not in files
+    assert "empty" in directories and "empty/child" in directories
+
+    tar = shutil.which("tar.exe") or shutil.which("tar")
+    assert tar
+    listing = subprocess.run([tar, "-tf", str(target)], capture_output=True,
+                             text=True, timeout=60)
+    assert listing.returncode == 0, listing.stdout + listing.stderr
+    assert "alias.lnk" in listing.stdout
+    assert "renamed/deep/file.txt" in listing.stdout
+    assert "added/new.txt" in listing.stdout
+    result = subprocess.run([tar, "-xOf", str(target), "plain.txt"],
+                            capture_output=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout == replacement.read_bytes()
+    result = subprocess.run([tar, "-xOf", str(target), "added/new.txt"],
+                            capture_output=True, timeout=60)
+    assert result.returncode == 0 and result.stdout == added.read_bytes()
+    result = subprocess.run([tar, "-xOf", str(target), "renamed/deep/file.txt"],
+                            capture_output=True, timeout=60)
+    assert result.returncode == 0 and result.stdout == b"nested content here\n"
+
+    with peare_lib.open_file(str(target)) as opener:
+        rows = opener.normalized_tree()
+    visible = {row["path"] for row in rows}
+    assert {"plain.txt", "added/new.txt", "renamed/deep/file.txt",
+            "empty/child/blank.txt"} <= visible
+    assert "setuid.sh" not in visible
+
+    for view in ("tree", "details"):
+        gui_target = tmp_path / f"mixed-cud-{view}.xar"
+        shutil.copy2(sample, gui_target)
+        scenario = {
+            "view": view,
+            "operations": [
+                {"type": "create_directory", "name": "gui-dir"},
+                {"type": "create_file", "parent": "gui-dir", "name": "blank.txt",
+                 "expect_present": "gui-dir/blank.txt"},
+                {"type": "replace", "path": "gui-dir/blank.txt",
+                 "source": str(replacement), "expect_present": "gui-dir/blank.txt"},
+                {"type": "rename", "path": "gui-dir/blank.txt", "name": "renamed.txt",
+                 "expect_present": "gui-dir/renamed.txt"},
+                {"type": "delete", "path": "gui-dir/renamed.txt",
+                 "expect_absent": "gui-dir/renamed.txt"},
+                {"type": "replace", "path": "plain.txt",
+                 "source": str(replacement), "expect_present": "plain.txt"},
+                {"type": "rename", "path": "plain.txt", "name": "renamed.txt",
+                 "expect_present": "renamed.txt"},
+                {"type": "delete", "path": "renamed.txt",
+                 "expect_absent": "renamed.txt"},
+                {"type": "add_files", "destination": "gui-dir",
+                 "sources": [str(added)], "expect_present": "gui-dir/.gitignore"},
+                {"type": "delete", "path": "gui-dir/.gitignore",
+                 "expect_absent": "gui-dir/.gitignore"},
+                {"type": "delete", "path": "gui-dir", "expect_absent": "gui-dir"},
+            ],
+        }
+        scenario_path = tmp_path / f"xar-gui-{view}.json"
+        scenario_path.write_text(json.dumps(scenario), encoding="utf-8")
+        output_dir = tmp_path / f"xar-gui-output-{view}"
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+             "--exe", str(peare_gui_path), "--image", str(gui_target),
+             "--scenario", str(scenario_path), "--output-dir", str(output_dir)],
+            capture_output=True, text=True, timeout=240)
+        assert result.returncode == 0, result.stdout + result.stderr
+        report = json.loads((output_dir / "writer-test-report.json").read_text(
+            encoding="utf-8"))
+        assert all(operation["passed"] for operation in report["operations"])
+        checked = subprocess.run([tar, "-tf", str(gui_target)], capture_output=True,
+                                 text=True, timeout=60)
+        assert checked.returncode == 0, checked.stdout + checked.stderr

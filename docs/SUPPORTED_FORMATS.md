@@ -3,9 +3,9 @@
 This document lists format variants supported by Peare. It separates formats
 opened by the Reader and Writer from payloads interpreted by the Decoder.
 
-`Read` means that PeareOpener can open the listed variant. `Write` means that
-PeareWriter can create or update it. A `Yes` value applies only to the variant
-and operations described in this document. It does not mean that every feature
+`Read` means that PeareOpener can open the listed variant. `Write: Yes` means
+that PeareWriter can create the variant from zero and perform every applicable
+CUD operation on existing targets. It does not mean that every other feature
 of the format is supported.
 
 Resources inside a file are not separate readable or writable formats. The
@@ -89,7 +89,7 @@ package-specific limits on ZIP-based files.
 | OS/2 XDF floppy DSK | 3.5-inch, 1.84 MiB XDF | Yes | Yes |
 | Raw MBR/GPT disk | MBR and GPT partitioned disks | Yes | Yes |
 | Apple Partition Map | Partitioned disk images | Yes | No |
-| ISO 9660 | Reader: Joliet, standard, and raw Mode 2 images. Writer: new 2048-byte-sector Joliet images. | Yes | Yes |
+| ISO 9660 | Reader: Joliet, standard, and raw Mode 2 images. Writer: create and update 2048-byte-sector Joliet images. | Yes | Yes |
 | CDRWIN BIN/CUE | Multi-track optical-disc images | Yes | No |
 | Alcohol MDF/MDS | MDF images with MDS descriptors | Yes | No |
 | Apple DMG / UDIF | UDIF disk images | Yes | No |
@@ -143,7 +143,7 @@ package-specific limits on ZIP-based files.
 | Zstandard (`.zst`) | Standard dictionary-free frames, including concatenated and checksummed frames; Writer levels -5 through 22 | Yes | Yes |
 | Unix ar | GNU and BSD archives with short and extended member names; thin archives are not supported | Yes | Yes |
 | ARJ | Methods 0-4, legacy, GOST40, GOST256, and GOST256L password encryption, and split volumes | Yes | No |
-| XAR archive | XAR v1 archive creation with stored, zlib, or bzip2 file data | Yes | Yes |
+| XAR archive | XAR v1 archives with stored, zlib, or bzip2 file data | Yes | Yes |
 | Apple flat installer package | XAR-based package layout and package metadata | Yes | No |
 | CPIO | SVR4 `newc` and CRC, POSIX `odc`, afio large ASCII, and old binary little- and big-endian archives | Yes | Yes |
 | Debian package | `.deb` and `.udeb`, version 2.0; raw or gzip/xz/zstd control TAR, plus raw/gzip/xz/zstd/bzip2/lzma data TAR | Yes | Yes |
@@ -162,7 +162,7 @@ package-specific limits on ZIP-based files.
 
 | Format | Description | Read | Write |
 |---|---|---:|---:|
-| UUencode | Classic and GNU Base64 single-file encoding | Yes | Yes |
+| UUencode | Classic and GNU Base64 blocks; flat member create and update | Yes | Yes |
 
 ### Binaries
 

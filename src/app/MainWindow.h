@@ -5,6 +5,7 @@
 #include "peare/peare_writer.h"
 
 #include <QByteArray>
+#include <QJsonObject>
 #include <QMainWindow>
 #include <QString>
 #include <QStringList>
@@ -174,6 +175,7 @@ private:
     QString directConvertedExtension_;
     QAction* exportAllAction_ = nullptr;
     QAction* addFilesAction_ = nullptr;
+    QAction* createArchiveAction_ = nullptr;
     QAction* showNavigationAction_ = nullptr;
     QAction* showPreviewAction_ = nullptr;
     QAction* newFolderAction_ = nullptr;
@@ -193,6 +195,8 @@ private:
     QStringList offscreenWriterFileAnswers_;
     QStringList offscreenWriterAddSources_;
     QString offscreenWriterAddDestination_;
+    QStringList offscreenWriterCreateSources_;
+    QJsonObject offscreenWriterCreateOptions_;
     int offscreenWriterTextIndex_ = 0;
     int offscreenWriterFileIndex_ = 0;
     QString offscreenWriterError_;

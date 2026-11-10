@@ -413,9 +413,12 @@ bool VmdkSplitImageWriter::parse(QString* error) {
                 HANDLE guard = CreateFileW(
                     reinterpret_cast<LPCWSTR>(extent.sourcePath.utf16()), GENERIC_READ,
                     FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-                if (guard == INVALID_HANDLE_VALUE)
-                    return fail(QStringLiteral("VMDK extent '%1' is in use or cannot be write-guarded.")
-                                .arg(name));
+                if (guard == INVALID_HANDLE_VALUE) {
+                    const DWORD errorCode = GetLastError();
+                    return fail(QStringLiteral(
+                        "VMDK extent '%1' at '%2' cannot be write-guarded (Windows error %3).")
+                        .arg(name, extent.sourcePath).arg(errorCode));
+                }
                 extent.sourceGuard = std::shared_ptr<void>(guard, [](void* handle) {
                     CloseHandle(static_cast<HANDLE>(handle));
                 });

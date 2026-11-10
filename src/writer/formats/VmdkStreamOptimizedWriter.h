@@ -15,6 +15,10 @@ namespace writer {
 
 class VmdkStreamOptimizedWriter final : public VmdkImageAccess {
 public:
+    static bool convertSparseToStreamOptimized(QFile* file,
+                                               const QString& outputName,
+                                               QString* error);
+
     VmdkStreamOptimizedWriter(QFile* file, bool writable,
                               const QString& outputName = QString(),
                               QString* error = nullptr);

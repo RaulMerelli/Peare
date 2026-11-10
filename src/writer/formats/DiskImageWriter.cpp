@@ -518,6 +518,32 @@ QByteArray makeSplitVmdkDescriptor(qint64 capacityBytes, const QString& extentNa
              QString::number(cylinders), diskUuid).toUtf8();
 }
 
+QByteArray makeFlatVmdkDescriptor(qint64 capacityBytes, const QString& createType,
+                                  const QStringList& extentNames,
+                                  const QList<quint64>& extentSectors) {
+    const qint64 sectors = capacityBytes / kSectorSize;
+    const qint64 cylinders = qMax<qint64>(1, sectors / (16 * 63));
+    const QString cid = QUuid::createUuid().toString(QUuid::Id128).left(8);
+    const QString diskUuid = QUuid::createUuid().toString(QUuid::Id128).toUpper();
+    QString descriptor = QStringLiteral(
+        "# Disk DescriptorFile\nversion=1\nencoding=\"UTF-8\"\n"
+        "CID=%1\nparentCID=ffffffff\ncreateType=\"%2\"\n\n"
+        "# Extent description\n").arg(cid, createType);
+    for (int index = 0; index < extentNames.size(); ++index) {
+        descriptor += QStringLiteral("RW %1 FLAT \"%2\" 0\n")
+            .arg(QString::number(extentSectors.at(index)), extentNames.at(index));
+    }
+    descriptor += QStringLiteral(
+        "\n# The Disk Data Base\n#DDB\n"
+        "ddb.adapterType = \"ide\"\n"
+        "ddb.geometry.cylinders = \"%1\"\n"
+        "ddb.geometry.heads = \"16\"\n"
+        "ddb.geometry.sectors = \"63\"\n"
+        "ddb.uuid = \"%2\"\n"
+        "ddb.virtualHWVersion = \"13\"\n").arg(QString::number(cylinders), diskUuid);
+    return descriptor.toUtf8();
+}
+
 quint32 crc32Ieee(const char* data, qint64 length);
 
 struct FloppyCreateGeometry {
@@ -2801,6 +2827,9 @@ bool DiskImageUpdate::beginNew(const QString& imagePath, const QString& formatId
     const bool rawDisk = formatId == QStringLiteral("raw-disk");
     const bool splitVmdkCreate = formatId == QStringLiteral("vmdk") &&
         variant == QStringLiteral("two-gb-sparse");
+    const bool flatVmdkCreate = formatId == QStringLiteral("vmdk") &&
+        (variant == QStringLiteral("monolithic-flat") ||
+         variant == QStringLiteral("two-gb-flat"));
     const bool vhdx4KnCreate = formatId == QStringLiteral("vhdx") &&
         (variant == QStringLiteral("fixed-4kn") ||
          variant == QStringLiteral("dynamic-4kn"));
@@ -2895,7 +2924,7 @@ bool DiskImageUpdate::beginNew(const QString& imagePath, const QString& formatId
     std::unique_ptr<DiskImageIoContext> extContext;
     std::unique_ptr<ExtVolumeUpdate> extUpdate;
     bool initialized = false;
-    if (rawFat || floppy || splitVmdkCreate) {
+    if (rawFat || floppy || splitVmdkCreate || flatVmdkCreate) {
         initialized = staging->resize(imageSize);
     } else if (rawDisk) {
         initialized = createRawPartitionedImage(staging.get(), variant, filesystem,
@@ -2927,7 +2956,8 @@ bool DiskImageUpdate::beginNew(const QString& imagePath, const QString& formatId
             }
         }
     } else if (formatId == QStringLiteral("vmdk") &&
-               variant == QStringLiteral("monolithic-sparse")) {
+               (variant == QStringLiteral("monolithic-sparse") ||
+                variant == QStringLiteral("stream-optimized"))) {
         initialized = createMonolithicSparseVmdk(
             staging.get(), containerSize, QFileInfo(imagePath).fileName(), error);
         if (initialized) {
@@ -3179,6 +3209,10 @@ bool DiskImageUpdate::beginNew(const QString& imagePath, const QString& formatId
                  filesystem == QStringLiteral("ext3") ||
                  filesystem == QStringLiteral("ext4");
     vmdkSplitCreate_ = splitVmdkCreate;
+    vmdkFlatCreateMode_ = variant == QStringLiteral("monolithic-flat") ? 1 :
+                          variant == QStringLiteral("two-gb-flat") ? 2 : 0;
+    vmdkStreamOptimizedCreate_ = formatId == QStringLiteral("vmdk") &&
+        variant == QStringLiteral("stream-optimized");
     return true;
 }
 
@@ -3539,6 +3573,12 @@ bool DiskImageUpdate::finish(QString* error) {
     if (vhdx_ && !vhdx_->finish(error)) return false;
     if (vhd_ && !vhd_->finish(error)) return false;
     if (vmdk_ && !vmdk_->finish(error)) return false;
+    if (vmdkStreamOptimizedCreate_) {
+        vmdk_.reset();
+        if (!VmdkStreamOptimizedWriter::convertSparseToStreamOptimized(
+                staging_.get(), QFileInfo(imagePath_).fileName(), error))
+            return false;
+    }
     if (splitVmdk_) {
         vhdx_.reset();
         vhd_.reset();
@@ -3569,6 +3609,97 @@ bool DiskImageUpdate::finish(QString* error) {
     if (!staging_->flush() || !staging_->seek(0)) {
         if (error) *error = staging_->errorString();
         return false;
+    }
+    if (vmdkFlatCreateMode_) {
+        const QFileInfo outputInfo(imagePath_);
+        const QString createType = vmdkFlatCreateMode_ == 1
+            ? QStringLiteral("monolithicFlat")
+            : QStringLiteral("twoGbMaxExtentFlat");
+        const qint64 maximumExtentBytes = qint64(4) * 1024 * 1024 * kSectorSize;
+        QStringList extentNames;
+        QList<quint64> extentSectors;
+        QStringList publishedExtents;
+        const quint64 diskSectors = quint64(imageLogicalSize_ / kSectorSize);
+        quint64 completedSectors = 0;
+        auto removePublishedExtents = [&]() {
+            for (const QString& path : publishedExtents) QFile::remove(path);
+        };
+        while (completedSectors < diskSectors) {
+            const quint64 sectors = vmdkFlatCreateMode_ == 1
+                ? diskSectors
+                : qMin<quint64>(quint64(maximumExtentBytes / kSectorSize),
+                                diskSectors - completedSectors);
+            const QString extentName = QStringLiteral("peare-%1-f%2.vmdk")
+                .arg(QUuid::createUuid().toString(QUuid::WithoutBraces))
+                .arg(extentNames.size() + 1, 3, 10, QLatin1Char('0'));
+            const QString extentPath = outputInfo.absoluteDir().filePath(extentName);
+            QTemporaryFile extentTemp(outputInfo.absoluteDir().filePath(
+                QStringLiteral(".peare-vmdk-flat-XXXXXX")));
+            if (!extentTemp.open() || !extentTemp.resize(qint64(sectors * kSectorSize))) {
+                if (error) *error = extentTemp.errorString();
+                removePublishedExtents();
+                return false;
+            }
+            QByteArray buffer(int(kCopyChunkSize), Qt::Uninitialized);
+            qint64 remaining = qint64(sectors * kSectorSize);
+            qint64 sourceOffset = qint64(completedSectors * kSectorSize);
+            while (remaining > 0) {
+                const qint64 count = qMin<qint64>(buffer.size(), remaining);
+                if (!staging_->seek(sourceOffset) ||
+                    staging_->read(buffer.data(), count) != count ||
+                    extentTemp.write(buffer.constData(), count) != count) {
+                    if (error) *error = staging_->errorString().isEmpty()
+                        ? extentTemp.errorString() : staging_->errorString();
+                    removePublishedExtents();
+                    return false;
+                }
+                sourceOffset += count;
+                remaining -= count;
+            }
+            if (!syncFileToDisk(&extentTemp, error)) {
+                removePublishedExtents();
+                return false;
+            }
+            extentTemp.setAutoRemove(false);
+            extentTemp.close();
+            if (!extentTemp.rename(extentPath)) {
+                if (error) *error = QStringLiteral("Could not publish flat VMDK extent: %1")
+                    .arg(extentTemp.errorString());
+                removePublishedExtents();
+                return false;
+            }
+            publishedExtents.push_back(extentPath);
+            extentNames.push_back(extentName);
+            extentSectors.push_back(sectors);
+            completedSectors += sectors;
+        }
+        const QByteArray descriptor = makeFlatVmdkDescriptor(
+            imageLogicalSize_, createType, extentNames, extentSectors);
+        QSaveFile output(imagePath_);
+        if (!output.open(QIODevice::WriteOnly) ||
+            !writeAll(&output, descriptor.constData(), descriptor.size()) ||
+            !syncFileToDisk(&output, error) || !output.commit()) {
+            if (error && error->isEmpty()) *error = output.errorString();
+            removePublishedExtents();
+            return false;
+        }
+        externalWriteGuard_.reset();
+        staging_.reset();
+        imagePath_.clear();
+        originalSha256_.clear();
+        originalSize_ = 0;
+        imageLogicalSize_ = 0;
+        fatVolumeOffset_ = 0;
+        fatVolumeSize_ = 0;
+        fatSectorSize_ = kSectorSize;
+        xdfVolume_ = false;
+        ntfsVolume_ = false;
+        extVolume_ = false;
+        createMode_ = false;
+        createTargetExisted_ = false;
+        vmdkFlatCreateMode_ = 0;
+        updateLock_.reset();
+        return true;
     }
     if (vmdkSplitCreate_) {
         const QFileInfo outputInfo(imagePath_);
@@ -3712,6 +3843,8 @@ bool DiskImageUpdate::finish(QString* error) {
     createMode_ = false;
     createTargetExisted_ = false;
     vmdkSplitCreate_ = false;
+    vmdkStreamOptimizedCreate_ = false;
+    vmdkFlatCreateMode_ = 0;
     updateLock_.reset();
     return true;
 }
@@ -3748,6 +3881,8 @@ void DiskImageUpdate::abort() {
     createMode_ = false;
     createTargetExisted_ = false;
     vmdkSplitCreate_ = false;
+    vmdkStreamOptimizedCreate_ = false;
+    vmdkFlatCreateMode_ = 0;
     extJournalOffset_ = 0;
     extJournalSize_ = 0;
 }

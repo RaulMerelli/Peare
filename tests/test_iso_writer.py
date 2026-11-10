@@ -1,7 +1,8 @@
 import ctypes as C
 import hashlib
+import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
 import struct
 import subprocess
@@ -49,6 +50,27 @@ def iso_writer():
     library.peare_writer_finish.restype = C.c_int
     library.peare_writer_last_error.argtypes = [handle]
     library.peare_writer_last_error.restype = C.c_char_p
+    library.peare_writer_can_add_files.argtypes = [C.c_char_p]
+    library.peare_writer_can_add_files.restype = C.c_int
+    library.peare_writer_update_target_count.argtypes = [C.c_char_p]
+    library.peare_writer_update_target_count.restype = C.c_size_t
+    library.peare_writer_get_update_capabilities.argtypes = [
+        C.c_char_p, C.c_size_t, C.POINTER(C.c_uint32)]
+    library.peare_writer_get_update_capabilities.restype = C.c_int
+    library.peare_writer_update_begin.argtypes = [handle, C.c_char_p]
+    library.peare_writer_update_begin.restype = C.c_int
+    library.peare_writer_add_file.argtypes = [handle, C.c_char_p, C.c_char_p]
+    library.peare_writer_add_file.restype = C.c_int
+    library.peare_writer_replace_file.argtypes = [handle, C.c_char_p, C.c_char_p]
+    library.peare_writer_replace_file.restype = C.c_int
+    library.peare_writer_create_empty_file.argtypes = [handle, C.c_char_p]
+    library.peare_writer_create_empty_file.restype = C.c_int
+    library.peare_writer_rename_entry.argtypes = [handle, C.c_char_p, C.c_char_p]
+    library.peare_writer_rename_entry.restype = C.c_int
+    library.peare_writer_delete_entry.argtypes = [handle, C.c_char_p, C.c_int]
+    library.peare_writer_delete_entry.restype = C.c_int
+    library.peare_writer_update_finish.argtypes = [handle]
+    library.peare_writer_update_finish.restype = C.c_int
     return library
 
 
@@ -218,9 +240,197 @@ def test_iso_joliet_writer_round_trip(iso_writer, peare_lib, peare_gui_path, tmp
         assert (extracted / "éA.txt").read_bytes() == payload
         assert (extracted / "ñA.txt").read_bytes() == payload
 
+    image_path = str(output).encode()
+    assert iso_writer.peare_writer_can_add_files(image_path) == 1
+    assert iso_writer.peare_writer_update_target_count(image_path) == 1
+    capabilities = C.c_uint32()
+    assert iso_writer.peare_writer_get_update_capabilities(
+        image_path, 0, C.byref(capabilities)) == 0
+    assert capabilities.value == 0x3F
+    replacement = ROOT / ".gitignore"
+    replacement_payload = replacement.read_bytes()
+    updater = C.c_void_p()
+    assert iso_writer.peare_writer_create(C.byref(updater)) == 0
+    try:
+        assert iso_writer.peare_writer_update_begin(updater, image_path) == 0
+        assert iso_writer.peare_writer_add_file(
+            updater, str(replacement).encode(), b"added.txt") == 0
+        assert iso_writer.peare_writer_replace_file(
+            updater, str(replacement).encode(), b"ROOT.TXT") == 0
+        assert iso_writer.peare_writer_create_directory(updater, b"created/child") == 0
+        assert iso_writer.peare_writer_create_empty_file(
+            updater, b"created/child/blank.txt") == 0
+        assert iso_writer.peare_writer_rename_entry(
+            updater, "docs/日本語".encode(), "docs/renamed".encode()) == 0
+        assert iso_writer.peare_writer_delete_entry(updater, "éA.txt".encode(), 0) == 0
+        assert iso_writer.peare_writer_delete_entry(updater, b"empty", 0) == 0
+        status = iso_writer.peare_writer_update_finish(updater)
+        assert status == 0, iso_writer.peare_writer_last_error(updater).decode()
+    finally:
+        iso_writer.peare_writer_destroy(updater)
+
+    (files, directories, _, primary_files, primary_directories, _) = \
+        _parse_joliet_tree(output.read_bytes())
+    assert files == {
+        "docs/renamed/README.md": payload,
+        "ROOT.TXT": replacement_payload,
+        "ñA.txt": payload,
+        "added.txt": replacement_payload,
+        "created/child/blank.txt": b"",
+    }
+    assert directories == {"docs", "docs/renamed", "created", "created/child"}
+    assert len(primary_files) == len(files)
+    assert "EMPTY" not in primary_directories
+    with peare_lib.open_file(str(output)) as opener:
+        rows = opener.normalized_tree()
+    visible = {row["path"] for row in rows}
+    assert {"docs/renamed/README.md", "ROOT.TXT", "added.txt",
+            "created/child/blank.txt"} <= visible
+    assert "éA.txt" not in visible and "empty" not in visible
+
+    if seven_zip:
+        result = subprocess.run([seven_zip, "t", str(output)], capture_output=True,
+                                text=True, timeout=60)
+        assert result.returncode == 0, result.stdout + result.stderr
+        extracted = tmp_path / "seven-zip-after-cud"
+        result = subprocess.run([seven_zip, "x", "-y", f"-o{extracted}", str(output)],
+                                capture_output=True, text=True, timeout=60)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (extracted / "docs" / "renamed" / "README.md").read_bytes() == payload
+        assert (extracted / "ROOT.TXT").read_bytes() == replacement_payload
+        assert (extracted / "added.txt").read_bytes() == replacement_payload
+
+    for view in ("tree", "details"):
+        scenario = {
+            "view": view,
+            "operations": [
+                {"type": "create_directory", "name": "gui-dir"},
+                {"type": "replace", "path": "ROOT.TXT",
+                 "source": str(replacement), "expect_present": "ROOT.TXT"},
+                {"type": "rename", "path": "ROOT.TXT", "name": "renamed.txt",
+                 "expect_present": "renamed.txt"},
+                {"type": "delete", "path": "renamed.txt",
+                 "expect_absent": "renamed.txt"},
+                {"type": "add_files", "destination": "gui-dir",
+                 "sources": [str(replacement)], "expect_present": "gui-dir/.gitignore"},
+                {"type": "delete", "path": "gui-dir/.gitignore",
+                 "expect_absent": "gui-dir/.gitignore"},
+                {"type": "delete", "path": "gui-dir", "expect_absent": "gui-dir"},
+            ],
+        }
+        scenario_path = tmp_path / f"iso-gui-{view}.json"
+        scenario_path.write_text(json.dumps(scenario), encoding="utf-8")
+        output_dir = tmp_path / f"iso-gui-{view}"
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+             "--exe", str(peare_gui_path), "--image", str(output),
+             "--scenario", str(scenario_path), "--output-dir", str(output_dir)],
+            capture_output=True, text=True, timeout=240)
+        assert result.returncode == 0, result.stdout + result.stderr
+        report = json.loads((output_dir / "writer-test-report.json").read_text(
+            encoding="utf-8"))
+        assert len(report["operations"]) == len(scenario["operations"])
+        assert all(operation["passed"] for operation in report["operations"])
+        assert (extracted / "created" / "child" / "blank.txt").read_bytes() == b""
+
     preview = subprocess.run(
         [sys.executable, str(ROOT / "tests" / "run_gui_preview_tests.py"),
          "--exe", str(peare_gui_path), "--case", "iso-joliet-writer",
-         str(output), "docs/日本語/README.md", "--output-dir",
+         str(output), "docs/renamed/README.md", "--output-dir",
          str(tmp_path / "gui")], capture_output=True, text=True, timeout=120)
     assert preview.returncode == 0, preview.stdout + preview.stderr
+
+
+def test_iso_real_sample_cud(iso_writer, peare_lib, peare_gui_path, tmp_path):
+    sample_value = os.environ.get("PEARE_ISO_CUD_SAMPLE")
+    if not sample_value:
+        pytest.skip("Set PEARE_ISO_CUD_SAMPLE to an external Joliet ISO sample")
+    sample = Path(sample_value)
+    assert sample.is_file()
+    with peare_lib.open_file(str(sample)) as opener:
+        source_files = [row["path"] for row in opener.normalized_tree()
+                        if not row["is_container"]]
+    assert source_files
+    replacement_target = source_files[0]
+    original_hash = hashlib.sha256(sample.read_bytes()).digest()
+    replacement = ROOT / ".gitignore"
+    replacement_bytes = replacement.read_bytes()
+    image = tmp_path / "iso-real-cud-copy.iso"
+    shutil.copy2(sample, image)
+
+    image_utf8 = str(image).encode()
+    assert iso_writer.peare_writer_can_add_files(image_utf8) == 1
+    assert iso_writer.peare_writer_update_target_count(image_utf8) == 1
+    capabilities = C.c_uint32()
+    assert iso_writer.peare_writer_get_update_capabilities(
+        image_utf8, 0, C.byref(capabilities)) == 0
+    assert capabilities.value == 0x3F
+
+    writer = C.c_void_p()
+    assert iso_writer.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert iso_writer.peare_writer_update_begin(writer, image_utf8) == 0
+        assert iso_writer.peare_writer_create_directory(writer, b"PEARE-CUD") == 0
+        assert iso_writer.peare_writer_add_file(
+            writer, str(replacement).encode(), b"PEARE-CUD/added.txt") == 0
+        assert iso_writer.peare_writer_replace_file(
+            writer, str(replacement).encode(), replacement_target.encode()) == 0
+        assert iso_writer.peare_writer_create_empty_file(
+            writer, b"PEARE-CUD/empty.txt") == 0
+        assert iso_writer.peare_writer_rename_entry(
+            writer, b"PEARE-CUD/added.txt", b"PEARE-CUD/renamed.txt") == 0
+        assert iso_writer.peare_writer_delete_entry(
+            writer, b"PEARE-CUD/renamed.txt", 0) == 0
+        assert iso_writer.peare_writer_delete_entry(writer, b"PEARE-CUD", 1) == 0
+        status = iso_writer.peare_writer_update_finish(writer)
+        assert status == 0, iso_writer.peare_writer_last_error(writer).decode()
+    finally:
+        iso_writer.peare_writer_destroy(writer)
+    assert hashlib.sha256(sample.read_bytes()).digest() == original_hash
+
+    seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
+                 "C:/Program Files/7-Zip/7z.exe")
+    assert Path(seven_zip).is_file()
+    result = subprocess.run([seven_zip, "t", str(image)], capture_output=True,
+                            text=True, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+    extracted = tmp_path / "iso-real-cud-extracted"
+    result = subprocess.run(
+        [seven_zip, "x", "-y", f"-o{extracted}", str(image),
+         replacement_target], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert extracted.joinpath(*PurePosixPath(replacement_target).parts).read_bytes() == replacement_bytes
+
+    for view in ("tree", "details"):
+        scenario = {
+            "view": view,
+            "operations": [
+                {"type": "create_directory", "name": "PEARE-GUI-CUD"},
+                {"type": "add_files", "destination": "PEARE-GUI-CUD",
+                 "sources": [str(replacement)],
+                 "expect_present": "PEARE-GUI-CUD/.gitignore"},
+                {"type": "replace", "path": replacement_target,
+                 "source": str(replacement), "expect_present": replacement_target},
+                {"type": "rename", "path": "PEARE-GUI-CUD/.gitignore",
+                 "name": "renamed.txt",
+                 "expect_present": "PEARE-GUI-CUD/renamed.txt"},
+                {"type": "delete", "path": "PEARE-GUI-CUD/renamed.txt",
+                 "expect_absent": "PEARE-GUI-CUD/renamed.txt"},
+                {"type": "delete", "path": "PEARE-GUI-CUD",
+                 "expect_absent": "PEARE-GUI-CUD"},
+            ],
+        }
+        scenario_path = tmp_path / f"iso-real-gui-{view}.json"
+        scenario_path.write_text(json.dumps(scenario), encoding="utf-8")
+        output_dir = tmp_path / f"iso-real-gui-{view}"
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+             "--exe", str(peare_gui_path), "--image", str(sample),
+             "--scenario", str(scenario_path), "--output-dir", str(output_dir)],
+            capture_output=True, text=True, timeout=300)
+        assert result.returncode == 0, result.stdout + result.stderr
+        report = json.loads((output_dir / "writer-test-report.json").read_text(
+            encoding="utf-8"))
+        assert len(report["operations"]) == len(scenario["operations"])
+        assert all(operation["passed"] for operation in report["operations"])
+        assert hashlib.sha256(sample.read_bytes()).digest() == original_hash

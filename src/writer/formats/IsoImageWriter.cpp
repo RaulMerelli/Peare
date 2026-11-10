@@ -12,6 +12,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <set>
 #include <vector>
 
 namespace peare {
@@ -25,6 +26,9 @@ struct Node {
     QString name;
     QString path;
     QString sourcePath;
+    quint64 sourceOffset = 0;
+    quint32 sourceSize = 0;
+    bool sourceIsRange = false;
     QByteArray primaryName;
     bool directory = true;
     bool explicitEntry = false;
@@ -375,6 +379,9 @@ bool insertEntry(Node* root, const IsoImageEntry& entry, quint32* id,
             }
             node->directory = entry.directory;
             node->sourcePath = entry.sourcePath;
+            node->sourceOffset = entry.sourceOffset;
+            node->sourceSize = entry.sourceSize;
+            node->sourceIsRange = entry.sourceIsRange;
             node->path = full;
             node->explicitEntry = true;
             if (entry.directory && !entry.sourcePath.isEmpty()) {
@@ -393,6 +400,181 @@ bool writeZeros(QIODevice* output, quint64 count) {
         if (output->write(zeros.constData(), chunk) != chunk) return false;
         count -= quint64(chunk);
     }
+    return true;
+}
+
+quint16 get16le(const QByteArray& bytes, int offset) {
+    return quint16(quint8(bytes.at(offset))) |
+           quint16(quint8(bytes.at(offset + 1)) << 8);
+}
+
+quint16 get16be(const QByteArray& bytes, int offset) {
+    return quint16(quint8(bytes.at(offset)) << 8) |
+           quint16(quint8(bytes.at(offset + 1)));
+}
+
+quint32 get32le(const QByteArray& bytes, int offset) {
+    return quint32(quint8(bytes.at(offset))) |
+           (quint32(quint8(bytes.at(offset + 1))) << 8) |
+           (quint32(quint8(bytes.at(offset + 2))) << 16) |
+           (quint32(quint8(bytes.at(offset + 3))) << 24);
+}
+
+quint32 get32be(const QByteArray& bytes, int offset) {
+    return (quint32(quint8(bytes.at(offset))) << 24) |
+           (quint32(quint8(bytes.at(offset + 1))) << 16) |
+           (quint32(quint8(bytes.at(offset + 2))) << 8) |
+           quint32(quint8(bytes.at(offset + 3)));
+}
+
+bool getBoth32(const QByteArray& bytes, int offset, quint32* value) {
+    const quint32 little = get32le(bytes, offset);
+    const quint32 big = get32be(bytes, offset + 4);
+    if (little != big) return false;
+    *value = little;
+    return true;
+}
+
+bool decodeIdentifier(const QByteArray& raw, bool joliet, bool directory,
+                      QString* name) {
+    if (!name || raw.isEmpty()) return false;
+    if (joliet) {
+        if (raw.size() & 1) return false;
+        QString value;
+        value.reserve(raw.size() / 2);
+        for (int i = 0; i < raw.size(); i += 2) {
+            const ushort ch = (quint16(quint8(raw.at(i))) << 8) |
+                             quint16(quint8(raw.at(i + 1)));
+            if (ch >= 0xd800 && ch <= 0xdfff) return false;
+            value.append(QChar(ch));
+        }
+        *name = value;
+    } else {
+        *name = QString::fromLatin1(raw);
+    }
+    if (!directory) {
+        const int version = name->lastIndexOf(QLatin1Char(';'));
+        if (version >= 0 && version + 1 < name->size()) {
+            bool numeric = true;
+            for (int i = version + 1; i < name->size(); ++i)
+                numeric = numeric && name->at(i).isDigit();
+            if (numeric) name->truncate(version);
+        }
+    }
+    return !name->isEmpty() && *name != QStringLiteral(".") &&
+           *name != QStringLiteral("..");
+}
+
+bool parseIsoEntries(QFile* input, bool joliet,
+                     std::vector<IsoImageEntry>* entries, QString* error) {
+    if (!input || !entries || !input->isOpen() || input->size() < qint64(19) * kSectorSize) {
+        if (error) *error = QStringLiteral("The ISO image is too small or unavailable.");
+        return false;
+    }
+    QByteArray selectedDescriptor;
+    QByteArray primaryDescriptor;
+    const qint64 sectorCount = input->size() / kSectorSize;
+    for (quint32 sector = 16; sector < 256 && qint64(sector) < sectorCount; ++sector) {
+        if (!input->seek(qint64(sector) * kSectorSize)) return false;
+        const QByteArray descriptor = input->read(kSectorSize);
+        if (descriptor.size() != int(kSectorSize) || descriptor.mid(1, 5) != QByteArrayLiteral("CD001") ||
+            quint8(descriptor.at(6)) != 1) break;
+        const quint8 type = quint8(descriptor.at(0));
+        if (type == 1 && primaryDescriptor.isEmpty()) primaryDescriptor = descriptor;
+        if (type == 2 && descriptor.mid(88, 2) == QByteArrayLiteral("%/")) {
+            const char level = descriptor.at(90);
+            if (level == '@' || level == 'C' || level == 'E') selectedDescriptor = descriptor;
+        }
+        if (type == 255) break;
+    }
+    const bool useJoliet = joliet && !selectedDescriptor.isEmpty();
+    if (!useJoliet) selectedDescriptor = primaryDescriptor;
+    if (selectedDescriptor.isEmpty() || get16le(selectedDescriptor, 128) != kSectorSize ||
+        get16be(selectedDescriptor, 130) != kSectorSize) {
+        if (error) *error = QStringLiteral("The ISO image has no supported 2048-byte volume descriptor.");
+        return false;
+    }
+    quint32 volumeSectors = 0;
+    if (!getBoth32(selectedDescriptor, 80, &volumeSectors) ||
+        volumeSectors > quint64(input->size()) / kSectorSize) {
+        if (error) *error = QStringLiteral("The ISO volume size is invalid.");
+        return false;
+    }
+    const QByteArray rootRecord = selectedDescriptor.mid(156, 34);
+    quint32 rootExtent = 0;
+    quint32 rootSize = 0;
+    if (rootRecord.size() != 34 || quint8(rootRecord.at(0)) < 34 ||
+        !getBoth32(rootRecord, 2, &rootExtent) || !getBoth32(rootRecord, 10, &rootSize) ||
+        !(quint8(rootRecord.at(25)) & 2) || rootExtent < 16 ||
+        quint64(rootExtent) * kSectorSize + rootSize > quint64(volumeSectors) * kSectorSize) {
+        if (error) *error = QStringLiteral("The ISO root directory record is invalid.");
+        return false;
+    }
+
+    std::set<quint32> visited;
+    std::vector<IsoImageEntry> parsed;
+    std::function<bool(const QString&, quint32, quint32, unsigned)> walk;
+    walk = [&](const QString& parent, quint32 extent, quint32 size, unsigned depth) {
+        if (depth > 128 || !visited.insert(extent).second || !size ||
+            quint64(extent) * kSectorSize + size > quint64(volumeSectors) * kSectorSize) {
+            if (error) *error = QStringLiteral("The ISO directory tree is cyclic or out of bounds.");
+            return false;
+        }
+        quint32 consumed = 0;
+        while (consumed < size) {
+            const quint32 sectorOffset = consumed % kSectorSize;
+            if (!input->seek(qint64(extent) * kSectorSize + consumed)) return false;
+            char recordLengthChar = 0;
+            if (input->read(&recordLengthChar, 1) != 1) return false;
+            const quint8 recordLength = quint8(recordLengthChar);
+            if (!recordLength) {
+                consumed += kSectorSize - sectorOffset;
+                continue;
+            }
+            if (recordLength < 34 || recordLength > size - consumed ||
+                sectorOffset + recordLength > kSectorSize || !input->seek(
+                    qint64(extent) * kSectorSize + consumed)) return false;
+            const QByteArray record = input->read(recordLength);
+            if (record.size() != recordLength || quint8(record.at(1)) != 0 ||
+                quint8(record.at(32)) + 33 > record.size()) return false;
+            quint32 childExtent = 0;
+            quint32 childSize = 0;
+            if (!getBoth32(record, 2, &childExtent) || !getBoth32(record, 10, &childSize))
+                return false;
+            const QByteArray identifier = record.mid(33, quint8(record.at(32)));
+            consumed += recordLength;
+            if (identifier == QByteArray(1, '\0') || identifier == QByteArray(1, '\1')) continue;
+            if (quint8(record.at(25)) & 0x80) {
+                if (error) *error = QStringLiteral("Multi-extent ISO files are not supported for updates.");
+                return false;
+            }
+            const bool directory = (quint8(record.at(25)) & 2) != 0;
+            QString component;
+            if (!decodeIdentifier(identifier, useJoliet, directory, &component)) return false;
+            const QString path = parent.isEmpty() ? component : parent + QLatin1Char('/') + component;
+            IsoImageEntry entry;
+            entry.path = path;
+            entry.directory = directory;
+            if (!directory) {
+                if (quint64(childExtent) * kSectorSize + childSize >
+                    quint64(volumeSectors) * kSectorSize) return false;
+                entry.sourceOffset = quint64(childExtent) * kSectorSize;
+                entry.sourceSize = childSize;
+                entry.sourceIsRange = true;
+            }
+            for (const IsoImageEntry& previous : parsed) {
+                if (previous.path.compare(path, Qt::CaseInsensitive) == 0) return false;
+            }
+            parsed.push_back(entry);
+            if (directory && !walk(path, childExtent, childSize, depth + 1)) return false;
+        }
+        return true;
+    };
+    if (!walk(QString(), rootExtent, rootSize, 0)) {
+        if (error && error->isEmpty()) *error = QStringLiteral("The ISO directory tree is invalid or unsupported.");
+        return false;
+    }
+    *entries = std::move(parsed);
     return true;
 }
 
@@ -422,16 +604,24 @@ bool IsoImageWriter::write(const QString& outputPath,
         return false;
     }
     for (Node* file : files) {
-        QFile input(file->sourcePath);
-        const QFileInfo info(file->sourcePath);
-        if (!info.isFile() || !input.open(QIODevice::ReadOnly) ||
-            input.size() < 0 || quint64(input.size()) > UINT32_MAX) {
-            if (error) *error = input.errorString().isEmpty()
-                ? QStringLiteral("ISO files must be regular files smaller than 4 GiB.")
-                : input.errorString();
-            return false;
+        if (file->sourceIsRange) {
+            if (file->sourcePath.isEmpty() || file->sourceSize > UINT32_MAX) {
+                if (error) *error = QStringLiteral("The existing ISO file range is invalid.");
+                return false;
+            }
+            file->size = file->sourceSize;
+        } else {
+            QFile input(file->sourcePath);
+            const QFileInfo info(file->sourcePath);
+            if (!info.isFile() || !input.open(QIODevice::ReadOnly) ||
+                input.size() < 0 || quint64(input.size()) > UINT32_MAX) {
+                if (error) *error = input.errorString().isEmpty()
+                    ? QStringLiteral("ISO files must be regular files smaller than 4 GiB.")
+                    : input.errorString();
+                return false;
+            }
+            file->size = quint32(input.size());
         }
-        file->size = quint32(input.size());
     }
 
     quint64 sector = kFirstDataSector + 3;
@@ -541,7 +731,8 @@ bool IsoImageWriter::write(const QString& outputPath,
         }
         QFile input(file->sourcePath);
         failureContext = QStringLiteral("Could not reopen staged ISO file data.");
-        if (!input.open(QIODevice::ReadOnly)) goto io_error;
+        if (!input.open(QIODevice::ReadOnly) ||
+            (file->sourceIsRange && !input.seek(qint64(file->sourceOffset)))) goto io_error;
         QByteArray buffer(int(kSectorSize * 256), '\0');
         qint64 remaining = file->size;
         failureContext = QStringLiteral("Could not write staged ISO file data.");
@@ -569,6 +760,21 @@ io_error:
         ? failureContext : output.errorString();
     output.cancelWriting();
     return false;
+}
+
+bool IsoImageWriter::readEntries(const QString& imagePath,
+                                 std::vector<IsoImageEntry>* entries,
+                                 QString* error) {
+    if (!entries) {
+        if (error) *error = QStringLiteral("An ISO entry list is required.");
+        return false;
+    }
+    QFile input(imagePath);
+    if (!input.open(QIODevice::ReadOnly)) {
+        if (error) *error = input.errorString();
+        return false;
+    }
+    return parseIsoEntries(&input, true, entries, error);
 }
 
 }  // namespace writer

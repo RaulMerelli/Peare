@@ -160,5 +160,7 @@ Peare reads RPM packages with CPIO payloads and the supported compressors listed
 in the format matrix. It does not verify RPM package signatures. Payloads that
 use another compressor or the large-file `07070X` CPIO extension are not read.
 
-The Writer creates unsigned RPM v3 packages. Its MD5 digest detects data changes,
-but it does not authenticate the package source.
+The Writer creates RPM packages and updates existing RPM v3/v4 packages. An
+update removes the original cryptographic signature tags and writes a new
+unsigned package. Its MD5 integrity tag detects data changes but does not
+authenticate the package source.

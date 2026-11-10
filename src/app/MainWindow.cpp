@@ -41,6 +41,7 @@
 #include <QPlainTextEdit>
 #include <QPainter>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QPixmap>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -429,8 +430,9 @@ void MainWindow::buildMenus() {
     connect(openAction, &QAction::triggered, this, [this] { openFile(); });
     QAction* openFolderAction = new QAction(QStringLiteral("Open &folder..."), this);
     connect(openFolderAction, &QAction::triggered, this, [this] { openFolder(); });
-    QAction* createArchiveAction = new QAction(QStringLiteral("Add files &to..."), this);
-    connect(createArchiveAction, &QAction::triggered, this,
+    createArchiveAction_ = new QAction(QStringLiteral("Add files &to..."), this);
+    createArchiveAction_->setObjectName(QStringLiteral("addFilesToNewContainerAction"));
+    connect(createArchiveAction_, &QAction::triggered, this,
             [this] { addFilesToNewContainer(); });
 
     QAction* exitAction = new QAction(QStringLiteral("E&xit"), this);
@@ -504,7 +506,7 @@ void MainWindow::buildMenus() {
     fileMenu->addAction(openAction);
     fileMenu->addAction(openFolderAction);
     fileMenu->addSeparator();
-    fileMenu->addAction(createArchiveAction);
+    fileMenu->addAction(createArchiveAction_);
     fileMenu->addSeparator();
     fileMenu->addAction(exitAction);
 
@@ -1317,12 +1319,16 @@ bool MainWindow::runOffscreenWriterScenario(const QString& imagePath,
         return fail(QStringLiteral("Scenario has no operations."));
 
     QJsonArray results;
+    QString activeOperation;
     auto writeProgress = [&](const QString& stage) {
         QJsonObject progress;
-        progress.insert(QStringLiteral("image"), QFileInfo(imagePath).absoluteFilePath());
+        progress.insert(QStringLiteral("image"), currentFilePath_.isEmpty()
+            ? QFileInfo(imagePath).absoluteFilePath() : currentFilePath_);
         progress.insert(QStringLiteral("view"), scenario.value(QStringLiteral("view")));
         progress.insert(QStringLiteral("stage"), stage);
         progress.insert(QStringLiteral("operations"), results);
+        if (!activeOperation.isEmpty())
+            progress.insert(QStringLiteral("active_operation"), activeOperation);
         QFile reportFile(reportPath);
         if (reportFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
             reportFile.write(QJsonDocument(progress).toJson(QJsonDocument::Indented));
@@ -1364,6 +1370,7 @@ bool MainWindow::runOffscreenWriterScenario(const QString& imagePath,
         if (!value.isObject()) return fail(QStringLiteral("Operation must be an object."));
         const QJsonObject operation = value.toObject();
         const QString kind = operation.value(QStringLiteral("type")).toString();
+        activeOperation = operation.value(QStringLiteral("test_id")).toString(kind);
         const QString viewPath = operation.value(QStringLiteral("view_path")).toString();
         QTreeWidgetItem* viewLocation = viewPath.isEmpty()
             ? nullptr : findDetailsPath(viewPath);
@@ -1416,6 +1423,19 @@ bool MainWindow::runOffscreenWriterScenario(const QString& imagePath,
             offscreenWriterAddDestination_ =
                 operation.value(QStringLiteral("destination")).toString();
             addFilesAction_->trigger();
+        } else if (kind == QStringLiteral("create_container")) {
+            offscreenWriterCreateSources_.clear();
+            for (const QJsonValue& source : operation.value(QStringLiteral("sources")).toArray())
+                offscreenWriterCreateSources_.push_back(source.toString());
+            offscreenWriterCreateOptions_ = operation;
+            if (offscreenWriterCreateSources_.isEmpty())
+                return fail(QStringLiteral("Container creation has no source files."));
+            if (!createArchiveAction_ || !createArchiveAction_->isEnabled())
+                return fail(QStringLiteral("GUI Add files to action is unavailable."));
+            createArchiveAction_->trigger();
+            if (!offscreenWriterError_.isEmpty()) return fail(offscreenWriterError_);
+            if (!currentSession_.isOpen())
+                return fail(QStringLiteral("The GUI did not open the created container."));
         } else if (kind == QStringLiteral("rename")) {
             offscreenWriterTextAnswers_ = QStringList{
                 operation.value(QStringLiteral("name")).toString()};
@@ -1459,13 +1479,56 @@ bool MainWindow::runOffscreenWriterScenario(const QString& imagePath,
             return fail(QStringLiteral("Details view did not preserve location: %1")
                         .arg(viewPath));
 
+        if (kind == QStringLiteral("create_container") &&
+            operation.value(QStringLiteral("cleanup_created_container")).toBool()) {
+            const QString createdPath = currentFilePath_;
+            if (createdPath.isEmpty() ||
+                QFileInfo(createdPath).absoluteFilePath() ==
+                    QFileInfo(imagePath).absoluteFilePath())
+                return fail(QStringLiteral("Created output path is invalid."));
+            openFilePath(imagePath);
+            QApplication::processEvents();
+            if (!currentSession_.isOpen())
+                return fail(QStringLiteral("The GUI could not restore the test image."));
+            if (QFileInfo(createdPath).suffix().compare(
+                    QStringLiteral("vmdk"), Qt::CaseInsensitive) == 0) {
+                QFile descriptor(createdPath);
+                if (!descriptor.open(QIODevice::ReadOnly | QIODevice::Text))
+                    return fail(QStringLiteral("Could not inspect the disposable VMDK descriptor."));
+                const QString descriptorText = QString::fromUtf8(descriptor.readAll());
+                descriptor.close();
+                const QString baseDirectory = QDir::cleanPath(
+                    QFileInfo(createdPath).absolutePath()) + QLatin1Char('/');
+                const QRegularExpression extentLine(
+                    QStringLiteral("^(?:RW|RDONLY|NOACCESS)\\s+\\d+\\s+\\S+\\s+\"([^\"]+)\""));
+                for (const QString& line : descriptorText.split(QLatin1Char('\n'))) {
+                    const auto match = extentLine.match(line.trimmed());
+                    if (!match.hasMatch()) continue;
+                    const QString relativePath = match.captured(1);
+                    if (QDir::isAbsolutePath(relativePath))
+                        return fail(QStringLiteral("Disposable VMDK contains an absolute extent path."));
+                    const QString extentPath = QDir::cleanPath(
+                        QDir(QFileInfo(createdPath).absolutePath())
+                            .absoluteFilePath(relativePath));
+                    if (!extentPath.startsWith(baseDirectory, Qt::CaseInsensitive))
+                        return fail(QStringLiteral("Disposable VMDK extent escapes its test directory."));
+                    if (QFileInfo::exists(extentPath) && !QFile::remove(extentPath))
+                        return fail(QStringLiteral("Could not remove a disposable VMDK extent."));
+                }
+            }
+            if (!QFile::remove(createdPath))
+                return fail(QStringLiteral("Could not remove disposable created output."));
+        }
+
         QJsonObject result;
         result.insert(QStringLiteral("type"), kind);
+        result.insert(QStringLiteral("test_id"), activeOperation);
         result.insert(QStringLiteral("passed"), true);
         result.insert(QStringLiteral("view_path"), detailsPath(currentDetailsLocation_));
         result.insert(QStringLiteral("selection"), detailsPath(treeView_->currentItem()));
         results.push_back(result);
         writeProgress(QStringLiteral("operation-complete: ") + kind);
+        activeOperation.clear();
     }
 
     if (offscreenWriterTextIndex_ != offscreenWriterTextAnswers_.size() ||
@@ -1475,7 +1538,8 @@ bool MainWindow::runOffscreenWriterScenario(const QString& imagePath,
     if (screenshot.isNull() || !screenshot.save(screenshotPath, "PNG"))
         return fail(QStringLiteral("Could not save GUI writer screenshot."));
     QJsonObject report;
-    report.insert(QStringLiteral("image"), QFileInfo(imagePath).absoluteFilePath());
+    report.insert(QStringLiteral("image"), currentFilePath_.isEmpty()
+        ? QFileInfo(imagePath).absoluteFilePath() : currentFilePath_);
     report.insert(QStringLiteral("view"), scenario.value(QStringLiteral("view")));
     report.insert(QStringLiteral("stage"), QStringLiteral("complete"));
     report.insert(QStringLiteral("operations"), results);
@@ -1498,9 +1562,11 @@ void MainWindow::openFolder() {
 }
 
 void MainWindow::addFilesToNewContainer() {
-    const QStringList sources = QFileDialog::getOpenFileNames(
-        this, QStringLiteral("Select files to add"), currentDirectory_.isEmpty()
-            ? QDir::homePath() : currentDirectory_);
+    const QStringList sources = offscreenWriterScenario_
+        ? offscreenWriterCreateSources_
+        : QFileDialog::getOpenFileNames(
+              this, QStringLiteral("Select files to add"), currentDirectory_.isEmpty()
+                  ? QDir::homePath() : currentDirectory_);
     if (sources.isEmpty()) return;
 
     QVector<peare_writer_format> formats;
@@ -1521,6 +1587,10 @@ void MainWindow::addFilesToNewContainer() {
     auto* variantSelector = new QComboBox(&dialog);
     auto* filesystemSelector = new QComboBox(&dialog);
     auto* outputSelector = new QLineEdit(&dialog);
+    formatSelector->setObjectName(QStringLiteral("createFormatSelector"));
+    variantSelector->setObjectName(QStringLiteral("createVariantSelector"));
+    filesystemSelector->setObjectName(QStringLiteral("createFilesystemSelector"));
+    outputSelector->setObjectName(QStringLiteral("createDestinationPath"));
     auto* browseButton = new QPushButton(QStringLiteral("Browse..."), &dialog);
     auto* outputRow = new QWidget(&dialog);
     auto* outputLayout = new QHBoxLayout(outputRow);
@@ -1593,7 +1663,40 @@ void MainWindow::addFilesToNewContainer() {
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     updateVariants();
     updateSuggestedPath();
-    if (dialog.exec() != QDialog::Accepted) return;
+    if (offscreenWriterScenario_) {
+        const int formatIndex = formatSelector->findData(
+            offscreenWriterCreateOptions_.value(QStringLiteral("format")).toString());
+        if (formatIndex < 0) {
+            offscreenWriterError_ = QStringLiteral("GUI format selector has no requested format.");
+            return;
+        }
+        formatSelector->setCurrentIndex(formatIndex);
+        const int variantIndex = variantSelector->findData(
+            offscreenWriterCreateOptions_.value(QStringLiteral("variant")).toString());
+        if (variantIndex < 0) {
+            offscreenWriterError_ = QStringLiteral("GUI variant selector has no requested variant.");
+            return;
+        }
+        variantSelector->setCurrentIndex(variantIndex);
+        const QString filesystem = offscreenWriterCreateOptions_
+            .value(QStringLiteral("filesystem")).toString();
+        if (!filesystem.isEmpty()) {
+            const int filesystemIndex = filesystemSelector->findData(filesystem);
+            if (filesystemIndex < 0) {
+                offscreenWriterError_ = QStringLiteral("GUI filesystem selector has no requested filesystem.");
+                return;
+            }
+            filesystemSelector->setCurrentIndex(filesystemIndex);
+        }
+        outputSelector->setText(
+            offscreenWriterCreateOptions_.value(QStringLiteral("destination")).toString());
+        QTimer::singleShot(0, &dialog, [buttons] {
+            buttons->button(QDialogButtonBox::Save)->click();
+        });
+        if (dialog.exec() != QDialog::Accepted) return;
+    } else if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
 
     const int formatIndex = formatSelector->currentIndex();
     if (formatIndex < 0 || formatIndex >= formats.size()) return;
@@ -1601,7 +1704,8 @@ void MainWindow::addFilesToNewContainer() {
     const QString extension = QString::fromUtf8(format.extension);
     QString outputPath = outputSelector->text().trimmed();
     if (outputPath.isEmpty()) return;
-    if (QFileInfo(outputPath).suffix().compare(extension, Qt::CaseInsensitive) != 0) {
+    if (QFileInfo(outputPath).completeSuffix().compare(
+            extension, Qt::CaseInsensitive) != 0) {
         const QFileInfo outputInfo(outputPath);
         outputPath = QDir(outputInfo.absolutePath()).filePath(
             outputInfo.completeBaseName() + QLatin1Char('.') + extension);
@@ -1636,6 +1740,8 @@ void MainWindow::addFilesToNewContainer() {
         formatUtf8.constData(), variantUtf8.constData(),
         filesystemUtf8.isEmpty() ? nullptr : filesystemUtf8.constData()
     };
+    if (offscreenWriterProgress_)
+        offscreenWriterProgress_(QStringLiteral("creating-container"));
     if (status == PEARE_WRITER_OK)
         status = peare_writer_add_files_to_ex(
             writer, outputUtf8.constData(), &createOptions, 0,
@@ -1651,7 +1757,11 @@ void MainWindow::addFilesToNewContainer() {
         QMessageBox::warning(this, QStringLiteral("Add files to"), error);
         return;
     }
+    if (offscreenWriterProgress_)
+        offscreenWriterProgress_(QStringLiteral("opening-created-container"));
     openFilePath(outputPath);
+    if (offscreenWriterProgress_)
+        offscreenWriterProgress_(QStringLiteral("created-container-opened"));
 }
 
 void MainWindow::addFilesToContainer(const QStringList& requestedSources,
@@ -2804,6 +2914,11 @@ QString MainWindow::writerEntryPath(QTreeWidgetItem* item) const {
         const QString ownerType = owner->data(0, TypeRole).toString();
         pearegui::Session* parentSession = sessionOf(owner);
         if (!parentSession || parentSession == itemSession) return {};
+        const bool debDataWrapper =
+            ownerType == QStringLiteral("DEB_FILE") &&
+            parentSession->containerFormat() == PEARE_CONTAINER_DEB &&
+            owner->data(0, NameRole).toString().startsWith(
+                QStringLiteral("data.tar"), Qt::CaseInsensitive);
         const bool compressedTarWrapper =
             ((ownerType == QStringLiteral("GZIP_FILE") &&
               parentSession->containerFormat() == PEARE_CONTAINER_GZIP) ||
@@ -2818,7 +2933,7 @@ QString MainWindow::writerEntryPath(QTreeWidgetItem* item) const {
              (ownerType == QStringLiteral("LZMA_FILE") &&
               parentSession->containerFormat() == PEARE_CONTAINER_LZMA)) &&
             itemSession->containerFormat() == PEARE_CONTAINER_TAR;
-        if (compressedTarWrapper) {
+        if (debDataWrapper || compressedTarWrapper) {
             transparentOwners.push_back(owner);
         } else if (ownerType != QStringLiteral("DISK_PARTITION") &&
             !ownerType.endsWith(QStringLiteral("_DIR"), Qt::CaseInsensitive)) {
@@ -2994,6 +3109,7 @@ void MainWindow::createWriterEntry(bool directory) {
 void MainWindow::renameWriterEntry(QTreeWidgetItem* item) {
     const QString path = writerEntryPath(item);
     if (path.isEmpty()) return;
+    const qint64 entryId = item->data(0, BaseIdRole).toLongLong();
     const QString oldName = path.section(QLatin1Char('/'), -1);
     bool accepted = false;
     const QString newName = offscreenWriterScenario_
@@ -3007,6 +3123,8 @@ void MainWindow::renameWriterEntry(QTreeWidgetItem* item) {
         newName.contains(QLatin1Char('\\')) || newName == oldName) return;
     const QString parent = path.section(QLatin1Char('/'), 0, -2);
     const QString target = parent.isEmpty() ? newName : parent + QLatin1Char('/') + newName;
+    const QByteArray pathUtf8 = path.toUtf8();
+    const QByteArray targetUtf8 = target.toUtf8();
     const WriterViewState viewState = captureWriterViewState();
     currentSession_.close();
     childSessions_.clear();
@@ -3019,8 +3137,7 @@ void MainWindow::renameWriterEntry(QTreeWidgetItem* item) {
     }
     if (status == PEARE_WRITER_OK)
         status = peare_writer_rename_entry_by_id(
-            writer, path.toUtf8().constData(), target.toUtf8().constData(),
-            item->data(0, BaseIdRole).toLongLong());
+            writer, pathUtf8.constData(), targetUtf8.constData(), entryId);
     if (status == PEARE_WRITER_OK)
         reportOffscreenWriterStage(QStringLiteral("entry-renamed"));
     if (status == PEARE_WRITER_OK) status = peare_writer_update_finish(writer);
@@ -3041,6 +3158,8 @@ void MainWindow::renameWriterEntry(QTreeWidgetItem* item) {
 void MainWindow::deleteWriterEntry(QTreeWidgetItem* item) {
     const QString path = writerEntryPath(item);
     if (path.isEmpty()) return;
+    const qint64 entryId = item->data(0, BaseIdRole).toLongLong();
+    const QByteArray pathUtf8 = path.toUtf8();
     if (!offscreenWriterScenario_ && QMessageBox::question(
             this, QStringLiteral("Delete archive entry"),
             QStringLiteral("Delete %1 and its contents?").arg(path),
@@ -3057,8 +3176,7 @@ void MainWindow::deleteWriterEntry(QTreeWidgetItem* item) {
     }
     if (status == PEARE_WRITER_OK)
         status = peare_writer_delete_entry_by_id(
-            writer, path.toUtf8().constData(), 1,
-            item->data(0, BaseIdRole).toLongLong());
+            writer, pathUtf8.constData(), 1, entryId);
     if (status == PEARE_WRITER_OK)
         reportOffscreenWriterStage(QStringLiteral("entry-deleted"));
     if (status == PEARE_WRITER_OK) status = peare_writer_update_finish(writer);
@@ -3079,11 +3197,14 @@ void MainWindow::deleteWriterEntry(QTreeWidgetItem* item) {
 void MainWindow::replaceWriterEntry(QTreeWidgetItem* item) {
     const QString path = writerEntryPath(item);
     if (path.isEmpty()) return;
+    const qint64 entryId = item->data(0, BaseIdRole).toLongLong();
+    const QByteArray pathUtf8 = path.toUtf8();
     const QString source = offscreenWriterScenario_
         ? (offscreenWriterFileIndex_ < offscreenWriterFileAnswers_.size()
             ? offscreenWriterFileAnswers_.at(offscreenWriterFileIndex_++) : QString())
         : QFileDialog::getOpenFileName(this, QStringLiteral("Select replacement file"));
     if (source.isEmpty()) return;
+    const QByteArray sourceUtf8 = source.toUtf8();
     const WriterViewState viewState = captureWriterViewState();
     currentSession_.close();
     childSessions_.clear();
@@ -3096,8 +3217,7 @@ void MainWindow::replaceWriterEntry(QTreeWidgetItem* item) {
     }
     if (status == PEARE_WRITER_OK)
         status = peare_writer_replace_entry_by_id(
-            writer, source.toUtf8().constData(), path.toUtf8().constData(),
-            item->data(0, BaseIdRole).toLongLong());
+            writer, sourceUtf8.constData(), pathUtf8.constData(), entryId);
     if (status == PEARE_WRITER_OK)
         reportOffscreenWriterStage(QStringLiteral("entry-replaced"));
     if (status == PEARE_WRITER_OK) status = peare_writer_update_finish(writer);

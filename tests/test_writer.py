@@ -16,7 +16,7 @@ import io
 
 import os
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import re
 
@@ -595,6 +595,8 @@ def test_ext4_project_quota_same_directory_rename_latency(writer_lib, tmp_path):
     sample = Path(sample_value)
     image = tmp_path / sample.name
     original_hash = _copy_file_sha256(sample, image)
+    latency_stem = f"Peare-Latency-{uuid.uuid4().hex.upper()}"
+    current_name = f"PROJECT7/{latency_stem}.TXT".encode()
     env = os.environ.copy()
     runtime = os.environ.get("PEARE_E2FSPROGS_RUNTIME")
     if runtime:
@@ -607,7 +609,7 @@ def test_ext4_project_quota_same_directory_rename_latency(writer_lib, tmp_path):
             writer_lib.peare_writer_last_error(writer)
         assert writer_lib.peare_writer_create_file(
             writer, str(ROOT / "README.md").encode(),
-            b"PROJECT7/LATENCY.TXT") == 0, \
+            current_name) == 0, \
             writer_lib.peare_writer_last_error(writer)
         assert writer_lib.peare_writer_update_finish(writer) == 0, \
             writer_lib.peare_writer_last_error(writer)
@@ -615,9 +617,8 @@ def test_ext4_project_quota_same_directory_rename_latency(writer_lib, tmp_path):
         writer_lib.peare_writer_destroy(writer)
 
     measurements = []
-    current_name = b"PROJECT7/LATENCY.TXT"
     for run in range(3):
-        next_name = f"PROJECT7/LATENCY-{run}.TXT".encode()
+        next_name = f"PROJECT7/{latency_stem}-{run}.TXT".encode()
         writer = _HANDLE()
         assert writer_lib.peare_writer_create(C.byref(writer)) == 0
         try:
@@ -5469,7 +5470,7 @@ def test_uuencode_writer_roundtrip_all_headers(
 
 
 @pytest.mark.parametrize("variant", ["classic", "base64"])
-def test_uuencode_writer_empty_input_and_single_file_contract(
+def test_uuencode_writer_empty_input_and_multiple_files(
         writer_lib, peare_lib, tmp_path, variant):
     empty_archive = tmp_path / f"empty-{variant}.uue"
     writer = _HANDLE()
@@ -5491,17 +5492,141 @@ def test_uuencode_writer_empty_input_and_single_file_contract(
     inputs = (_WriterInputFile * 2)(
         _WriterInputFile(str(source).encode(), b"one.txt"),
         _WriterInputFile(str(source).encode(), b"two.txt"))
-    rejected = tmp_path / "multiple.uue"
+    archive = tmp_path / "multiple.uue"
     writer = _HANDLE()
     assert writer_lib.peare_writer_create(C.byref(writer)) == 0
     try:
         status = writer_lib.peare_writer_add_files_to(
-            writer, str(rejected).encode(), b"uuencode", b"classic",
+            writer, str(archive).encode(), b"uuencode", variant.encode(),
             0, inputs, 2)
-        assert status != 0
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
     finally:
         writer_lib.peare_writer_destroy(writer)
-    assert not rejected.exists()
+    lines = archive.read_bytes().splitlines()
+    assert len([line for line in lines if line.startswith(b"begin")]) == 2
+    if variant == "base64":
+        assert lines.count(b"====") == 2
+    else:
+        assert lines.count(b"end") == 2
+    with peare_lib.open_file(str(archive)) as opener:
+        assert opener.container_format() == "UUE"
+        rows = opener.normalized_tree()
+        assert len(rows) == 2
+
+
+def _decode_classic_uue_members(data):
+    members = {}
+    lines = data.splitlines()
+    index = 0
+    while index < len(lines):
+        header = lines[index]
+        index += 1
+        if not header.startswith(b"begin "):
+            continue
+        parts = header.split(b" ", 2)
+        assert len(parts) == 3
+        name = parts[2].decode("ascii")
+        payload = bytearray()
+        while index < len(lines) and lines[index] != b"end":
+            payload.extend(binascii.a2b_uu(lines[index]))
+            index += 1
+        assert index < len(lines)
+        index += 1
+        assert name not in members
+        members[name] = bytes(payload)
+    return members
+
+
+def test_uuencode_writer_full_cud_on_libarchive_sample(
+        writer_lib, peare_lib, peare_gui_path, tmp_path):
+    sample_root = Path(os.environ.get(
+        "PEARE_COMPRESS_SAMPLE_ROOT",
+        Path.home() / "Documents" / "inerente a" / "Peare" /
+        "compress-samples" / "libarchive"))
+    sample = sample_root / "test_compat_mac-1.tar.Z.uu"
+    expected_payload = sample_root / "test_compat_mac-1.tar.Z"
+    if not sample.is_file() or not expected_payload.is_file():
+        pytest.skip("Missing independent libarchive UUencode sample pair")
+    archive = tmp_path / sample.name
+    shutil.copyfile(sample, archive)
+    original_bytes = sample.read_bytes()
+    initial_members = _decode_classic_uue_members(original_bytes)
+    assert initial_members == {"test_compat_mac-1.tar.Z": expected_payload.read_bytes()}
+    archive_path = str(archive).encode()
+    assert writer_lib.peare_writer_can_add_files(archive_path) == 1
+    assert writer_lib.peare_writer_update_target_count(archive_path) == 1
+    capabilities = C.c_uint32()
+    assert writer_lib.peare_writer_get_update_capabilities(
+        archive_path, 0, C.byref(capabilities)) == 0
+    assert capabilities.value == 0x3B
+
+    added = ROOT / "README.md"
+    replacement = ROOT / "LICENSE"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(writer, archive_path) == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(added).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    first_members = _decode_classic_uue_members(archive.read_bytes())
+    assert first_members == {
+        "test_compat_mac-1.tar.Z": expected_payload.read_bytes(),
+        "added.txt": added.read_bytes(),
+    }
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(writer, archive_path) == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"test_compat_mac-1.tar.Z", b"renamed.tar.Z") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"renamed.tar.Z") == 0
+        assert writer_lib.peare_writer_delete_entry(writer, b"added.txt", 0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    final_members = _decode_classic_uue_members(archive.read_bytes())
+    assert final_members == {"renamed.tar.Z": replacement.read_bytes()}
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = opener.normalized_tree()
+        assert len(rows) == 1
+        assert rows[0]["path"].endswith("renamed.tar.Z")
+        assert rows[0]["sha256"] == hashlib.sha256(replacement.read_bytes()).hexdigest()
+    assert sample.read_bytes() == original_bytes
+
+    for view in ("tree", "details"):
+        scenario = {
+            "view": view,
+            "operations": [
+                {"type": "add_files", "sources": [str(added)],
+                 "expect_present": "README.md"},
+                {"type": "rename", "path": "test_compat_mac-1.tar.Z",
+                 "name": "renamed.tar.Z", "expect_present": "renamed.tar.Z"},
+                {"type": "replace", "path": "renamed.tar.Z",
+                 "source": str(replacement), "expect_present": "renamed.tar.Z"},
+                {"type": "delete", "path": "README.md",
+                 "expect_absent": "README.md"},
+            ],
+        }
+        scenario_path = tmp_path / f"uue-gui-{view}.json"
+        scenario_path.write_text(json.dumps(scenario), encoding="utf-8")
+        output_dir = tmp_path / f"uue-gui-{view}"
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+             "--exe", str(peare_gui_path),
+             "--image", str(sample), "--scenario", str(scenario_path),
+             "--output-dir", str(output_dir)],
+            capture_output=True, text=True, timeout=180)
+        assert result.returncode == 0, result.stdout + result.stderr
+        report = json.loads((output_dir / "writer-test-report.json").read_text(
+            encoding="utf-8"))
+        assert len(report["operations"]) == len(scenario["operations"])
+        assert all(item["passed"] for item in report["operations"])
+    assert sample.read_bytes() == original_bytes
 
 
 def _decode_ihex_records(path):
@@ -5732,6 +5857,128 @@ def test_deb_writer_all_compression_combinations(
         assert gui_check.returncode == 0, gui_check.stdout + gui_check.stderr
 
 
+def test_deb_existing_package_full_cud(writer_lib, peare_lib, peare_gui_path,
+                                      tmp_path):
+    sample_root = os.environ.get("PEARE_DEB_SAMPLE_ROOT")
+    if not sample_root:
+        pytest.skip("Set PEARE_DEB_SAMPLE_ROOT to the local Debian sample directory")
+    sample = Path(sample_root) / "hello_2.12.3-1_amd64.deb"
+    if not sample.is_file():
+        pytest.skip(f"Missing Debian package sample: {sample}")
+    source_hash = hashlib.sha256(sample.read_bytes()).digest()
+    original_members = _ar_members(sample)
+    control_name = next(name for name in original_members
+                        if name.startswith("control.tar"))
+    data_name = next(name for name in original_members if name.startswith("data.tar"))
+    data_codec = {"data.tar": "raw", "data.tar.gz": "gzip", "data.tar.xz": "xz",
+                  "data.tar.zst": "zstd", "data.tar.bz2": "bzip2",
+                  "data.tar.lzma": "lzma"}[data_name]
+    image = tmp_path / sample.name
+    shutil.copy2(sample, image)
+    target = str(image).encode()
+    assert writer_lib.peare_writer_can_add_files(target) == 1
+    assert writer_lib.peare_writer_update_target_count(target) == 1
+    capabilities = C.c_uint32()
+    assert writer_lib.peare_writer_get_update_capabilities(
+        target, 0, C.byref(capabilities)) == 0
+    assert capabilities.value == 0x3F
+
+    payload = ROOT / "README.md"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(writer, target) == 0
+        assert writer_lib.peare_writer_create_directory(writer, b"usr/share/peare-cud") == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(payload).encode(), b"usr/share/peare-cud/added.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            writer, b"usr/share/peare-cud/empty.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(payload).encode(), b"usr/bin/hello") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"usr/share/peare-cud/added.txt",
+            b"usr/share/peare-cud/renamed.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"usr/share/peare-cud/renamed.txt", 0) == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"usr/share/peare-cud", 1) == 0
+        status = writer_lib.peare_writer_update_finish(writer)
+        assert status == 0, writer_lib.peare_writer_last_error(writer).decode()
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    assert hashlib.sha256(sample.read_bytes()).digest() == source_hash
+    updated_members = _ar_members(image)
+    assert updated_members[control_name] == original_members[control_name]
+    assert updated_members["debian-binary"] == original_members["debian-binary"]
+    updated_data = _tar_members(_deb_tar_payload(updated_members[data_name], data_codec))
+    normalized_data = {name.removeprefix("./"): content
+                       for name, content in updated_data.items()}
+    assert normalized_data["usr/bin/hello"] == payload.read_bytes()
+    assert "usr/share/peare-cud/renamed.txt" not in normalized_data
+    assert "usr/share/peare-cud/empty.txt" not in normalized_data
+
+    seven_zip = _seven_zip_executable()
+    assert seven_zip
+    check = subprocess.run([seven_zip, "t", str(image)], capture_output=True,
+                           text=True, timeout=120)
+    assert check.returncode == 0, check.stdout + check.stderr
+
+    for view in ("tree", "details"):
+        gui_copy = tmp_path / f"gui-{view}.deb"
+        shutil.copy2(sample, gui_copy)
+        scenario = {
+            "view": view,
+            "operations": [
+                {"type": "create_directory", "name": "gui-cud",
+                 "expect_present": "data.tar.xz/data.tar/gui-cud"},
+                {"type": "add_files", "destination": "gui-cud",
+                 "sources": [str(payload)],
+                 "expect_present": "data.tar.xz/data.tar/gui-cud/README.md"},
+                {"type": "create_file",
+                 "parent": "data.tar.xz/data.tar/gui-cud", "name": "empty.txt",
+                 "expect_present": "data.tar.xz/data.tar/gui-cud/empty.txt"},
+                {"type": "replace", "path": "data.tar.xz/data.tar/usr/bin/hello",
+                 "source": str(payload),
+                 "expect_present": "data.tar.xz/data.tar/usr/bin/hello"},
+                {"type": "rename",
+                 "path": "data.tar.xz/data.tar/gui-cud/README.md",
+                 "name": "renamed.txt",
+                 "expect_present": "data.tar.xz/data.tar/gui-cud/renamed.txt"},
+                {"type": "delete",
+                 "path": "data.tar.xz/data.tar/gui-cud/renamed.txt",
+                 "expect_absent": "data.tar.xz/data.tar/gui-cud/renamed.txt"},
+                {"type": "delete",
+                 "path": "data.tar.xz/data.tar/gui-cud/empty.txt",
+                 "expect_absent": "data.tar.xz/data.tar/gui-cud/empty.txt"},
+                {"type": "delete", "path": "data.tar.xz/data.tar/gui-cud",
+                 "expect_absent": "data.tar.xz/data.tar/gui-cud"},
+            ],
+        }
+        scenario_path = tmp_path / f"deb-gui-{view}.json"
+        scenario_path.write_text(json.dumps(scenario), encoding="utf-8")
+        output_dir = tmp_path / f"deb-gui-{view}"
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+             "--exe", str(peare_gui_path), "--image", str(gui_copy),
+             "--scenario", str(scenario_path), "--output-dir", str(output_dir)],
+            capture_output=True, text=True, timeout=240)
+        assert result.returncode == 0, result.stdout + result.stderr
+        report = json.loads((output_dir / "writer-test-report.json").read_text(
+            encoding="utf-8"))
+        assert len(report["operations"]) == len(scenario["operations"])
+        assert all(item["passed"] for item in report["operations"])
+        gui_result = output_dir / "writer-test-copy.deb"
+        gui_check = subprocess.run([seven_zip, "t", str(gui_result)],
+                                   capture_output=True, text=True, timeout=120)
+        assert gui_check.returncode == 0, gui_check.stdout + gui_check.stderr
+        with peare_lib.open_file(str(gui_result)) as opener:
+            gui_rows = opener.normalized_tree()
+        gui_leaf = next(row for row in gui_rows
+                        if row["path"].endswith("usr/bin/hello"))
+        assert gui_leaf["sha256"] == hashlib.sha256(payload.read_bytes()).hexdigest()
+
+
 def _rpm_header(data, offset):
     assert data[offset:offset + 8] == b"\x8e\xad\xe8\x01\0\0\0\0"
     count, store_size = struct.unpack_from(">II", data, offset + 8)
@@ -5770,7 +6017,8 @@ def _rpm_cpio_crc(data):
     files = {}
     while True:
         header = data[offset:offset + 110]
-        assert header[:6] == b"070702"
+        assert header[:6] in (b"070701", b"070702")
+        has_checksum = header[:6] == b"070702"
         values = [int(header[i:i + 8], 16) for i in range(6, 110, 8)]
         file_size, name_size, expected_sum = values[6], values[11], values[12]
         offset += 110
@@ -5780,9 +6028,182 @@ def _rpm_cpio_crc(data):
         offset = (offset + file_size + 3) & ~3
         if name == "TRAILER!!!":
             break
-        assert sum(payload) & 0xffffffff == expected_sum
+        if has_checksum:
+            assert sum(payload) & 0xffffffff == expected_sum
+        else:
+            assert expected_sum == 0
         files[name.removeprefix("./")] = payload
     return files
+
+
+def _rpm_string_array(data, header_offset, tag_id):
+    count, store_size = struct.unpack_from(">II", data, header_offset + 8)
+    store_offset = header_offset + 16 + count * 16
+    for index in range(count):
+        tag, kind, value_offset, items = struct.unpack_from(
+            ">IIII", data, header_offset + 16 + index * 16)
+        if tag != tag_id:
+            continue
+        assert kind in (6, 8, 9)
+        cursor = store_offset + value_offset
+        values = []
+        for _ in range(items):
+            end = data.index(b"\0", cursor)
+            values.append(data[cursor:end])
+            cursor = end + 1
+        return values
+    raise AssertionError(f"Missing RPM tag {tag_id}")
+
+
+@pytest.mark.parametrize("sample_name", [
+    "hello-2.12.1-6.fc42.x86_64.rpm",
+    "hello-2.3-1.el3.rf.x86_64.rpm",
+])
+def test_rpm_existing_package_full_cud(writer_lib, peare_lib, peare_gui_path,
+                                      tmp_path, sample_name):
+    sample_root = os.environ.get("PEARE_RPM_SAMPLE_ROOT")
+    if not sample_root:
+        pytest.skip("Set PEARE_RPM_SAMPLE_ROOT to the local RPM sample directory")
+    sample = Path(sample_root) / sample_name
+    if not sample.is_file():
+        pytest.skip(f"Missing RPM package sample: {sample}")
+    original = sample.read_bytes()
+    image = tmp_path / sample.name
+    shutil.copy2(sample, image)
+    target = str(image).encode()
+    assert writer_lib.peare_writer_can_add_files(target) == 1
+    assert writer_lib.peare_writer_update_target_count(target) == 1
+    capabilities = C.c_uint32()
+    assert writer_lib.peare_writer_get_update_capabilities(
+        target, 0, C.byref(capabilities)) == 0
+    assert capabilities.value == 0x3F
+
+    payload = ROOT / "README.md"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(writer, target) == 0
+        assert writer_lib.peare_writer_create_directory(writer, b"usr/share/peare-cud") == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(payload).encode(), b"usr/share/peare-cud/added.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            writer, b"usr/share/peare-cud/empty.txt") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"usr/share/peare-cud/added.txt",
+            b"usr/share/peare-cud/renamed.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"usr/share/peare-cud/renamed.txt", 0) == 0
+        assert writer_lib.peare_writer_create_directory(
+            writer, b"usr/share/peare-disposable") == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(payload).encode(), b"usr/share/peare-disposable/remove.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"usr/share/peare-disposable", 1) == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(payload).encode(), b"usr/bin/hello") == 0
+        status = writer_lib.peare_writer_update_finish(writer)
+        assert status == 0, writer_lib.peare_writer_last_error(writer).decode()
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    assert sample.read_bytes() == original
+    data = image.read_bytes()
+    assert data[:96] == original[:96]
+    original_signature, original_sig_end = _rpm_header(original, 96)
+    original_main_offset = (original_sig_end + 7) & ~7
+    original_main, _ = _rpm_header(original, original_main_offset)
+    original_tags = _rpm_header_tags(original, original_main_offset)
+    signature, sig_end = _rpm_header(data, 96)
+    main_offset = (sig_end + 7) & ~7
+    main_header, payload_offset = _rpm_header(data, main_offset)
+    main_tags = _rpm_header_tags(data, main_offset)
+    signature_tags = _rpm_header_tags(data, 96)
+    payload_bytes = data[payload_offset:]
+    assert signature_tags[1000] == [len(main_header) + len(payload_bytes)]
+    assert signature_tags[1004] == hashlib.md5(main_header + payload_bytes).digest()
+    for tag in (1000, 1001, 1002, 1022, 1124, 1125):
+        assert main_tags[tag] == original_tags[tag]
+    compressor = main_tags[1125].rstrip(b"\0")
+    if compressor == b"gzip":
+        cpio = gzip.decompress(payload_bytes)
+    elif compressor == b"bzip2":
+        cpio = bz2.decompress(payload_bytes)
+    elif compressor == b"xz":
+        cpio = lzma.decompress(payload_bytes, format=lzma.FORMAT_XZ)
+    elif compressor == b"lzma":
+        cpio = lzma.decompress(payload_bytes, format=lzma.FORMAT_ALONE)
+    elif compressor == b"zstd":
+        with zstandard.ZstdDecompressor().stream_reader(io.BytesIO(payload_bytes)) as reader:
+            cpio = reader.read()
+    else:
+        cpio = payload_bytes
+    files = _rpm_cpio_crc(cpio)
+    assert files["usr/bin/hello"] == payload.read_bytes()
+    assert files["usr/share/peare-cud/empty.txt"] == b""
+    assert "usr/share/peare-cud/renamed.txt" not in files
+    assert not any(name.startswith("usr/share/peare-disposable/") for name in files)
+    directories = _rpm_string_array(data, main_offset, 1118)
+    basenames = _rpm_string_array(data, main_offset, 1117)
+    paths = [directories[index] + name
+             for index, name in zip(main_tags[1116], basenames)]
+    assert b"/usr/bin/hello" in paths
+    assert b"/usr/share/peare-cud/empty.txt" in paths
+    assert not any(b"peare-disposable" in path for path in paths)
+    with peare_lib.open_file(str(image)) as opener:
+        assert opener.container_format() == "RPM"
+        rows = opener.normalized_tree()
+    leaf = next(row for row in rows if row["path"].endswith("usr/bin/hello"))
+    assert leaf["sha256"] == hashlib.sha256(payload.read_bytes()).hexdigest()
+    seven_zip = _seven_zip_executable()
+    assert seven_zip
+    check = subprocess.run([seven_zip, "t", str(image)], capture_output=True,
+                           text=True, timeout=120)
+    assert check.returncode == 0, check.stdout + check.stderr
+
+    for view in ("tree", "details"):
+        gui_copy = tmp_path / f"gui-{view}.rpm"
+        shutil.copy2(sample, gui_copy)
+        scenario = {
+            "view": view,
+            "operations": [
+                {"type": "create_directory", "name": "gui-cud",
+                 "expect_present": "gui-cud"},
+                {"type": "add_files", "destination": "gui-cud",
+                 "sources": [str(payload)],
+                 "expect_present": "gui-cud/README.md"},
+                {"type": "create_file", "parent": "gui-cud", "name": "empty.txt",
+                 "expect_present": "gui-cud/empty.txt"},
+                {"type": "replace", "path": "usr/bin/hello",
+                 "source": str(payload), "expect_present": "usr/bin/hello"},
+                {"type": "rename", "path": "gui-cud/README.md",
+                 "name": "renamed.txt", "expect_present": "gui-cud/renamed.txt"},
+                {"type": "delete", "path": "gui-cud/renamed.txt",
+                 "expect_absent": "gui-cud/renamed.txt"},
+                {"type": "delete", "path": "gui-cud/empty.txt",
+                 "expect_absent": "gui-cud/empty.txt"},
+                {"type": "delete", "path": "gui-cud",
+                 "expect_absent": "gui-cud"},
+            ],
+        }
+        scenario_path = tmp_path / f"rpm-gui-{view}.json"
+        scenario_path.write_text(json.dumps(scenario), encoding="utf-8")
+        output_dir = tmp_path / f"rpm-gui-{view}"
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+             "--exe", str(peare_gui_path), "--image", str(gui_copy),
+             "--scenario", str(scenario_path), "--output-dir", str(output_dir)],
+            capture_output=True, text=True, timeout=240)
+        assert result.returncode == 0, result.stdout + result.stderr
+        report = json.loads((output_dir / "writer-test-report.json").read_text(
+            encoding="utf-8"))
+        assert len(report["operations"]) == len(scenario["operations"])
+        assert all(item["passed"] for item in report["operations"])
+        gui_result = output_dir / "writer-test-copy.rpm"
+        with peare_lib.open_file(str(gui_result)) as opener:
+            gui_rows = opener.normalized_tree()
+        gui_leaf = next(row for row in gui_rows
+                        if row["path"].endswith("usr/bin/hello"))
+        assert gui_leaf["sha256"] == hashlib.sha256(payload.read_bytes()).hexdigest()
 
 
 @pytest.mark.parametrize("codec", ["none", "gzip", "bzip2", "xz", "zstd", "lzma"])
@@ -6060,6 +6481,137 @@ def test_tar_v7_cud_with_gnu_tar_sample(writer_lib, peare_lib, tmp_path):
             created_source.read_bytes()).hexdigest()
     finally:
         opened.close()
+
+def test_tar_v7_create_from_zero_and_full_cud(writer_lib, peare_lib, tmp_path):
+    tar_tool = shutil.which("tar.exe") or shutil.which("tar")
+    if not tar_tool:
+        pytest.skip("A system tar tool is required for independent TAR validation")
+
+    assert writer_lib.peare_writer_create_variant_count(b"tar") == 2
+    variant = _WriterVariant()
+    assert writer_lib.peare_writer_get_create_variant(
+        b"tar", 1, C.byref(variant)) == 0
+    assert variant.id == b"v7"
+
+    archive = tmp_path / "created-v7.tar"
+    source = ROOT / "README.md"
+    replacement = ROOT / "AGENTS.md"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"tar", b"v7", str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_create_directory(writer, b"DOCS") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(source).encode(), b"DOCS/README.TXT") == 0
+        assert writer_lib.peare_writer_create_empty_file(writer, b"EMPTY.TXT") == 0
+        assert writer_lib.peare_writer_create_directory(writer, b"DEL-DIR") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(source).encode(), b"DEL-DIR/CHILD.TXT") == 0
+        assert writer_lib.peare_writer_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    created_data = archive.read_bytes()
+    assert created_data[257:263] == bytes(6)
+    assert created_data[345:500] == bytes(155)
+    listed = subprocess.run(
+        [tar_tool, "-tf", str(archive)], capture_output=True, text=True,
+        timeout=30)
+    assert listed.returncode == 0, listed.stdout + listed.stderr
+    with tarfile.open(archive, "r:") as created:
+        created_members = {member.name: member for member in created.getmembers()}
+        assert set(created_members) == {
+            "DOCS", "DOCS/README.TXT", "EMPTY.TXT",
+            "DEL-DIR", "DEL-DIR/CHILD.TXT"}
+        assert created.extractfile(created_members["DOCS/README.TXT"]).read() == \
+            source.read_bytes()
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_create_file(
+            writer, str(source).encode(), b"ADDED.TXT") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"DOCS/README.TXT") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"ADDED.TXT", b"RENAMED.TXT") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"EMPTY.TXT", 0) == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"DEL-DIR", 1) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    updated_data = archive.read_bytes()
+    with tarfile.open(archive, "r:") as updated:
+        for member in updated.getmembers():
+            assert updated_data[member.offset + 257:member.offset + 263] == bytes(6)
+    checked = subprocess.run(
+        [tar_tool, "-tf", str(archive)], capture_output=True, text=True,
+        timeout=30)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    with tarfile.open(archive, "r:") as updated:
+        members = {member.name: member for member in updated.getmembers()}
+        assert set(members) == {"DOCS", "DOCS/README.TXT", "RENAMED.TXT"}
+        assert updated.extractfile(members["RENAMED.TXT"]).read() == source.read_bytes()
+        assert updated.extractfile(members["DOCS/README.TXT"]).read() == \
+            replacement.read_bytes()
+    opened = peare_lib.open_file(str(archive))
+    assert opened is not None
+    try:
+        rows = {row["path"]: row["sha256"] for row in opened.normalized_tree()}
+        assert rows["RENAMED.TXT"] == hashlib.sha256(source.read_bytes()).hexdigest()
+        assert rows["DOCS/README.TXT"] == hashlib.sha256(
+            replacement.read_bytes()).hexdigest()
+    finally:
+        opened.close()
+
+def test_tar_v7_directory_rename_limit_is_atomic(writer_lib, tmp_path):
+    archive = tmp_path / "v7-rename-atomic.tar"
+    source = ROOT / "README.md"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"tar", b"v7", str(archive).encode()) == 0
+        assert writer_lib.peare_writer_create_directory(writer, b"DOCS") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(source).encode(), b"DOCS/README.TXT") == 0
+        assert writer_lib.peare_writer_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(
+            writer, str(archive).encode()) == 0
+        too_long = b"X" * 96
+        status = writer_lib.peare_writer_rename_entry(
+            writer, b"DOCS", too_long)
+        assert status != 0
+        assert "100" in writer_lib.peare_writer_last_error(
+            writer).decode("utf-8") or "field" in writer_lib.peare_writer_last_error(
+                writer).decode("utf-8").lower()
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"DOCS", b"SAFE") == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with tarfile.open(archive, "r:") as updated:
+        members = {member.name for member in updated.getmembers()}
+        assert members == {"SAFE", "SAFE/README.TXT"}
+        assert updated.extractfile("SAFE/README.TXT").read() == source.read_bytes()
 
 def test_tar_rename_latency_and_rewrite_io(writer_lib, tmp_path):
     tar_tool = shutil.which("tar.exe") or shutil.which("tar")
@@ -7171,6 +7723,69 @@ def test_zipx_jpeg_method96_writer_roundtrip(writer_lib, peare_lib, tmp_path):
         assert found
 
 
+def test_zipx_jpeg_method96_full_cud(writer_lib, peare_lib, tmp_path):
+    archive_value = os.environ.get("PEARE_ZIPX_JPEG_ARCHIVE", "")
+    source_value = os.environ.get("PEARE_ZIPX_JPEG_SOURCE", "")
+    if not archive_value or not Path(archive_value).is_file():
+        pytest.skip("Set PEARE_ZIPX_JPEG_ARCHIVE to an authentic WinZip sample")
+    if not source_value or not Path(source_value).is_file():
+        pytest.skip("Set PEARE_ZIPX_JPEG_SOURCE to its original JPEG payload")
+    sample = Path(archive_value)
+    source = Path(source_value)
+    archive = tmp_path / "method96-cud.zipx"
+    shutil.copy2(sample, archive)
+    with zipfile.ZipFile(archive) as created:
+        assert created.getinfo(source.name).compress_type == 96
+
+    extra = ROOT / "README.md"
+    inputs = (_WriterInputFile * 1)(
+        _WriterInputFile(str(extra).encode(), b"added.txt"))
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to(
+            writer, str(archive).encode(), None, None, 0, inputs, 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_update_begin(
+            writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(source).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, source.name.encode(), b"renamed.jpg") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"added.txt", 0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert set(rows) == {"renamed.jpg"}
+        assert rows["renamed.jpg"]["sha256"] == hashlib.sha256(
+            source.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_zipx_jpeg_method96_gui_cud_offscreen(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    archive_value = os.environ.get("PEARE_ZIPX_JPEG_ARCHIVE", "")
+    if not archive_value or not Path(archive_value).is_file():
+        pytest.skip("Set PEARE_ZIPX_JPEG_ARCHIVE to an authentic WinZip sample")
+    archive = tmp_path / "gui-method96.zipx"
+    shutil.copy2(archive_value, archive)
+    with zipfile.ZipFile(archive) as created:
+        assert all(item.compress_type == 96 for item in created.infolist())
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      str(archive), view, "")
+    report = json.loads((tmp_path / "gui-writer" / view /
+                         "writer-test-report.json").read_text(encoding="utf-8"))
+    with peare_lib.open_file(report["image"]) as updated:
+        rows = {row["path"]: row for row in updated.normalized_tree()}
+        assert len(rows) >= 2
+
+
 def test_gzip_writer_multi_member_roundtrip_and_7zip(
         writer_lib, peare_lib, tmp_path):
     seven_zip = _seven_zip_executable()
@@ -7215,6 +7830,143 @@ def test_gzip_writer_multi_member_roundtrip_and_7zip(
     with peare_lib.open_file(str(archive)) as opener:
         rows = {row["path"]: row for row in opener.normalized_tree()}
         assert rows[member_names[0]]["sha256"] == hashlib.sha256(expected).hexdigest()
+
+
+def test_writer_create_format_through_gui_dialog(
+        writer_lib, peare_lib, peare_gui_path, tmp_path):
+    sample = ROOT / "tests" / "formats" / "tar" / "fixtures" / "docs.tar"
+    assert sample.is_file()
+    format_sources = [
+        ("zip", "README.md"), ("gzip", "README.md"),
+        ("bzip2", "README.md"), ("zstd", "README.md"),
+        ("xz", "README.md"), ("lzma", "README.md"),
+        ("tar", "README.md"), ("tar-gzip", "README.md"),
+        ("tar-bzip2", "README.md"), ("tar-zstd", "README.md"),
+        ("tar-unix-compress", "README.md"), ("tar-xz", "README.md"),
+        ("tar-lzma", "README.md"), ("cpio", "README.md"),
+        ("ar", "README.md"), ("wad", "LICENSE"),
+        ("unix-compress", "README.md"), ("lzip", "README.md"),
+        ("uuencode", "README.md"),
+        ("ihex", "tests/formats/ihex/fixtures/README-low-address.hex"),
+        ("deb", "README.md"), ("rpm", "README.md"),
+        ("xar", "README.md"), ("iso", "README.md"),
+        ("fat", "README.md"), ("floppy", "README.md"),
+        ("raw-disk", "README.md"), ("vhd", "README.md"),
+        ("vhdx", "README.md"), ("vmdk", "README.md"),
+    ]
+    format_info = _WriterFormat()
+    formats = {}
+    for index in range(writer_lib.peare_writer_create_format_count()):
+        assert writer_lib.peare_writer_get_create_format(
+            index, C.byref(format_info)) == 0
+        formats[format_info.id.decode()] = format_info.extension.decode()
+
+    operations = []
+    expected = {}
+    for format_index, (format_id, source_relative) in enumerate(format_sources):
+        assert format_id in formats
+        source = ROOT / source_relative
+        assert source.is_file()
+        variants = []
+        format_id_bytes = format_id.encode()
+        for index in range(writer_lib.peare_writer_create_variant_count(
+                format_id_bytes)):
+            variant = _WriterVariant()
+            assert writer_lib.peare_writer_get_create_variant(
+                format_id_bytes, index, C.byref(variant)) == 0
+            variants.append(variant.id.decode())
+        assert variants
+
+        filesystems = []
+        for index in range(writer_lib.peare_writer_create_filesystem_count(
+                format_id_bytes)):
+            filesystem = _WriterVariant()
+            assert writer_lib.peare_writer_get_create_filesystem(
+                format_id_bytes, index, C.byref(filesystem)) == 0
+            filesystems.append(filesystem.id.decode())
+        if not filesystems:
+            filesystems = [None]
+
+        for variant_index, variant_id in enumerate(variants):
+            for filesystem_index, filesystem_id in enumerate(filesystems):
+                suffix = f"{format_index}-{variant_index}-{filesystem_index}"
+                destination = tmp_path / f"created-{suffix}.{formats[format_id]}"
+                operation_source = source
+                operation = {
+                    "type": "create_container",
+                    "format": format_id,
+                    "variant": variant_id,
+                    "destination": str(destination),
+                    "sources": [str(source)],
+                    "test_id": f"{format_id}/{variant_id}/{filesystem_id or 'default'}",
+                    "cleanup_created_container": True,
+                }
+                if filesystem_id:
+                    operation["filesystem"] = filesystem_id
+                if format_id == "zip" and variant_id in {"jpeg", "wavpack"}:
+                    sample_root = Path.home() / "Documents" / "inerente a" / "Peare" / "zipx-validation"
+                    relative_sample = (
+                        Path("method96") / "peare-logo-444.jpg"
+                        if variant_id == "jpeg" else
+                        Path("Abbrevia_WavPack") / "source" / "default.wav")
+                    operation_source = sample_root / relative_sample
+                    if not operation_source.is_file():
+                        pytest.skip(f"Missing real ZIPX {variant_id} source sample")
+                    operation["sources"] = [str(operation_source)]
+                if format_id == "zip" and variant_id == "mp3":
+                    mp3_source, _, _, _ = _zipx_method94_sample(peare_lib, tmp_path)
+                    operation["sources"] = [str(mp3_source)]
+                    operation_source = mp3_source
+                expected[destination] = (
+                    None if format_id == "ihex"
+                    else hashlib.sha256(operation_source.read_bytes()).hexdigest())
+                operations.append(operation)
+
+    assert operations
+    operations[-1]["cleanup_created_container"] = False
+    scenario_path = tmp_path / "gui-create-all-variants.json"
+    scenario_path.write_text(json.dumps({"view": "tree", "operations": operations}),
+                             encoding="utf-8")
+    output_dir = tmp_path / "gui-create-all-variants"
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+         "--exe", str(peare_gui_path), "--image", str(sample),
+         "--scenario", str(scenario_path), "--output-dir", str(output_dir),
+         "--timeout", "900"],
+        capture_output=True, text=True, timeout=920)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    assert report["stage"] == "complete"
+    assert len(report["operations"]) == len(operations)
+    assert all(item["passed"] for item in report["operations"])
+    assert Path(report["image"]) == list(expected)[-1].resolve()
+    for destination in list(expected)[:-1]:
+        assert not destination.exists(), destination
+    destination = list(expected)[-1]
+    assert destination.is_file()
+    with peare_lib.open_file(str(destination)) as opened:
+        assert opened is not None
+        rows = opened.normalized_tree()
+        assert rows
+        expected_hash = expected[destination]
+        if expected_hash:
+            assert any(row.get("sha256") == expected_hash for row in rows)
+    if destination.suffix.casefold() == ".vmdk":
+        descriptor = destination.read_text(encoding="utf-8")
+        for line in descriptor.splitlines():
+            match = re.match(
+                r'^(?:RW|RDONLY|NOACCESS)\s+\d+\s+\S+\s+"([^"]+)"',
+                line.strip())
+            if not match:
+                continue
+            relative = Path(match.group(1))
+            assert not relative.is_absolute()
+            extent = (destination.parent / relative).resolve()
+            assert extent.is_relative_to(destination.parent.resolve())
+            if extent.exists():
+                extent.unlink()
+    destination.unlink()
 
 
 def test_bzip2_writer_levels_concatenated_streams_and_7zip(
@@ -7748,7 +8500,10 @@ def test_zip64_large_add_latency_and_readback(
     assert max(row["seconds"][1] for row in measurements) < 5.0
     assert _sha256_file(sample) == sample_hash
 
-@pytest.mark.parametrize("suffix", ("zip", "jar", "apk", "epub", "docx"))
+@pytest.mark.parametrize("suffix", (
+    "zip", "jar", "war", "ear", "aar", "apks", "aab", "epub",
+    "docx", "xlsx", "pptx", "odt", "ods", "odp", "ipa", "ipsw", "xpi",
+    "nupkg", "snupkg", "whl", "vsix", "cbz", "kmz"))
 def test_zip_create_through_generic_add_files_to(writer_lib, tmp_path, suffix):
     seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
                  shutil.which("7zz"))
@@ -7782,9 +8537,12 @@ def test_zip_create_through_generic_add_files_to(writer_lib, tmp_path, suffix):
         timeout=60)
     assert validation.returncode == 0, validation.stdout + validation.stderr
 
-@pytest.mark.parametrize("suffix", ("jar", "apk", "epub", "docx"))
+@pytest.mark.parametrize("suffix", (
+    "jar", "war", "ear", "aar", "apk", "apks", "aab", "epub", "docx",
+    "xlsx", "pptx", "odt", "ods", "odp", "ipa", "ipsw", "xpi", "nupkg",
+    "snupkg", "whl", "vsix", "cbz", "kmz"))
 def test_zip_writer_uses_container_records_not_filename_suffix(
-        writer_lib, tmp_path, suffix):
+        writer_lib, peare_lib, tmp_path, suffix):
     seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
                  shutil.which("7zz"))
     if not seven_zip and os.name == "nt":
@@ -7795,10 +8553,25 @@ def test_zip_writer_uses_container_records_not_filename_suffix(
         pytest.skip("7-Zip is required to create the ZIP package sample")
 
     archive = tmp_path / f"extension-check.{suffix}"
-    created = subprocess.run(
-        [seven_zip, "a", "-tzip", "-mx=0", str(archive), "README.md"],
-        cwd=ROOT, capture_output=True, text=True, timeout=60)
-    assert created.returncode == 0, created.stdout + created.stderr
+    preserved_name = "README.md"
+    if suffix == "apk":
+        apk_sample = Path(os.environ.get(
+            "PEARE_ANDROID_APK_SAMPLE",
+            Path.home() / "Documents" / "inerente a" / "Peare" /
+            "validation-artifacts" / "android-apk" /
+            "org.fdroid.fdroid_1023052.apk"))
+        if not apk_sample.is_file():
+            pytest.skip(f"Missing real Android APK sample: {apk_sample}")
+        shutil.copyfile(apk_sample, archive)
+        preserved_name = "AndroidManifest.xml"
+    else:
+        created = subprocess.run(
+            [seven_zip, "a", "-tzip", "-mx=0", str(archive), "README.md"],
+            cwd=ROOT, capture_output=True, text=True, timeout=60)
+        assert created.returncode == 0, created.stdout + created.stderr
+    with zipfile.ZipFile(archive) as original:
+        original_names = set(original.namelist())
+        preserved_payload = original.read(preserved_name)
 
     source = ROOT / "THIRDPARTY.md"
     inputs = (_WriterInputFile * 1)((str(source).encode(), b"peare-added.txt"))
@@ -7811,10 +8584,263 @@ def test_zip_writer_uses_container_records_not_filename_suffix(
     finally:
         writer_lib.peare_writer_destroy(writer)
 
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(
+            writer, str(archive).encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(ROOT / "README.md").encode(), b"CUD-CREATED.TXT") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(ROOT / "AGENTS.md").encode(), b"CUD-CREATED.TXT") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"CUD-CREATED.TXT", b"CUD-FINAL.TXT") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"peare-added.txt", 0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
     with zipfile.ZipFile(archive) as updated:
         assert updated.testzip() is None
-        assert updated.read("README.md") == (ROOT / "README.md").read_bytes()
-        assert updated.read("peare-added.txt") == source.read_bytes()
+        assert updated.read(preserved_name) == preserved_payload
+        assert updated.read("CUD-FINAL.TXT") == (ROOT / "AGENTS.md").read_bytes()
+        assert set(updated.namelist()) == (original_names - {"peare-added.txt"}) | {
+            "CUD-FINAL.TXT"}
+    validation = subprocess.run(
+        [seven_zip, "t", str(archive)], capture_output=True, text=True,
+        timeout=60)
+    assert validation.returncode == 0, validation.stdout + validation.stderr
+    opened = peare_lib.open_file(str(archive))
+    assert opened is not None
+    try:
+        rows = {row["path"]: row["sha256"] for row in opened.normalized_tree()}
+        assert rows[preserved_name] == hashlib.sha256(preserved_payload).hexdigest()
+        assert rows["CUD-FINAL.TXT"] == hashlib.sha256(
+            (ROOT / "AGENTS.md").read_bytes()).hexdigest()
+        assert "peare-added.txt" not in rows
+    finally:
+        opened.close()
+
+def _create_windows_zip_package_sample(seven_zip, tmp_path, suffix):
+    stage = tmp_path / f"{suffix}-package-source"
+    stage.mkdir()
+    shutil.copyfile(ROOT / "README.md", stage / "payload.txt")
+    members = {"payload.txt": stage / "payload.txt"}
+    if suffix in ("appx", "msix"):
+        (stage / "AppxManifest.xml").write_text(
+            '<Package><Identity Name="Peare.Test" Publisher="CN=Peare" '
+            'Version="1.0.0.0" ProcessorArchitecture="x64" />'
+            '<Properties><DisplayName>Peare Test</DisplayName></Properties>'
+            '</Package>', encoding="utf-8")
+        (stage / "[Content_Types].xml").write_text(
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="txt" ContentType="text/plain"/></Types>',
+            encoding="utf-8")
+        members.update({
+            "AppxManifest.xml": stage / "AppxManifest.xml",
+            "[Content_Types].xml": stage / "[Content_Types].xml",
+        })
+    elif suffix == "appxbundle":
+        metadata = stage / "AppxMetadata"
+        metadata.mkdir()
+        (metadata / "AppxBundleManifest.xml").write_text(
+            '<Bundle><Identity Name="Peare.Test.Bundle" Version="1.0.0.0" '
+            'Publisher="CN=Peare"/><Packages><Package Type="application" '
+            'Version="1.0.0.0" Architecture="x64" FileName="Peare.appx"/>'
+            '</Packages></Bundle>', encoding="utf-8")
+        members["AppxMetadata/AppxBundleManifest.xml"] = \
+            metadata / "AppxBundleManifest.xml"
+        shutil.copyfile(ROOT / "README.md", stage / "Peare.appx")
+        members["Peare.appx"] = stage / "Peare.appx"
+    elif suffix == "xap":
+        (stage / "AppManifest.xaml").write_text(
+            '<Deployment RuntimeVersion="4.0.50826.0" '
+            'EntryPointAssembly="Peare.Test" EntryPointType="Peare.Test.App"/>',
+            encoding="utf-8")
+        members["AppManifest.xaml"] = stage / "AppManifest.xaml"
+    members["payload.txt"] = stage / "payload.txt"
+
+    archive = tmp_path / f"external-package.{suffix}"
+    names = list(members)
+    created = subprocess.run(
+        [seven_zip, "a", "-tzip", "-mx=0", str(archive), *names],
+        cwd=stage, capture_output=True, text=True, timeout=60)
+    assert created.returncode == 0, created.stdout + created.stderr
+    return archive
+
+@pytest.mark.parametrize("suffix", ("appx", "msix", "appxbundle", "xap"))
+def test_windows_zip_package_alias_create_and_full_abi_cud(
+        writer_lib, peare_lib, tmp_path, suffix):
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required to create the package sample")
+    sample = _create_windows_zip_package_sample(seven_zip, tmp_path, suffix)
+    with zipfile.ZipFile(sample) as source_archive:
+        source_items = [(name, source_archive.read(name))
+                        for name in source_archive.namelist()]
+    payload_root = tmp_path / f"{suffix}-create-inputs"
+    payload_root.mkdir()
+    inputs = []
+    for name, payload in source_items:
+        target = payload_root.joinpath(*PurePosixPath(name).parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+        inputs.append((str(target).encode(), name.encode()))
+    created_archive = tmp_path / f"peare-created.{suffix}"
+    input_array = (_WriterInputFile * len(inputs))(*inputs)
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_to(
+            writer, str(created_archive).encode(), b"zip", b"deflate", 0,
+            input_array, len(inputs)) == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    validation = subprocess.run(
+        [seven_zip, "t", str(created_archive)], capture_output=True,
+        text=True, timeout=60)
+    assert validation.returncode == 0, validation.stdout + validation.stderr
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(
+            writer, str(created_archive).encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(ROOT / "README.md").encode(), b"CUD-ADD.TXT") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(ROOT / "AGENTS.md").encode(), b"payload.txt") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"CUD-ADD.TXT", b"CUD-RENAMED.TXT") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"payload.txt", 0) == 0
+        finish_status = writer_lib.peare_writer_update_finish(writer)
+        assert finish_status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with zipfile.ZipFile(created_archive) as updated:
+        assert updated.testzip() is None
+        assert updated.read("CUD-RENAMED.TXT") == (ROOT / "README.md").read_bytes()
+        assert "payload.txt" not in updated.namelist()
+        if suffix in ("appx", "msix"):
+            assert updated.read("AppxManifest.xml")
+        if suffix == "appxbundle":
+            assert "AppxMetadata/AppxBundleManifest.xml" in updated.namelist()
+        if suffix == "xap":
+            assert "AppManifest.xaml" in updated.namelist()
+    opened = peare_lib.open_file(str(created_archive))
+    assert opened is not None
+    try:
+        expected_format = {
+            "appx": "APPX", "msix": "MSIX",
+            "appxbundle": "APPXBUNDLE", "xap": "XAP",
+        }[suffix]
+        assert opened.container_format() == expected_format
+        rows = {row["path"]: row["sha256"] for row in opened.normalized_tree()}
+        assert rows["CUD-RENAMED.TXT"] == hashlib.sha256(
+            (ROOT / "README.md").read_bytes()).hexdigest()
+    finally:
+        opened.close()
+
+@pytest.mark.parametrize("view", ("tree", "details"))
+@pytest.mark.parametrize("suffix", ("appx", "msix", "appxbundle", "xap"))
+def test_windows_zip_package_alias_gui_cud_offscreen(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, suffix, view):
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required to create the package sample")
+    sample = _create_windows_zip_package_sample(seven_zip, tmp_path, suffix)
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      str(sample), view, gui_root="")
+
+def test_android_apk_create_from_real_sample_contents(
+        writer_lib, peare_lib, tmp_path):
+    apk_sample = Path(os.environ.get(
+        "PEARE_ANDROID_APK_SAMPLE",
+        Path.home() / "Documents" / "inerente a" / "Peare" /
+        "validation-artifacts" / "android-apk" /
+        "org.fdroid.fdroid_1023052.apk"))
+    if not apk_sample.is_file():
+        pytest.skip(f"Missing real Android APK sample: {apk_sample}")
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required to validate the created APK container")
+
+    payload_root = tmp_path / "apk-payload"
+    payload_root.mkdir()
+    inputs = []
+    with zipfile.ZipFile(apk_sample) as source:
+        for member in source.infolist():
+            if member.is_dir():
+                continue
+            name = PurePosixPath(member.filename)
+            assert not name.is_absolute() and all(
+                part not in ("", ".", "..") for part in name.parts)
+            upper_name = member.filename.upper()
+            if upper_name.startswith("META-INF/") and (
+                    upper_name.endswith((".SF", ".RSA", ".DSA", ".EC")) or
+                    upper_name == "META-INF/MANIFEST.MF"):
+                continue
+            target = payload_root.joinpath(*name.parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source.read(member))
+            inputs.append((str(target).encode(), member.filename.encode()))
+    assert any(name == b"AndroidManifest.xml" for _, name in inputs)
+
+    archive = tmp_path / "created-from-real-apk-contents.apk"
+    input_array = (_WriterInputFile * len(inputs))(*inputs)
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_to(
+            writer, str(archive).encode(), b"zip", b"deflate", 0,
+            input_array, len(inputs)) == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(
+            writer, str(archive).encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(ROOT / "README.md").encode(), b"CUD-CREATED.TXT") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(ROOT / "AGENTS.md").encode(), b"CUD-CREATED.TXT") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"CUD-CREATED.TXT", b"CUD-FINAL.TXT") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(ROOT / "README.md").encode(), b"DELETE-ME.TXT") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"DELETE-ME.TXT", 0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with zipfile.ZipFile(archive) as created:
+        assert created.testzip() is None
+        assert "AndroidManifest.xml" in created.namelist()
+        assert created.read("AndroidManifest.xml") == \
+            (payload_root / "AndroidManifest.xml").read_bytes()
+        assert created.read("CUD-FINAL.TXT") == (ROOT / "AGENTS.md").read_bytes()
+        assert "DELETE-ME.TXT" not in created.namelist()
+    checked = subprocess.run(
+        [seven_zip, "t", str(archive)], capture_output=True, text=True, timeout=120)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    opened = peare_lib.open_file(str(archive))
+    assert opened is not None
+    try:
+        rows = {row["path"]: row["sha256"] for row in opened.normalized_tree()}
+        assert hashlib.sha256(
+            (payload_root / "AndroidManifest.xml").read_bytes()).hexdigest() == \
+            rows["AndroidManifest.xml"]
+        assert rows["CUD-FINAL.TXT"] == hashlib.sha256(
+            (ROOT / "AGENTS.md").read_bytes()).hexdigest()
+        assert "DELETE-ME.TXT" not in rows
+    finally:
+        opened.close()
 
 @pytest.mark.parametrize("compression", ["store", "deflate"])
 def test_zip_directory_only_update_commits(
@@ -10457,9 +11483,9 @@ def test_stream_optimized_vmdk_write_cud_vmware_sample(
     finally:
         original.close()
 
-    payload = ROOT / "docs" / "SUPPORTED_FORMATS.md"
+    payload = ROOT / "COPYRIGHT.md"
     _fat_writer_add_target(
-        writer_lib, image, payload, "PEARE-SUPPORTED-FORMATS.MD", 0)
+        writer_lib, image, payload, "PEARE-COPYRIGHT.MD", 0)
     cud = _fat_writer_cud(writer_lib, image, tmp_path, 0)
     _assert_duplicate_create_is_atomic(
         writer_lib, image, [image], tmp_path, 0, cud["final_name"])
@@ -10469,7 +11495,7 @@ def test_stream_optimized_vmdk_write_cud_vmware_sample(
     try:
         rows = {row["path"]: row["sha256"] for row in updated.normalized_tree()}
         added = next(path for path in rows
-                     if path.endswith("/PEARE-SUPPORTED-FORMATS.MD"))
+                     if path.endswith("/PEARE-COPYRIGHT.MD"))
         assert rows[added] == hashlib.sha256(payload.read_bytes()).hexdigest()
         final = next(path for path in rows
                      if _fat_path_matches(path, cud["final_name"]))
@@ -11016,6 +12042,196 @@ def test_create_split_sparse_vmdk_with_cud_and_vmware_oracle(
             [vmware, "-e", str(output)], capture_output=True,
             text=True, timeout=120)
         assert check.returncode == 0, check.stdout + check.stderr
+
+def test_create_stream_optimized_vmdk_with_cud_and_qemu_oracle(
+        writer_lib, peare_lib, tmp_path):
+    variants = (_WriterVariant * writer_lib.peare_writer_create_variant_count(
+        b"vmdk"))()
+    assert all(writer_lib.peare_writer_get_create_variant(
+        b"vmdk", index, C.byref(variants[index])) == 0
+        for index in range(len(variants)))
+    assert b"stream-optimized" in {variant.id for variant in variants}
+
+    output = tmp_path / "peare-created-stream-optimized.vmdk"
+    source = tmp_path / "stream-optimized-payload.txt"
+    payload = b"Created by Peare in streamOptimized VMDK format."
+    source.write_bytes(payload)
+    inputs = (_WriterInputFile * 1)((str(source).encode(), b"ORACLE.TXT"))
+    options = _WriterCreateOptions(b"vmdk", b"stream-optimized", b"fat12")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(output).encode(), C.byref(options), 0, inputs, 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    header_descriptor = output.read_bytes()[512:512 + 20 * 512]
+    assert b'createType="streamOptimized"' in header_descriptor
+    cud = _fat_writer_cud(writer_lib, output, tmp_path, 0)
+    opened = peare_lib.open_file(str(output))
+    assert opened is not None
+    try:
+        rows = {row["path"].casefold(): row for row in opened.normalized_tree()}
+        payload_path = next(path for path in rows if path.endswith("/oracle.txt"))
+        assert rows[payload_path]["sha256"] == hashlib.sha256(payload).hexdigest()
+        final = next(path for path in rows
+                     if _fat_path_matches(path, cud["final_name"].casefold()))
+        assert rows[final]["sha256"] == hashlib.sha256(
+            cud["replacement_payload"]).hexdigest()
+    finally:
+        opened.close()
+
+    vmware = os.environ.get("PEARE_VMWARE_VDISKMANAGER")
+    if vmware and Path(vmware).is_file():
+        check = subprocess.run(
+            [vmware, "-e", str(output)], capture_output=True,
+            text=True, timeout=120)
+        assert check.returncode == 0, check.stdout + check.stderr
+
+    qemu_img = os.environ.get("PEARE_QEMU_IMG")
+    if qemu_img and Path(qemu_img).is_file():
+        raw = tmp_path / "stream-optimized-oracle.raw"
+        check = subprocess.run(
+            [qemu_img, "check", "-f", "vmdk", str(output)],
+            capture_output=True, text=True, timeout=120)
+        assert check.returncode == 0, check.stdout + check.stderr
+        convert = subprocess.run(
+            [qemu_img, "convert", "-f", "vmdk", "-O", "raw",
+             str(output), str(raw)], capture_output=True, text=True, timeout=180)
+        assert convert.returncode == 0, convert.stdout + convert.stderr
+        assert raw.stat().st_size == 32 * 1024 * 1024
+
+@pytest.mark.parametrize(("variant", "create_type"), [
+    ("monolithic-flat", "monolithicFlat"),
+    ("two-gb-flat", "twoGbMaxExtentFlat"),
+])
+def test_create_flat_vmdk_variants_with_full_cud_and_vmware(
+        writer_lib, peare_lib, tmp_path, variant, create_type):
+    variants = (_WriterVariant * writer_lib.peare_writer_create_variant_count(
+        b"vmdk"))()
+    assert all(writer_lib.peare_writer_get_create_variant(
+        b"vmdk", index, C.byref(variants[index])) == 0
+        for index in range(len(variants)))
+    assert variant.encode() in {item.id for item in variants}
+
+    output = tmp_path / f"peare-created-{variant}.vmdk"
+    source = tmp_path / f"{variant}-payload.txt"
+    payload = b"Created by Peare in flat VMDK format."
+    source.write_bytes(payload)
+    inputs = (_WriterInputFile * 1)((str(source).encode(), b"ORACLE.TXT"))
+    options = _WriterCreateOptions(b"vmdk", variant.encode(), b"fat12")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(output).encode(), C.byref(options), 0, inputs, 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    descriptor = output.read_text(encoding="utf-8")
+    assert f'createType="{create_type}"' in descriptor
+    cud = _fat_writer_cud(writer_lib, output, tmp_path, 0)
+    opened = peare_lib.open_file(str(output))
+    assert opened is not None
+    try:
+        rows = {row["path"].casefold(): row for row in opened.normalized_tree()}
+        payload_path = next(path for path in rows if path.endswith("/oracle.txt"))
+        assert rows[payload_path]["sha256"] == hashlib.sha256(payload).hexdigest()
+        final = next(path for path in rows
+                     if _fat_path_matches(path, cud["final_name"].casefold()))
+        assert rows[final]["sha256"] == hashlib.sha256(
+            cud["replacement_payload"]).hexdigest()
+    finally:
+        opened.close()
+
+    vmware = os.environ.get("PEARE_VMWARE_VDISKMANAGER")
+    if vmware and Path(vmware).is_file():
+        check = subprocess.run([vmware, "-e", str(output)], capture_output=True,
+                               text=True, timeout=120)
+        assert check.returncode == 0, check.stdout + check.stderr
+
+@pytest.mark.parametrize("variant", ["monolithic-sparse", "two-gb-sparse"])
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_sparse_vmdk_create_gui_cud_offscreen(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, variant, view):
+    output = tmp_path / f"gui-created-{variant}-{view}.vmdk"
+    source = tmp_path / f"gui-{variant}-{view}.txt"
+    source.write_bytes(b"GUI sparse VMDK payload")
+    inputs = (_WriterInputFile * 1)((str(source).encode(), b"GUI.TXT"))
+    options = _WriterCreateOptions(b"vmdk", variant.encode(), b"fat12")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(output).encode(), C.byref(options), 0, inputs, 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    opened = peare_lib.open_file(str(output))
+    assert opened is not None
+    try:
+        gui_root = next(row["path"] for row in opened.normalized_tree(max_depth=1)
+                        if row["format"] == "FAT" and row["is_container"])
+    finally:
+        opened.close()
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      str(output), view, gui_root)
+
+@pytest.mark.parametrize("variant", ["monolithic-flat", "two-gb-flat"])
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_flat_vmdk_create_gui_cud_offscreen(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, variant, view):
+    output = tmp_path / f"gui-created-{variant}-{view}.vmdk"
+    source = tmp_path / f"gui-{variant}-{view}.txt"
+    source.write_bytes(b"GUI flat VMDK payload")
+    inputs = (_WriterInputFile * 1)((str(source).encode(), b"GUI.TXT"))
+    options = _WriterCreateOptions(b"vmdk", variant.encode(), b"fat12")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(output).encode(), C.byref(options), 0, inputs, 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    opened = peare_lib.open_file(str(output))
+    assert opened is not None
+    try:
+        gui_root = next(row["path"] for row in opened.normalized_tree(max_depth=1)
+                        if row["format"] == "FAT" and row["is_container"])
+    finally:
+        opened.close()
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      str(output), view, gui_root)
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_stream_optimized_vmdk_create_gui_cud_offscreen(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    output = tmp_path / f"gui-created-stream-optimized-{view}.vmdk"
+    source = tmp_path / f"gui-stream-optimized-{view}.txt"
+    source.write_bytes(b"GUI streamOptimized payload")
+    inputs = (_WriterInputFile * 1)((str(source).encode(), b"GUI.TXT"))
+    options = _WriterCreateOptions(b"vmdk", b"stream-optimized", b"fat12")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(output).encode(), C.byref(options), 0, inputs, 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    opened = peare_lib.open_file(str(output))
+    assert opened is not None
+    try:
+        gui_root = next(row["path"] for row in opened.normalized_tree(max_depth=1)
+                        if row["format"] == "FAT" and row["is_container"])
+    finally:
+        opened.close()
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      str(output), view, gui_root)
 
 def test_vmware_converted_dos_vhd_monolithic_vmdk_copy(
         writer_lib, peare_lib, tmp_path):
@@ -11586,20 +12802,11 @@ def test_peare_creates_vhd_and_vhdx_with_filesystem_oracles(
     qemu_available = qemu_img and Path(qemu_img).is_file() and not four_kn
     vmware_tool = Path(r"C:\Program Files (x86)\VMware\VMware Workstation\vmware-vdiskmanager.exe")
     filesystem = filesystem_id.decode()
-    if not qemu_available and filesystem == "exfat" and not four_kn:
-        pytest.skip("Set PEARE_QEMU_IMG to qemu-img")
-    if filesystem == "exfat" and not four_kn and (
-            not exfatprogs or not Path(exfatprogs).is_file()):
-        pytest.skip("Set PEARE_EXFATPROGS to the independent exfatprogs tool")
     use_sleuthkit = filesystem != "exfat" and (
         qemu_available or format_id == "vhd" or four_kn)
-    if use_sleuthkit and not sleuthkit_bin and not four_kn:
-        pytest.skip("Set PEARE_SLEUTHKIT_BIN to The Sleuth Kit bin directory")
     fsstat = Path(sleuthkit_bin or "") / "fsstat.exe"
     recover_tool = Path(sleuthkit_bin or "") / "tsk_recover.exe"
-    if use_sleuthkit and not four_kn and (
-            not fsstat.is_file() or not recover_tool.is_file()):
-        pytest.skip("The Sleuth Kit fsstat and tsk_recover tools are required")
+    use_sleuthkit = use_sleuthkit and fsstat.is_file() and recover_tool.is_file()
     if four_kn and not vmware_tool.is_file():
         pytest.skip("VMware Workstation is required to independently inspect 4Kn VHDX")
 
@@ -11693,7 +12900,11 @@ def test_peare_creates_vhd_and_vhdx_with_filesystem_oracles(
         return
     elif format_id == "vhdx":
         return
+    elif not use_sleuthkit:
+        return
     if filesystem == "exfat":
+        if not exfatprogs or not Path(exfatprogs).is_file():
+            return
         filesystem_check = subprocess.run(
             [exfatprogs, "--unpin-program=fsck.exfat", "-n", str(oracle_image)],
             capture_output=True, text=True, timeout=120)
@@ -11728,6 +12939,39 @@ def test_vhdx_creation_variants_include_4kn(writer_lib):
         for index in range(count))
     assert {variant.id for variant in variants} == {
         b"fixed", b"dynamic", b"fixed-4kn", b"dynamic-4kn"}
+
+@pytest.mark.parametrize(("format_id", "variant"), [
+    ("vhd", "fixed"), ("vhd", "dynamic"),
+    ("vhdx", "fixed"), ("vhdx", "dynamic"),
+])
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_vhd_vhdx_512_create_gui_cud_offscreen(
+        writer_lib, peare_lib, peare_gui_path, tmp_path,
+        format_id, variant, view):
+    extension = "vhd" if format_id == "vhd" else "vhdx"
+    image = tmp_path / f"gui-{format_id}-{variant}-{view}.{extension}"
+    source = ROOT / "docs" / "SUPPORTED_FORMATS.md"
+    options = _WriterCreateOptions(
+        format_id.encode(), variant.encode(), b"fat12")
+    inputs = (_WriterInputFile * 1)(
+        (str(source).encode(), b"SUPPORTED-FORMATS.MD"))
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        status = writer_lib.peare_writer_add_files_to_ex(
+            writer, str(image).encode(), C.byref(options), 0, inputs, 1)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    opened = peare_lib.open_file(str(image))
+    assert opened is not None
+    try:
+        gui_root = next(row["path"] for row in opened.normalized_tree(max_depth=1)
+                        if row["format"] == "FAT" and row["is_container"])
+    finally:
+        opened.close()
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      str(image), view, gui_root)
 
 @pytest.mark.parametrize("variant", ["fixed-4kn", "dynamic-4kn"])
 @pytest.mark.parametrize("view", ["tree", "details"])
@@ -12257,8 +13501,15 @@ def test_fat16_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
     sample = os.environ.get("PEARE_FAT16_TEST_IMAGE")
     if not sample or not Path(sample).is_file():
         pytest.skip("Set PEARE_FAT16_TEST_IMAGE to a real FAT16 sample")
+    before = peare_lib.open_file(sample)
+    assert before is not None
+    try:
+        gui_root = next(row["path"] for row in before.normalized_tree(max_depth=1)
+                        if row["format"] == "FAT" and row["is_container"])
+    finally:
+        before.close()
     _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
-                      sample, view, "")
+                      sample, view, gui_root)
 
 
 @pytest.mark.parametrize("view", ["tree", "details"])
@@ -12346,19 +13597,18 @@ def test_ext4_feature_profile_gui_cud_offscreen(
 
 
 @pytest.mark.parametrize("view", ["tree", "details"])
-def test_lumia_ntfs_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
-                                      tmp_path, view):
-    sample = os.environ.get("PEARE_VHDX_TEST_IMAGE")
+def test_ntfs_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
+                                tmp_path, view):
+    sample = os.environ.get("PEARE_NTFS_GUI_TEST_IMAGE") or os.environ.get(
+        "PEARE_VHDX_TEST_IMAGE")
     if not sample or not Path(sample).is_file():
-        pytest.skip("Set PEARE_VHDX_TEST_IMAGE to the Lumia VHDX sample")
+        pytest.skip("Set PEARE_NTFS_GUI_TEST_IMAGE to an NTFS image")
 
     targets = _fat_writer_targets(writer_lib, sample)
     target_index = next((index for index, name in enumerate(targets)
                          if "NTFS" in name), None)
     assert target_index is not None, targets
     partition_match = re.search(r"partition\s+(\d+)", targets[target_index], re.I)
-    assert partition_match, targets[target_index]
-    partition_prefix = f"Partition {partition_match.group(1)}".casefold()
 
     before = peare_lib.open_file(sample)
     assert before is not None
@@ -12366,7 +13616,8 @@ def test_lumia_ntfs_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
         rows = before.normalized_tree(max_depth=1)
         gui_root = next(row["path"] for row in rows
                         if row["format"] == "NTFS" and row["is_container"] and
-                        row["path"].casefold().startswith(partition_prefix))
+                        (not partition_match or row["path"].casefold().startswith(
+                            f"partition {partition_match.group(1)}".casefold())))
     finally:
         before.close()
 
@@ -12407,6 +13658,21 @@ def test_chr_ext_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
 
 
 @pytest.mark.parametrize("view", ["tree", "details"])
+@pytest.mark.parametrize("filesystem", ["Ext2", "Ext3"])
+def test_ext_volume_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
+                                      tmp_path, view, filesystem):
+    sample = os.environ.get(f"PEARE_{filesystem.upper()}_GUI_TEST_IMAGE")
+    if not sample or not Path(sample).is_file():
+        pytest.skip(f"Set PEARE_{filesystem.upper()}_GUI_TEST_IMAGE to an e2fsprogs image")
+    targets = _fat_writer_targets(writer_lib, sample)
+    target_index = next((index for index, name in enumerate(targets)
+                         if filesystem.casefold() in name.casefold()), None)
+    assert target_index is not None, targets
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      sample, view, "", target_index=target_index)
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
 @pytest.mark.parametrize("filesystem", ["FAT", "Ext4"])
 def test_chr_7207_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
                                     tmp_path, view, filesystem):
@@ -12441,8 +13707,19 @@ def test_exfat_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
     sample = os.environ.get("PEARE_EXFAT_TEST_IMAGE")
     if not sample or not Path(sample).is_file():
         pytest.skip("Set PEARE_EXFAT_TEST_IMAGE to the exFAT sample")
+    targets = _fat_writer_targets(writer_lib, sample)
+    target_index = next((index for index, name in enumerate(targets)
+                         if "exfat" in name.casefold()), None)
+    assert target_index is not None, targets
+    opener = peare_lib.open_file(sample)
+    assert opener is not None
+    try:
+        gui_root = next(row["path"] for row in opener.normalized_tree(max_depth=1)
+                        if row["format"] == "EXFAT" and row["is_container"])
+    finally:
+        opener.close()
     _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
-                      sample, view, "")
+                      sample, view, gui_root, target_index=target_index)
 
 
 @pytest.mark.parametrize("view", ["tree", "details"])
@@ -12485,6 +13762,34 @@ def test_chr_fat32_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
                       sample, view, gui_root, target_index=target_index,
                       tree_max_depth=2)
 
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+@pytest.mark.parametrize("suffix", (
+    "jar", "war", "ear", "aar", "apk", "apks", "aab", "epub", "docx",
+    "xlsx", "pptx", "odt", "ods", "odp", "ipa", "ipsw", "xpi", "nupkg",
+    "snupkg", "whl", "vsix", "cbz", "kmz"))
+def test_zip_package_alias_gui_cud_offscreen(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, suffix, view):
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required to create ZIP alias samples")
+    archive = tmp_path / f"external-{suffix}.{suffix}"
+    if suffix == "apk":
+        apk_sample = Path(os.environ.get(
+            "PEARE_ANDROID_APK_SAMPLE",
+            Path.home() / "Documents" / "inerente a" / "Peare" /
+            "validation-artifacts" / "android-apk" /
+            "org.fdroid.fdroid_1023052.apk"))
+        if not apk_sample.is_file():
+            pytest.skip(f"Missing real Android APK sample: {apk_sample}")
+        shutil.copyfile(apk_sample, archive)
+    else:
+        created = subprocess.run(
+            [seven_zip, "a", "-tzip", "-mx=0", str(archive), "README.md"],
+            cwd=ROOT, capture_output=True, text=True, timeout=60)
+        assert created.returncode == 0, created.stdout + created.stderr
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      str(archive), view, gui_root="")
 
 @pytest.mark.parametrize("view", ["tree", "details"])
 @pytest.mark.parametrize("archive", [
@@ -13446,27 +14751,43 @@ def test_wad_cud_by_entry_id_on_real_and_duplicate_lumps(
 @pytest.mark.parametrize("view", ["tree", "details"])
 def test_wad_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
                                tmp_path, view):
-    archive = tmp_path / "gui-pwad.wad"
-    _create_test_wad(writer_lib, archive, b"pwad", [(b"ORIGINAL", b"original")])
-    source_hash = _sha256_file(archive)
-    added = tmp_path / "ADDED"
-    replacement = tmp_path / "gui-replacement.bin"
-    added.write_bytes(b"added")
-    replacement.write_bytes(b"replacement")
+    archive = ROOT / "tests" / "formats" / "wad" / "fixtures" / "e1m4.wad"
+    original_hash = _sha256_file(archive)
+    signature, original_lumps = _wad_lumps(archive)
+    assert len(original_lumps) >= 2
+    existing_names = {name for name, _ in original_lumps}
+    def unique_name(prefix):
+        for suffix in range(1000):
+            candidate = f"{prefix}{suffix:07X}"
+            if candidate not in existing_names:
+                existing_names.add(candidate)
+                return candidate.encode("ascii")
+        raise AssertionError("Could not select an unused WAD lump name")
+
+    added_name = b"LICENSE"
+    assert added_name.decode("ascii") not in existing_names
+    existing_names.add(added_name.decode("ascii"))
+    renamed_name = unique_name("R")
+    empty_name = unique_name("E")
+    payload = ROOT / "LICENSE"
+    replaced_index = 0
     scenario = {
         "view": view,
         "operations": [
             {"type": "add_files", "view_path": "", "destination": "",
-             "sources": [str(added)], "expect_present": "ADDED"},
-            {"type": "rename", "path": "ORIGINAL", "view_path": "",
-             "name": "RENAMED", "expect_present": "RENAMED",
-             "expect_absent": "ORIGINAL"},
-            {"type": "replace", "path": "RENAMED", "view_path": "",
-             "source": str(replacement), "expect_present": "RENAMED"},
+             "sources": [str(payload)],
+             "expect_present": added_name.decode("ascii")},
+            {"type": "rename", "path": original_lumps[replaced_index][0],
+             "view_path": "", "name": renamed_name.decode("ascii"),
+             "expect_present": renamed_name.decode("ascii")},
+            {"type": "replace", "path": renamed_name.decode("ascii"),
+             "view_path": "", "source": str(payload),
+             "expect_present": renamed_name.decode("ascii")},
             {"type": "create_file", "parent": "", "view_path": "",
-             "name": "EMPTY", "expect_present": "EMPTY"},
-            {"type": "delete", "path": "EMPTY", "view_path": "",
-             "expect_absent": "EMPTY"},
+             "name": empty_name.decode("ascii"),
+             "expect_present": empty_name.decode("ascii")},
+            {"type": "delete", "path": empty_name.decode("ascii"),
+             "view_path": "", "expect_absent": empty_name.decode("ascii")},
         ],
     }
     scenario_path = tmp_path / f"wad-gui-{view}.json"
@@ -13478,9 +14799,13 @@ def test_wad_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
          "--scenario", str(scenario_path), "--output-dir", str(output_dir)],
         capture_output=True, text=True, timeout=180)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert _sha256_file(archive) == source_hash
+    assert _sha256_file(archive) == original_hash
     _, lumps = _wad_lumps(output_dir / "writer-test-copy.wad")
-    assert lumps == [("RENAMED", b"replacement"), ("ADDED", b"added")]
+    expected = list(original_lumps)
+    expected[replaced_index] = (renamed_name.decode("ascii"), payload.read_bytes())
+    expected.append((added_name.decode("ascii"), payload.read_bytes()))
+    assert signature == b"PWAD"
+    assert lumps == expected
 
 @pytest.mark.parametrize(("image_format", "subformat", "variant", "extension"), [
     ("raw", "", "raw", "img"),

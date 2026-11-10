@@ -320,74 +320,79 @@ ModulePtr UuencodeModule::open(QIODevice& input, const QString& logicalName)
     QByteArray encodedName;
     bool base64 = false;
     bool hasEncodedName = false;
-    if (!findHeader(input, &encodedName, &base64, &hasEncodedName)) {
+    bool foundBlock = false;
+    while (findHeader(input, &encodedName, &base64, &hasEncodedName)) {
+        foundBlock = true;
+        if (hasEncodedName && !decodeEncodedName(&encodedName)) {
+            module->info_.error = QStringLiteral("Invalid UUencode encoded filename");
+            return module;
+        }
+
+        auto decodedFile = std::make_shared<QTemporaryFile>();
+        if (!decodedFile->open()) {
+            module->info_.error = decodedFile->errorString();
+            return module;
+        }
+        std::int64_t decodedSize = 0;
+        bool sawZeroLengthLine = false;
+        bool sawEnd = false;
+        bool hasBase64Padding = false;
+        QByteArray line;
+        std::array<std::uint8_t, 45> decodedLine{};
+        std::array<std::uint8_t, 57> decodedBase64Line{};
+        while (readDeviceLine(input, &line)) {
+            if ((!base64 && line == "end") || (base64 && line == "====")) {
+                sawEnd = true;
+                break;
+            }
+            int lineSize = 0;
+            const std::uint8_t* decodedData = nullptr;
+            if (base64) {
+                if (line.isEmpty() || !decodeBase64Line(
+                        line, &decodedBase64Line, &lineSize, &hasBase64Padding)) {
+                    module->info_.error = QStringLiteral("Invalid UUencode Base64 data line");
+                    return module;
+                }
+                decodedData = decodedBase64Line.data();
+            } else {
+                if (sawZeroLengthLine || !decodeLine(line, &decodedLine, &lineSize)) {
+                    module->info_.error = QStringLiteral("Invalid UUencode data line");
+                    return module;
+                }
+                if (line.at(0) == ' ' || line.at(0) == '`') sawZeroLengthLine = true;
+                decodedData = decodedLine.data();
+            }
+            if (decodedSize > std::numeric_limits<std::int64_t>::max() - lineSize ||
+                !writeAll(*decodedFile, decodedData, lineSize)) {
+                module->info_.error = QStringLiteral("Cannot store decoded UUencode payload");
+                return module;
+            }
+            decodedSize += lineSize;
+        }
+        if (!sawEnd) {
+            module->info_.error = QStringLiteral("UUencode end marker is missing");
+            return module;
+        }
+        if (!decodedFile->flush() || !decodedFile->seek(0)) {
+            module->info_.error = decodedFile->errorString();
+            return module;
+        }
+
+        ResourceEntry entry;
+        entry.name = payloadName(encodedName);
+        entry.type = QStringLiteral("UUE_FILE");
+        entry.format = ModuleFormat::UUE;
+        entry.isEmbeddedFile = true;
+        entry.dataSize = quint64(decodedSize);
+        entry.content = std::make_shared<UuencodeFileStore>(decodedFile, decodedSize);
+        entry.hierarchyPath = QStringList() << entry.name;
+        module->resources_.push_back(std::move(entry));
+        encodedName.clear();
+    }
+    if (!foundBlock) {
         module->info_.error = QStringLiteral("Invalid UUencode begin header");
         return module;
     }
-    if (hasEncodedName && !decodeEncodedName(&encodedName)) {
-        module->info_.error = QStringLiteral("Invalid UUencode encoded filename");
-        return module;
-    }
-
-    auto decodedFile = std::make_shared<QTemporaryFile>();
-    if (!decodedFile->open()) {
-        module->info_.error = decodedFile->errorString();
-        return module;
-    }
-    std::int64_t decodedSize = 0;
-    bool sawZeroLengthLine = false;
-    bool sawEnd = false;
-    bool hasBase64Padding = false;
-    QByteArray line;
-    std::array<std::uint8_t, 45> decodedLine{};
-    std::array<std::uint8_t, 57> decodedBase64Line{};
-    while (readDeviceLine(input, &line)) {
-        if ((!base64 && line == "end") || (base64 && line == "====")) {
-            sawEnd = true;
-            break;
-        }
-        int lineSize = 0;
-        const std::uint8_t* decodedData = nullptr;
-        if (base64) {
-            if (line.isEmpty() || !decodeBase64Line(
-                    line, &decodedBase64Line, &lineSize, &hasBase64Padding)) {
-                module->info_.error = QStringLiteral("Invalid UUencode Base64 data line");
-                return module;
-            }
-            decodedData = decodedBase64Line.data();
-        } else {
-            if (sawZeroLengthLine || !decodeLine(line, &decodedLine, &lineSize)) {
-                module->info_.error = QStringLiteral("Invalid UUencode data line");
-                return module;
-            }
-            if (line.at(0) == ' ' || line.at(0) == '`') sawZeroLengthLine = true;
-            decodedData = decodedLine.data();
-        }
-        if (decodedSize > std::numeric_limits<std::int64_t>::max() - lineSize ||
-            !writeAll(*decodedFile, decodedData, lineSize)) {
-            module->info_.error = QStringLiteral("Cannot store decoded UUencode payload");
-            return module;
-        }
-        decodedSize += lineSize;
-    }
-    if (!sawEnd) {
-        module->info_.error = QStringLiteral("UUencode end marker is missing");
-        return module;
-    }
-    if (!decodedFile->flush() || !decodedFile->seek(0)) {
-        module->info_.error = decodedFile->errorString();
-        return module;
-    }
-
-    ResourceEntry entry;
-    entry.name = payloadName(encodedName);
-    entry.type = QStringLiteral("UUE_FILE");
-    entry.format = ModuleFormat::UUE;
-    entry.isEmbeddedFile = true;
-    entry.dataSize = quint64(decodedSize);
-    entry.content = std::make_shared<UuencodeFileStore>(decodedFile, decodedSize);
-    entry.hierarchyPath = QStringList() << entry.name;
-    module->resources_.push_back(std::move(entry));
     return module;
 }
 

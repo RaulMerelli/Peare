@@ -30,6 +30,7 @@
 #include <QBuffer>
 #include <QTemporaryFile>
 #include <QTemporaryDir>
+#include <QXmlStreamReader>
 #include <QXmlStreamWriter>
 #include <QtEndian>
 
@@ -44,6 +45,7 @@
 #include <mutex>
 #include <new>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -174,6 +176,13 @@ struct DebEntry {
     QByteArray name;
 };
 
+struct UueEntry {
+    QString sourcePath;
+    QByteArray name;
+    bool base64 = false;
+    bool encodedName = false;
+};
+
 struct RpmEntry {
     QString sourcePath;
     QByteArray name;
@@ -208,7 +217,10 @@ struct XarEntry {
     quint64 offset = 0;
     quint64 packedSize = 0;
     quint64 unpackedSize = 0;
+    int codec = 0;
     bool directory = false;
+    bool symlink = false;
+    QString linkTarget;
 };
 
 struct IsoEntry {
@@ -216,6 +228,9 @@ struct IsoEntry {
     QString stagedPath;
     QByteArray name;
     bool directory = false;
+    quint64 sourceOffset = 0;
+    quint32 sourceSize = 0;
+    bool sourceIsRange = false;
 };
 
 struct XarNode {
@@ -274,17 +289,24 @@ struct peare_writer_handle_s {
     std::unique_ptr<QTemporaryFile> cpioStage;
     std::unique_ptr<QTemporaryFile> arStage;
     std::unique_ptr<QTemporaryFile> wadStage;
+    std::unique_ptr<QTemporaryFile> debDataTarInput;
+    std::unique_ptr<QTemporaryFile> rpmPayloadInput;
     std::unique_ptr<QTemporaryDir> debStage;
     std::unique_ptr<QTemporaryDir> rpmStage;
     std::unique_ptr<QTemporaryDir> xarStage;
     std::unique_ptr<QTemporaryDir> isoStage;
+    std::unique_ptr<QTemporaryDir> uueStage;
     std::vector<Entry> entries;
     std::vector<TarEntry> tarEntries;
     std::vector<CpioEntry> cpioEntries;
     std::vector<ArEntry> arEntries;
     std::vector<WadEntry> wadEntries;
     std::vector<DebEntry> debEntries;
+    std::vector<DebEntry> debUpdateMembers;
+    std::vector<UueEntry> uueEntries;
     std::vector<RpmEntry> rpmEntries;
+    std::vector<RpmTag> rpmMainTags;
+    std::vector<QByteArray> rpmOldFilePaths;
     std::vector<XarEntry> xarEntries;
     std::vector<IsoEntry> isoEntries;
     std::vector<QByteArray> debDirectories;
@@ -295,6 +317,7 @@ struct peare_writer_handle_s {
     int bzip2Level = 9;
     int zstdLevel = 3;
     int lzmaLevel = 5;
+    int rpmCodec = 0;
     int unixCompressMaxBits = 16;
     bool unixCompressBlockMode = true;
     unsigned xzCheckId = XZ_CHECK_CRC64;
@@ -323,15 +346,20 @@ struct peare_writer_handle_s {
     unsigned ihexRecordSize = 16;
     int debControlCodec = 0;
     int debDataCodec = 0;
-    int rpmCodec = 0;
     int xarCodec = 0;
     QString createPath;
+    QString debPackagePath;
+    QByteArray debDataMemberName;
+    bool debUpdateActive = false;
+    bool rpmUpdateActive = false;
+    QString rpmPackagePath;
     bool xzWrappedTar = false;
     bool lzmaWrappedTar = false;
+    bool tarV7 = false;
     bool fatTargetSpecified = false;
     size_t fatTargetIndex = 0;
     enum class Mode { None, ZipCreate, ZipUpdate, GzipCreate, Bzip2Create, ZstdCreate, XzCreate, LzmaAloneCreate, LzipCreate, UnixCompressCreate, TarCreate, TarUpdate, CpioCreate,
-                      CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate, UuencodeCreate, IhexCreate, DebCreate, RpmCreate, XarCreate, IsoCreate, TarGzipCreate,
+                      CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate, UuencodeCreate, UuencodeUpdate, IhexCreate, DebCreate, RpmCreate, XarCreate, XarUpdate, IsoCreate, IsoUpdate, TarGzipCreate,
                       TarBzip2Create, TarZstdCreate, TarUnixCompressCreate,
                       TarXzCreate, TarLzmaCreate,
                       FatCreate, DiskUpdate } mode = Mode::None;
@@ -381,6 +409,7 @@ peare_writer_status fail(peare_writer_handle_s* writer, peare_writer_status stat
             writer->rpmStage.reset();
             writer->xarStage.reset();
             writer->isoStage.reset();
+            writer->uueStage.reset();
             if (writer->diskUpdate) {
                 writer->diskUpdate->abort();
                 writer->diskUpdate.reset();
@@ -390,6 +419,7 @@ peare_writer_status fail(peare_writer_handle_s* writer, peare_writer_status stat
             writer->cpioEntries.clear();
             writer->arEntries.clear();
             writer->wadEntries.clear();
+            writer->uueEntries.clear();
             writer->debEntries.clear();
             writer->rpmEntries.clear();
             writer->xarEntries.clear();
@@ -411,6 +441,7 @@ peare_writer_status fail(peare_writer_handle_s* writer, peare_writer_status stat
             writer->unixCompressPayloadWritten = false;
             writer->xzWrappedTar = false;
             writer->lzmaWrappedTar = false;
+            writer->tarV7 = false;
             writer->tarContentEnd = 0;
             writer->updatePath.clear();
             writer->createPath.clear();
@@ -443,11 +474,18 @@ peare_writer_status finishNoOpArchiveUpdate(peare_writer_handle_s* writer) {
     writer->cpioStage.reset();
     writer->arStage.reset();
     writer->wadStage.reset();
+    writer->debDataTarInput.reset();
+    writer->debStage.reset();
+    writer->rpmPayloadInput.reset();
+    writer->rpmStage.reset();
+    writer->uueStage.reset();
     writer->entries.clear();
     writer->tarEntries.clear();
     writer->cpioEntries.clear();
     writer->arEntries.clear();
     writer->wadEntries.clear();
+    writer->debUpdateMembers.clear();
+    writer->uueEntries.clear();
     writer->cpioFormat = CpioFormat::Newc;
     writer->cpioOpaqueOffset = 0;
     writer->cpioOpaqueSize = 0;
@@ -463,9 +501,17 @@ peare_writer_status finishNoOpArchiveUpdate(peare_writer_handle_s* writer) {
     writer->unixCompressPayloadWritten = false;
     writer->xzWrappedTar = false;
     writer->lzmaWrappedTar = false;
+    writer->tarV7 = false;
     writer->mode = peare_writer_handle_s::Mode::None;
     writer->tarContentEnd = 0;
     writer->updatePath.clear();
+    writer->debPackagePath.clear();
+    writer->debDataMemberName.clear();
+    writer->debUpdateActive = false;
+    writer->rpmUpdateActive = false;
+    writer->rpmMainTags.clear();
+    writer->rpmOldFilePaths.clear();
+    writer->rpmPackagePath.clear();
     writer->error.clear();
     writer->errorUtf8.clear();
     return PEARE_WRITER_OK;
@@ -607,6 +653,8 @@ peare_writer_status loadExistingTar(peare_writer_handle_s* writer, QFile* input)
                     QStringLiteral("The file is not a supported TAR archive."), false);
     writer->names = std::move(names);
     writer->tarContentEnd = contentEnd;
+    writer->tarV7 = !writer->tarEntries.empty() &&
+        writer->tarEntries.front().header.mid(257, 6) == QByteArray(6, '\0');
     return PEARE_WRITER_OK;
 }
 
@@ -826,7 +874,7 @@ bool isTarBzip2Candidate(QFile* input) {
     return matches;
 }
 
-bool bunzip2ToFile(QFile* input, QTemporaryFile* output) {
+bool bunzip2ToFile(QFile* input, QFile* output) {
     if (!input || !output || !input->seek(0) || !output->seek(0) ||
         !output->resize(0)) return false;
     bool sawMember = false;
@@ -2233,7 +2281,8 @@ bool writeTarOctal(char* field, int width, quint64 value) {
     return value == 0;
 }
 
-bool tarEntryName(const char* utf8, QByteArray* name, QByteArray* prefix) {
+bool tarEntryName(const char* utf8, QByteArray* name, QByteArray* prefix,
+                  bool v7 = false) {
     if (!utf8 || !*utf8 || !name || !prefix) return false;
     QString path = QString::fromUtf8(utf8);
     if (path.isEmpty() || path.contains(QChar(0))) return false;
@@ -2247,6 +2296,12 @@ bool tarEntryName(const char* utf8, QByteArray* name, QByteArray* prefix) {
             part.contains(QChar(0))) return false;
     path = parts.join(QLatin1Char('/'));
     QByteArray encoded = path.toUtf8();
+    if (v7) {
+        if (encoded.size() > 100) return false;
+        *name = encoded;
+        prefix->clear();
+        return true;
+    }
     if (encoded.size() <= 100) {
         *name = encoded;
         prefix->clear();
@@ -2260,13 +2315,13 @@ bool tarEntryName(const char* utf8, QByteArray* name, QByteArray* prefix) {
     return true;
 }
 
-bool rewriteTarName(TarEntry* entry, const QString& key) {
+bool rewriteTarName(TarEntry* entry, const QString& key, bool v7) {
     if (!entry || entry->header.size() != qint64(kTarBlockSize)) return false;
     QByteArray name;
     QByteArray prefix;
     QByteArray full = key.toUtf8();
     if (entry->directory) full += '/';
-    if (!tarEntryName(full.constData(), &name, &prefix)) return false;
+    if (!tarEntryName(full.constData(), &name, &prefix, v7)) return false;
     QByteArray header = entry->header;
     std::memset(header.data(), 0, 100);
     std::memset(header.data() + 345, 0, 155);
@@ -2289,9 +2344,11 @@ peare_writer_status writeTarFile(peare_writer_handle_s* writer,
                     QStringLiteral("A source file path is required."), false);
     QByteArray name;
     QByteArray prefix;
-    if (!tarEntryName(entryNameUtf8, &name, &prefix))
+    if (!tarEntryName(entryNameUtf8, &name, &prefix, writer->tarV7))
         return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
-                    QStringLiteral("The TAR path is invalid or exceeds USTAR name limits."), false);
+                    writer->tarV7
+                        ? QStringLiteral("The TAR V7 path exceeds its 100-byte name field.")
+                        : QStringLiteral("The TAR path is invalid or exceeds USTAR name limits."), false);
     const QByteArray fullName = prefix.isEmpty() ? name : prefix + '/' + name;
     const QString key = QString::fromUtf8(fullName);
     if (writer->names.contains(key))
@@ -2314,9 +2371,11 @@ peare_writer_status writeTarFile(peare_writer_handle_s* writer,
                     QStringLiteral("The file is too large for the supported TAR header."));
     std::memset(header.data() + 148, ' ', 8);
     header[156] = '0';
-    std::memcpy(header.data() + 257, "ustar", 5);
-    header[262] = '\0';
-    std::memcpy(header.data() + 263, "00", 2);
+    if (!writer->tarV7) {
+        std::memcpy(header.data() + 257, "ustar", 5);
+        header[262] = '\0';
+        std::memcpy(header.data() + 263, "00", 2);
+    }
     if (!prefix.isEmpty()) std::memcpy(header.data() + 345, prefix.constData(), size_t(prefix.size()));
     quint64 checksum = 0;
     for (char byte : header) checksum += quint64(static_cast<unsigned char>(byte));
@@ -2380,9 +2439,11 @@ peare_writer_status writeTarFile(peare_writer_handle_s* writer,
 peare_writer_status writeTarDirectory(peare_writer_handle_s* writer, const char* entryNameUtf8) {
     QByteArray name;
     QByteArray prefix;
-    if (!tarEntryName(entryNameUtf8, &name, &prefix))
+    if (!tarEntryName(entryNameUtf8, &name, &prefix, writer->tarV7))
         return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
-                    QStringLiteral("The TAR directory name is invalid or exceeds USTAR limits."), false);
+                    writer->tarV7
+                        ? QStringLiteral("The TAR V7 directory path exceeds its 100-byte name field.")
+                        : QStringLiteral("The TAR directory name is invalid or exceeds USTAR limits."), false);
     QString key = QString::fromUtf8(prefix.isEmpty() ? name : prefix + '/' + name);
     if (key.endsWith(QLatin1Char('/'))) key.chop(1);
     if (writer->names.contains(key))
@@ -2399,8 +2460,10 @@ peare_writer_status writeTarDirectory(peare_writer_handle_s* writer, const char*
         return fail(writer, PEARE_WRITER_INTERNAL_ERROR,
                     QStringLiteral("Could not encode the TAR directory header."));
     header[156] = '5';
-    std::memcpy(header.data() + 257, "ustar", 5);
-    std::memcpy(header.data() + 263, "00", 2);
+    if (!writer->tarV7) {
+        std::memcpy(header.data() + 257, "ustar", 5);
+        std::memcpy(header.data() + 263, "00", 2);
+    }
     std::memset(header.data() + 148, ' ', 8);
     quint64 checksum = 0;
     for (char byte : header) checksum += quint64(static_cast<unsigned char>(byte));
@@ -3735,7 +3798,7 @@ template <typename Read>
 bool writeZipJpegPayload(QIODevice* output, Read read, quint32* crc,
                          quint64* inputSize, quint64* outputSize, QString* error) {
     std::vector<std::uint8_t> source;
-    std::array<char, kChunkSize> buffer{};
+    std::vector<char> buffer(kChunkSize);
     quint32 checksum = 0xffffffffu;
     for (;;) {
         const qint64 count = read(buffer.data(), qint64(buffer.size()));
@@ -4450,12 +4513,177 @@ peare_writer_status writeUnixCompressMember(peare_writer_handle_s* writer,
     return PEARE_WRITER_OK;
 }
 
+int uuencodeValue(char value) {
+    const unsigned char byte = static_cast<unsigned char>(value);
+    if (byte < 0x20 || byte > 0x60) return -1;
+    return (byte - 0x20) & 0x3f;
+}
+
+bool decodeUueName(QByteArray* value) {
+    if (!value || value->isEmpty() || value->size() % 4) return false;
+    QByteArray decoded;
+    bool padded = false;
+    for (int i = 0; i < value->size(); i += 4) {
+        const int a = QByteArray("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+                          .indexOf(value->at(i));
+        const int b = QByteArray("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+                          .indexOf(value->at(i + 1));
+        const char c = value->at(i + 2);
+        const char d = value->at(i + 3);
+        if (a < 0 || b < 0 || padded) return false;
+        decoded.append(char((a << 2) | (b >> 4)));
+        if (c == '=') {
+            if (d != '=' || i + 4 != value->size() || (b & 0x0f)) return false;
+            padded = true;
+            continue;
+        }
+        const QByteArray alphabet("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/");
+        const int cv = alphabet.indexOf(c);
+        if (cv < 0) return false;
+        decoded.append(char((b << 4) | (cv >> 2)));
+        if (d == '=') {
+            if (i + 4 != value->size() || (cv & 0x03)) return false;
+            padded = true;
+            continue;
+        }
+        const int dv = alphabet.indexOf(d);
+        if (dv < 0) return false;
+        decoded.append(char((cv << 6) | dv));
+    }
+    if (decoded.isEmpty()) return false;
+    *value = std::move(decoded);
+    return true;
+}
+
+bool parseUueHeader(const QByteArray& line, UueEntry* entry) {
+    if (!entry) return false;
+    int modeStart = 0;
+    if (line.startsWith("begin-base64-encoded ")) {
+        modeStart = 21;
+        entry->base64 = true;
+        entry->encodedName = true;
+    } else if (line.startsWith("begin-base64 ")) {
+        modeStart = 13;
+        entry->base64 = true;
+        entry->encodedName = false;
+    } else if (line.startsWith("begin-encoded ")) {
+        modeStart = 14;
+        entry->base64 = false;
+        entry->encodedName = true;
+    } else if (line.startsWith("begin ")) {
+        modeStart = 6;
+        entry->base64 = false;
+        entry->encodedName = false;
+    } else {
+        return false;
+    }
+    const int modeEnd = line.indexOf(' ', modeStart);
+    if (modeEnd - modeStart < 3 || modeEnd - modeStart > 4 || modeEnd + 1 >= line.size())
+        return false;
+    for (int i = modeStart; i < modeEnd; ++i)
+        if (line.at(i) < '0' || line.at(i) > '7') return false;
+    entry->name = line.mid(modeEnd + 1).trimmed();
+    if (entry->name.isEmpty() || (entry->encodedName && entry->name.contains(' ')))
+        return false;
+    if (entry->encodedName && !decodeUueName(&entry->name)) return false;
+    const int separator = qMax(entry->name.lastIndexOf('/'), entry->name.lastIndexOf('\\'));
+    entry->name = entry->name.mid(separator + 1);
+    return !entry->name.isEmpty() && entry->name != "." && entry->name != "..";
+}
+
+bool decodeUueArchive(QFile* input, QTemporaryDir* stage,
+                      std::vector<UueEntry>* entries) {
+    if (!input || !stage || !stage->isValid() || !entries || !input->seek(0)) return false;
+    entries->clear();
+    QByteArray line;
+    while (true) {
+        UueEntry entry;
+        bool foundHeader = false;
+        while (!input->atEnd()) {
+            line = input->readLine(65537);
+            if (line.size() > 65536) return false;
+            if (line.endsWith('\n')) line.chop(1);
+            if (line.endsWith('\r')) line.chop(1);
+            if (parseUueHeader(line, &entry)) {
+                foundHeader = true;
+                break;
+            }
+        }
+        if (!foundHeader) return !entries->empty();
+        const QString path = stage->filePath(QStringLiteral("member-%1")
+            .arg(entries->size(), 8, 10, QLatin1Char('0')));
+        QFile decoded(path);
+        if (!decoded.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+        bool sawEnd = false;
+        bool sawZeroLengthLine = false;
+        bool sawBase64Padding = false;
+        while (!input->atEnd()) {
+            line = input->readLine(65537);
+            if (line.size() > 65536) return false;
+            if (line.endsWith('\n')) line.chop(1);
+            if (line.endsWith('\r')) line.chop(1);
+            if ((!entry.base64 && line == "end") || (entry.base64 && line == "====")) {
+                sawEnd = true;
+                break;
+            }
+            QByteArray bytes;
+            if (entry.base64) {
+                if (line.isEmpty() || line.size() > 76 || line.size() % 4 || sawBase64Padding)
+                    return false;
+                for (int i = 0; i < line.size(); i += 4) {
+                    const QByteArray alphabet("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/");
+                    const int a = alphabet.indexOf(line.at(i));
+                    const int b = alphabet.indexOf(line.at(i + 1));
+                    const char c = line.at(i + 2), d = line.at(i + 3);
+                    if (a < 0 || b < 0) return false;
+                    bytes.append(char((a << 2) | (b >> 4)));
+                    if (c == '=') {
+                        if (d != '=' || i + 4 != line.size() || (b & 0x0f)) return false;
+                        sawBase64Padding = true;
+                        continue;
+                    }
+                    const int cv = alphabet.indexOf(c);
+                    if (cv < 0) return false;
+                    bytes.append(char((b << 4) | (cv >> 2)));
+                    if (d == '=') {
+                        if (i + 4 != line.size() || (cv & 0x03)) return false;
+                        sawBase64Padding = true;
+                        continue;
+                    }
+                    const int dv = alphabet.indexOf(d);
+                    if (dv < 0) return false;
+                    bytes.append(char((cv << 6) | dv));
+                }
+            } else {
+                if (line.isEmpty() || sawZeroLengthLine) return false;
+                const int count = uuencodeValue(line.at(0));
+                if (count < 0 || count > 45 || line.size() != 1 + 4 * ((count + 2) / 3))
+                    return false;
+                if (count == 0) sawZeroLengthLine = true;
+                for (int i = 1; i < line.size(); i += 4) {
+                    const int a = uuencodeValue(line.at(i));
+                    const int b = uuencodeValue(line.at(i + 1));
+                    const int c = uuencodeValue(line.at(i + 2));
+                    const int d = uuencodeValue(line.at(i + 3));
+                    if (a < 0 || b < 0 || c < 0 || d < 0) return false;
+                    bytes.append(char((a << 2) | (b >> 4)));
+                    if (bytes.size() < count) bytes.append(char((b << 4) | (c >> 2)));
+                    if (bytes.size() < count) bytes.append(char((c << 6) | d));
+                }
+                if (bytes.size() != count) return false;
+            }
+            if (!bytes.isEmpty() && decoded.write(bytes) != bytes.size()) return false;
+        }
+        if (!sawEnd || !decoded.flush()) return false;
+        decoded.close();
+        entry.sourcePath = path;
+        entries->push_back(std::move(entry));
+    }
+}
+
 peare_writer_status writeUuencodeMember(peare_writer_handle_s* writer,
                                         const char* sourcePathUtf8,
                                         const char* entryNameUtf8) {
-    if (writer->uuencodePayloadWritten)
-        return fail(writer, PEARE_WRITER_UNSUPPORTED_OPERATION,
-                    QStringLiteral("UUencode stores one file per output."));
     if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("A source file and output filename are required."));
@@ -4513,6 +4741,12 @@ peare_writer_status writeUuencodeMember(peare_writer_handle_s* writer,
     }
     if (input.error() != QFileDevice::NoError)
         return fail(writer, PEARE_WRITER_IO_ERROR, input.errorString());
+    if (!writer->uuencodeBase64 && !writer->uuencodeHasData &&
+        !writeAll(writer->output.get(), "`\n", 2))
+        return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+    const char* ending = writer->uuencodeBase64 ? "====\n" : "end\n";
+    if (!writeAll(writer->output.get(), ending, qint64(std::strlen(ending))))
+        return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
     writer->uuencodePayloadWritten = true;
     return PEARE_WRITER_OK;
 }
@@ -4585,7 +4819,7 @@ peare_writer_status writeIhexMember(peare_writer_handle_s* writer,
 }
 
 bool copyFile(QFile& input, QIODevice* output) {
-    std::array<char, kChunkSize> buffer{};
+    std::vector<char> buffer(kChunkSize);
     while (true) {
         const qint64 count = input.read(buffer.data(), qint64(buffer.size()));
         if (count < 0) return false;
@@ -4638,6 +4872,113 @@ QByteArray rpmHeader(std::vector<RpmTag> tags) {
     appendBe32(&result, quint32(store.size()));
     result.append(index);
     result.append(store);
+    return result;
+}
+
+struct RpmHeaderDocument {
+    qint64 end = 0;
+    std::vector<RpmTag> tags;
+};
+
+bool rpmParseHeader(QIODevice* input, qint64 start, RpmHeaderDocument* document) {
+    if (!input || !document || start < 0 || start > input->size() - 16) return false;
+    QByteArray intro;
+    if (!readAt(input, start, 16, &intro) ||
+        intro.left(8) != QByteArray("\x8e\xad\xe8\x01\0\0\0\0", 8)) return false;
+    const quint32 count = qFromBigEndian<quint32>(intro.constData() + 8);
+    const quint32 storeSize = qFromBigEndian<quint32>(intro.constData() + 12);
+    if (count > 100000 || storeSize > 256u * 1024u * 1024u) return false;
+    const quint64 indexSize = quint64(count) * 16;
+    const quint64 total = 16 + indexSize + storeSize;
+    if (total > quint64(input->size() - start)) return false;
+    QByteArray indexes;
+    QByteArray store;
+    if (!readAt(input, start + 16, qint64(indexSize), &indexes) ||
+        !readAt(input, start + 16 + qint64(indexSize), storeSize, &store)) return false;
+    std::vector<RpmTag> tags;
+    tags.reserve(count);
+    for (quint32 i = 0; i < count; ++i) {
+        const char* index = indexes.constData() + qint64(i) * 16;
+        const quint32 id = qFromBigEndian<quint32>(index);
+        const quint32 type = qFromBigEndian<quint32>(index + 4);
+        const quint32 offset = qFromBigEndian<quint32>(index + 8);
+        const quint32 items = qFromBigEndian<quint32>(index + 12);
+        if (offset > quint32(store.size())) return false;
+        quint64 length = 0;
+        if (type == 1 || type == 2 || type == 7) {
+            length = items;
+        } else if (type >= 3 && type <= 5) {
+            const quint32 width = type == 3 ? 2 : type == 4 ? 4 : 8;
+            length = quint64(items) * width;
+        } else if (type == 6 || type == 8 || type == 9) {
+            quint32 strings = 0;
+            quint32 cursor = offset;
+            while (strings < items && cursor < quint32(store.size())) {
+                const int terminator = store.indexOf('\0', int(cursor));
+                if (terminator < 0) return false;
+                cursor = quint32(terminator + 1);
+                ++strings;
+            }
+            if (strings != items) return false;
+            length = cursor - offset;
+        } else if (type != 0) {
+            return false;
+        }
+        if (length > quint64(store.size()) - offset) return false;
+        tags.push_back({id, type, items, store.mid(int(offset), int(length))});
+    }
+    document->end = start + qint64(total);
+    document->tags = std::move(tags);
+    return true;
+}
+
+RpmTag* rpmFindTag(std::vector<RpmTag>* tags, quint32 id) {
+    if (!tags) return nullptr;
+    auto found = std::find_if(tags->begin(), tags->end(),
+        [id](const RpmTag& tag) { return tag.tag == id; });
+    return found == tags->end() ? nullptr : &*found;
+}
+
+const RpmTag* rpmFindTag(const std::vector<RpmTag>& tags, quint32 id) {
+    auto found = std::find_if(tags.begin(), tags.end(),
+        [id](const RpmTag& tag) { return tag.tag == id; });
+    return found == tags.end() ? nullptr : &*found;
+}
+
+bool rpmTagElements(const RpmTag& tag, std::vector<QByteArray>* elements) {
+    if (!elements) return false;
+    elements->clear();
+    if (tag.type == 1 || tag.type == 2 || tag.type == 7) {
+        if (tag.value.size() != int(tag.count)) return false;
+        for (char byte : tag.value) elements->push_back(QByteArray(1, byte));
+        return true;
+    }
+    if (tag.type >= 3 && tag.type <= 5) {
+        const int width = tag.type == 3 ? 2 : tag.type == 4 ? 4 : 8;
+        if (quint64(tag.count) * quint64(width) != quint64(tag.value.size())) return false;
+        for (quint32 i = 0; i < tag.count; ++i)
+            elements->push_back(tag.value.mid(int(i) * width, width));
+        return true;
+    }
+    if (tag.type == 6 || tag.type == 8 || tag.type == 9) {
+        int cursor = 0;
+        for (quint32 i = 0; i < tag.count; ++i) {
+            const int end = tag.value.indexOf('\0', cursor);
+            if (end < 0) return false;
+            elements->push_back(tag.value.mid(cursor, end - cursor));
+            cursor = end + 1;
+        }
+        return cursor == tag.value.size();
+    }
+    return tag.type == 0 && tag.count == 0 && tag.value.isEmpty();
+}
+
+QByteArray rpmJoinStrings(const std::vector<QByteArray>& elements) {
+    QByteArray result;
+    for (const QByteArray& element : elements) {
+        result += element;
+        result.append('\0');
+    }
     return result;
 }
 
@@ -4696,6 +5037,221 @@ QString debEntryKey(const QByteArray& name) {
     QString key = QString::fromUtf8(name);
     while (key.endsWith(QLatin1Char('/'))) key.chop(1);
     return key;
+}
+
+int debDataCodec(const QByteArray& name) {
+    if (name == "data.tar") return 0;
+    if (name == "data.tar.gz") return 1;
+    if (name == "data.tar.xz") return 2;
+    if (name == "data.tar.zst") return 3;
+    if (name == "data.tar.bz2") return 4;
+    if (name == "data.tar.lzma") return 5;
+    return -1;
+}
+
+bool debPackageMembersValid(const peare_writer_handle_s* writer,
+                            const ArEntry** dataEntry) {
+    bool hasVersion = false;
+    bool hasControl = false;
+    *dataEntry = nullptr;
+    for (const ArEntry& entry : writer->arEntries) {
+        if (entry.name == "debian-binary") hasVersion = true;
+        if (entry.name.startsWith("control.tar")) hasControl = true;
+        if (debDataCodec(entry.name) >= 0) *dataEntry = &entry;
+    }
+    return hasVersion && hasControl && *dataEntry;
+}
+
+bool copyArMember(QFile* input, const ArEntry& entry, const QString& path) {
+    if (!input || entry.size > quint64((std::numeric_limits<qint64>::max)()))
+        return false;
+    QFile output(path);
+    if (!output.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+        !input->seek(entry.dataOffset)) return false;
+    std::vector<char> buffer(kChunkSize);
+    quint64 remaining = entry.size;
+    while (remaining) {
+        const qint64 count = input->read(buffer.data(), qint64(
+            std::min<quint64>(remaining, buffer.size())));
+        if (count <= 0 || !writeAll(&output, buffer.data(), count)) return false;
+        remaining -= quint64(count);
+    }
+    return output.flush();
+}
+
+bool isDebPackageFile(const QString& path) {
+    QFile input(path);
+    if (!input.open(QIODevice::ReadOnly)) return false;
+    peare_writer_handle_s probe;
+    if (loadExistingAr(&probe, &input) != PEARE_WRITER_OK) return false;
+    const ArEntry* dataEntry = nullptr;
+    return debPackageMembersValid(&probe, &dataEntry);
+}
+
+bool loadDebUpdate(peare_writer_handle_s* writer, QFile* package,
+                   const QString& packagePath, QFile** dataTar) {
+    if (!package || !dataTar || package->size() < 8 ||
+        !package->seek(0) || package->read(8) != "!<arch>\n") return false;
+    writer->arEntries.clear();
+    writer->names.clear();
+    if (loadExistingAr(writer, package) != PEARE_WRITER_OK) {
+        writer->arEntries.clear();
+        writer->names.clear();
+        writer->error.clear();
+        writer->errorUtf8.clear();
+        return false;
+    }
+    const ArEntry* dataEntry = nullptr;
+    if (!debPackageMembersValid(writer, &dataEntry)) {
+        writer->arEntries.clear();
+        writer->names.clear();
+        writer->error.clear();
+        writer->errorUtf8.clear();
+        return false;
+    }
+    const auto version = std::find_if(writer->arEntries.begin(), writer->arEntries.end(),
+        [](const ArEntry& entry) { return entry.name == "debian-binary"; });
+    QByteArray versionBytes;
+    if (version == writer->arEntries.end() || version->size != 4 ||
+        !readAt(package, version->dataOffset, 4, &versionBytes) || versionBytes != "2.0\n")
+        return false;
+    writer->debStage.reset(new (std::nothrow) QTemporaryDir);
+    if (!writer->debStage || !writer->debStage->isValid()) {
+        writer->debStage.reset();
+        return false;
+    }
+    writer->debUpdateMembers.clear();
+    for (size_t i = 0; i < writer->arEntries.size(); ++i) {
+        const ArEntry& entry = writer->arEntries[i];
+        const QString stagedPath = writer->debStage->filePath(
+            QStringLiteral("ar-member-%1").arg(i));
+        if (!copyArMember(package, entry, stagedPath)) return false;
+        writer->debUpdateMembers.push_back({stagedPath, entry.name});
+    }
+    writer->debDataMemberName = dataEntry->name;
+    writer->debDataCodec = debDataCodec(dataEntry->name);
+    const QString packedPath = writer->debStage->filePath(QStringLiteral("data-packed"));
+    if (!copyArMember(package, *dataEntry, packedPath)) return false;
+    QFile packed(packedPath);
+    if (!packed.open(QIODevice::ReadOnly)) return false;
+    writer->debDataTarInput.reset(new (std::nothrow) QTemporaryFile);
+    if (!writer->debDataTarInput || !writer->debDataTarInput->open()) return false;
+    bool decoded = false;
+    switch (writer->debDataCodec) {
+    case 0: decoded = copyFile(packed, writer->debDataTarInput.get()) &&
+                      writer->debDataTarInput->flush(); break;
+    case 1: decoded = gunzipToFile(&packed, writer->debDataTarInput.get()); break;
+    case 2: {
+        QString error;
+        decoded = decompressXzToFile(&packed, writer->debDataTarInput.get(), &error);
+        break;
+    }
+    case 3: decoded = decompressZstdToFile(&packed, writer->debDataTarInput.get()); break;
+    case 4: decoded = bunzip2ToFile(&packed, writer->debDataTarInput.get()); break;
+    case 5: {
+        QString error;
+        decoded = decompressLzmaAloneToFile(&packed, writer->debDataTarInput.get(), &error);
+        break;
+    }
+    default: break;
+    }
+    if (!decoded) return false;
+    writer->tarEntries.clear();
+    writer->names.clear();
+    if (loadExistingTar(writer, writer->debDataTarInput.get()) != PEARE_WRITER_OK)
+        return false;
+    writer->debPackagePath = packagePath;
+    writer->debUpdateActive = true;
+    *dataTar = writer->debDataTarInput.get();
+    return true;
+}
+
+peare_writer_status writeDebUpdatePackage(peare_writer_handle_s* writer) {
+    if (!writer->debUpdateActive || !writer->debStage ||
+        writer->debDataMemberName.isEmpty())
+        return fail(writer, PEARE_WRITER_INTERNAL_ERROR,
+                    QStringLiteral("Debian update state is incomplete."));
+    const QString packedPath = writer->debStage->filePath(QStringLiteral("data-repacked"));
+    peare_writer_status status = PEARE_WRITER_OK;
+    if (writer->debDataCodec == 0) {
+        QFile source(writer->updatePath);
+        QFile destination(packedPath);
+        if (!source.open(QIODevice::ReadOnly) ||
+            !destination.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+            !copyFile(source, &destination) || !destination.flush())
+            return fail(writer, PEARE_WRITER_IO_ERROR,
+                        QStringLiteral("Could not stage the updated Debian data TAR."));
+    } else {
+        static const char* formats[] = {nullptr, "gzip", "xz", "zstd", "bzip2", "lzma"};
+        static const char* variants[] = {nullptr, "deflate", "crc64", "level-3", "level-9", "level-5"};
+        const QByteArray packedPathUtf8 = packedPath.toUtf8();
+        const QByteArray tarPathUtf8 = writer->updatePath.toUtf8();
+        peare_writer_input_file input{tarPathUtf8.constData(), "data.tar"};
+        peare_writer_handle compressor = nullptr;
+        status = peare_writer_create(&compressor);
+        if (status == PEARE_WRITER_OK)
+            status = peare_writer_create_begin_variant(compressor,
+                formats[writer->debDataCodec], variants[writer->debDataCodec],
+                packedPathUtf8.constData());
+        if (status == PEARE_WRITER_OK)
+            status = peare_writer_add_file(compressor, input.source_path_utf8,
+                                           input.entry_name_utf8);
+        if (status == PEARE_WRITER_OK) status = peare_writer_finish(compressor);
+        QString nestedError;
+        if (status != PEARE_WRITER_OK && compressor)
+            nestedError = QString::fromUtf8(peare_writer_last_error(compressor));
+        if (compressor) peare_writer_destroy(compressor);
+        if (status != PEARE_WRITER_OK)
+            return fail(writer, status, nestedError.isEmpty()
+                ? QStringLiteral("Could not recompress the Debian data TAR.") : nestedError);
+    }
+    for (DebEntry& entry : writer->debUpdateMembers) {
+        if (entry.name == writer->debDataMemberName) {
+            entry.sourcePath = packedPath;
+            break;
+        }
+    }
+    std::vector<QByteArray> memberPaths;
+    std::vector<peare_writer_input_file> members;
+    memberPaths.reserve(writer->debUpdateMembers.size());
+    members.reserve(writer->debUpdateMembers.size());
+    for (const DebEntry& entry : writer->debUpdateMembers)
+        memberPaths.push_back(entry.sourcePath.toUtf8());
+    for (size_t i = 0; i < writer->debUpdateMembers.size(); ++i)
+        members.push_back({memberPaths[i].constData(), writer->debUpdateMembers[i].name.constData()});
+    const QString arPath = writer->debStage->filePath(QStringLiteral("package-updated.ar"));
+    const QByteArray arPathUtf8 = arPath.toUtf8();
+    peare_writer_handle archive = nullptr;
+    status = peare_writer_create(&archive);
+    if (status == PEARE_WRITER_OK)
+        status = peare_writer_add_files_to(archive, arPathUtf8.constData(), "ar", "gnu",
+                                           0, members.data(), members.size());
+    QString nestedError;
+    if (status != PEARE_WRITER_OK && archive)
+        nestedError = QString::fromUtf8(peare_writer_last_error(archive));
+    if (archive) peare_writer_destroy(archive);
+    if (status != PEARE_WRITER_OK)
+        return fail(writer, status, nestedError.isEmpty()
+            ? QStringLiteral("Could not rebuild the Debian ar package.") : nestedError);
+    QFile source(arPath);
+    if (!source.open(QIODevice::ReadOnly))
+        return fail(writer, PEARE_WRITER_IO_ERROR, source.errorString());
+    QSaveFile output(writer->debPackagePath);
+    if (!output.open(QIODevice::WriteOnly))
+        return fail(writer, PEARE_WRITER_IO_ERROR,
+                    QStringLiteral("Could not open the updated Debian package output: ") +
+                        output.errorString());
+    if (!copyFile(source, &output) || !output.commit())
+        return fail(writer, PEARE_WRITER_IO_ERROR,
+                    QStringLiteral("Could not publish the updated Debian package: ") +
+                        output.errorString());
+    writer->debStage.reset();
+    writer->debDataTarInput.reset();
+    writer->debUpdateMembers.clear();
+    writer->debDataMemberName.clear();
+    writer->debPackagePath.clear();
+    writer->debUpdateActive = false;
+    return PEARE_WRITER_OK;
 }
 
 bool debPathConflict(const peare_writer_handle_s* writer, const QString& key,
@@ -5019,6 +5575,447 @@ peare_writer_status writeRpmPackage(peare_writer_handle_s* writer) {
     return PEARE_WRITER_OK;
 }
 
+QByteArray rpmTagStringValue(const std::vector<RpmTag>& tags, quint32 id) {
+    const RpmTag* tag = rpmFindTag(tags, id);
+    std::vector<QByteArray> values;
+    return tag && rpmTagElements(*tag, &values) && !values.empty()
+        ? values.front() : QByteArray();
+}
+
+bool rpmTagUInt32(const std::vector<RpmTag>& tags, quint32 id, quint32* value) {
+    const RpmTag* tag = rpmFindTag(tags, id);
+    if (!tag || tag->type != 4 || tag->count != 1 || tag->value.size() != 4 || !value)
+        return false;
+    *value = qFromBigEndian<quint32>(tag->value.constData());
+    return true;
+}
+
+QByteArray rpmNormalizePath(QByteArray path) {
+    path.replace('\\', '/');
+    while (path.startsWith("./")) path.remove(0, 2);
+    while (path.startsWith('/')) path.remove(0, 1);
+    return path;
+}
+
+bool copyDeviceRange(QIODevice* input, qint64 offset, qint64 size, QIODevice* output) {
+    if (!input || !output || offset < 0 || size < 0 ||
+        offset > input->size() || size > input->size() - offset || !input->seek(offset))
+        return false;
+    std::vector<char> buffer(kChunkSize);
+    while (size) {
+        const qint64 request = qMin<qint64>(size, qint64(buffer.size()));
+        const qint64 count = input->read(buffer.data(), request);
+        if (count != request || !writeAll(output, buffer.data(), count)) return false;
+        size -= count;
+    }
+    return true;
+}
+
+bool loadRpmUpdate(peare_writer_handle_s* writer, QFile* package,
+                   const QString& packagePath, QFile** cpioInput) {
+    if (!writer || !package || !cpioInput || package->size() < 112 || !package->seek(0))
+        return false;
+    QByteArray lead;
+    if (!readAt(package, 0, 96, &lead) ||
+        lead.left(4) != QByteArray::fromHex("edabeedb") ||
+        quint8(lead.at(4)) < 3 || quint8(lead.at(4)) > 4) return false;
+    RpmHeaderDocument signature;
+    if (!rpmParseHeader(package, 96, &signature)) return false;
+    const qint64 mainStart = (signature.end + 7) & ~qint64(7);
+    RpmHeaderDocument main;
+    if (!rpmParseHeader(package, mainStart, &main)) return false;
+    const QByteArray format = rpmTagStringValue(main.tags, 1124).toLower();
+    const QByteArray compressor = rpmTagStringValue(main.tags, 1125).toLower();
+    int codec = -1;
+    if (compressor.isEmpty() || compressor == "none") codec = 0;
+    else if (compressor == "gzip") codec = 1;
+    else if (compressor == "bzip2") codec = 2;
+    else if (compressor == "xz") codec = 3;
+    else if (compressor == "zstd") codec = 4;
+    else if (compressor == "lzma") codec = 5;
+    if ((!format.isEmpty() && format != "cpio") || codec < 0 || main.end >= package->size())
+        return false;
+
+    std::vector<QByteArray> basenames, directories;
+    const RpmTag* basenameTag = rpmFindTag(main.tags, 1117);
+    const RpmTag* directoryTag = rpmFindTag(main.tags, 1118);
+    const RpmTag* directoryIndexTag = rpmFindTag(main.tags, 1116);
+    const RpmTag* fileSizeTag = rpmFindTag(main.tags, 1028);
+    std::vector<QByteArray> indexValues;
+    if (!basenameTag || basenameTag->type != 8 ||
+        !rpmTagElements(*basenameTag, &basenames) ||
+        !directoryTag || directoryTag->type != 8 ||
+        !rpmTagElements(*directoryTag, &directories) ||
+        !directoryIndexTag || directoryIndexTag->type != 4 ||
+        !rpmTagElements(*directoryIndexTag, &indexValues) ||
+        !fileSizeTag || fileSizeTag->type != 4 ||
+        fileSizeTag->count != basenames.size() || indexValues.size() != basenames.size())
+        return false;
+    std::vector<QByteArray> filePaths;
+    filePaths.reserve(basenames.size());
+    for (size_t i = 0; i < basenames.size(); ++i) {
+        if (indexValues[i].size() != 4) return false;
+        const quint32 directoryIndex = qFromBigEndian<quint32>(indexValues[i].constData());
+        if (directoryIndex >= directories.size()) return false;
+        filePaths.push_back(rpmNormalizePath(directories[directoryIndex] + basenames[i]));
+    }
+
+    writer->rpmStage.reset(new (std::nothrow) QTemporaryDir);
+    if (!writer->rpmStage || !writer->rpmStage->isValid()) {
+        writer->rpmStage.reset();
+        return false;
+    }
+    const QString packedPath = writer->rpmStage->filePath(QStringLiteral("payload-packed"));
+    QFile packed(packedPath);
+    if (!packed.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+        !copyDeviceRange(package, main.end, package->size() - main.end, &packed)) return false;
+    packed.close();
+    writer->rpmPayloadInput.reset(new (std::nothrow) QTemporaryFile);
+    if (!writer->rpmPayloadInput || !writer->rpmPayloadInput->open()) return false;
+    QFile packedInput(packedPath);
+    if (!packedInput.open(QIODevice::ReadOnly)) return false;
+    bool decoded = false;
+    switch (codec) {
+    case 0: decoded = copyFile(packedInput, writer->rpmPayloadInput.get()) &&
+                      writer->rpmPayloadInput->flush(); break;
+    case 1: decoded = gunzipToFile(&packedInput, writer->rpmPayloadInput.get()); break;
+    case 2: decoded = bunzip2ToFile(&packedInput, writer->rpmPayloadInput.get()); break;
+    case 3: {
+        QString error;
+        decoded = decompressXzToFile(&packedInput, writer->rpmPayloadInput.get(), &error);
+        break;
+    }
+    case 4: decoded = decompressZstdToFile(&packedInput, writer->rpmPayloadInput.get()); break;
+    case 5: {
+        QString error;
+        decoded = decompressLzmaAloneToFile(&packedInput, writer->rpmPayloadInput.get(), &error);
+        break;
+    }
+    default: break;
+    }
+    if (!decoded) return false;
+    writer->cpioEntries.clear();
+    writer->names.clear();
+    if (loadExistingCpio(writer, writer->rpmPayloadInput.get()) != PEARE_WRITER_OK)
+        return false;
+    QSet<QByteArray> payloadPaths;
+    for (const CpioEntry& entry : writer->cpioEntries)
+        payloadPaths.insert(rpmNormalizePath(entry.name));
+    for (const QByteArray& path : filePaths)
+        if (!payloadPaths.contains(path)) return false;
+    writer->rpmMainTags = std::move(main.tags);
+    writer->rpmOldFilePaths = std::move(filePaths);
+    writer->rpmCodec = codec;
+    writer->rpmPackagePath = packagePath;
+    writer->rpmUpdateActive = true;
+    *cpioInput = writer->rpmPayloadInput.get();
+    return true;
+}
+
+bool isRpmPackageFile(const QString& path) {
+    QFile input(path);
+    if (!input.open(QIODevice::ReadOnly)) return false;
+    peare_writer_handle_s probe;
+    QFile* cpio = nullptr;
+    return loadRpmUpdate(&probe, &input, path, &cpio);
+}
+
+QCryptographicHash::Algorithm rpmDigestAlgorithm(quint32 id) {
+    switch (id) {
+    case 1: return QCryptographicHash::Md5;
+    case 2: return QCryptographicHash::Sha1;
+    case 8: return QCryptographicHash::Sha256;
+    case 9: return QCryptographicHash::Sha384;
+    case 10: return QCryptographicHash::Sha512;
+    default: return QCryptographicHash::Md4;
+    }
+}
+
+bool rpmSupportedDigestAlgorithm(quint32 id) {
+    return id == 1 || id == 2 || id == 8 || id == 9 || id == 10;
+}
+
+bool rpmHashRange(QFile* input, qint64 offset, quint64 size,
+                  QCryptographicHash::Algorithm algorithm, QByteArray* digest) {
+    if (!input || !digest || offset < 0 || offset > input->size() ||
+        size > quint64(input->size() - offset) || !input->seek(offset)) return false;
+    QCryptographicHash hash(algorithm);
+    std::vector<char> buffer(kChunkSize);
+    quint64 remaining = size;
+    while (remaining) {
+        const qint64 request = qint64(std::min<quint64>(remaining, buffer.size()));
+        const qint64 count = input->read(buffer.data(), request);
+        if (count != request) return false;
+        hash.addData(buffer.data(), int(count));
+        remaining -= quint64(count);
+    }
+    *digest = hash.result();
+    return true;
+}
+
+void rpmSetTag(std::vector<RpmTag>* tags, quint32 id, quint32 type,
+               quint32 count, QByteArray value) {
+    RpmTag* existing = rpmFindTag(tags, id);
+    if (existing) {
+        existing->type = type;
+        existing->count = count;
+        existing->value = std::move(value);
+    } else {
+        tags->push_back({id, type, count, std::move(value)});
+    }
+}
+
+QByteArray rpmDefaultElement(quint32 type) {
+    if (type == 1 || type == 2 || type == 7) return QByteArray(1, '\0');
+    if (type == 3) return QByteArray(2, '\0');
+    if (type == 4) return QByteArray(4, '\0');
+    if (type == 5) return QByteArray(8, '\0');
+    if (type == 6 || type == 8 || type == 9) return QByteArray();
+    return QByteArray();
+}
+
+QByteArray rpmEncodeUInt32s(const std::vector<quint32>& values) {
+    QByteArray data;
+    for (quint32 value : values) appendBe32(&data, value);
+    return data;
+}
+
+QByteArray rpmEncodeUInt16s(const std::vector<quint16>& values) {
+    QByteArray data;
+    for (quint16 value : values) appendBe16(&data, value);
+    return data;
+}
+
+bool rpmUpdatedHeader(peare_writer_handle_s* writer, QFile* cpio,
+                      const QString& cpioPath, QByteArray* header) {
+    if (!writer || !cpio || !header || writer->rpmOldFilePaths.empty() ||
+        writer->cpioEntries.size() > UINT32_MAX) return false;
+    std::vector<RpmTag> tags = writer->rpmMainTags;
+    const size_t oldCount = writer->rpmOldFilePaths.size();
+    QHash<QByteArray, size_t> oldIndex;
+    for (size_t i = 0; i < oldCount; ++i) {
+        if (oldIndex.contains(writer->rpmOldFilePaths[i])) return false;
+        oldIndex.insert(writer->rpmOldFilePaths[i], i);
+    }
+    std::vector<QByteArray> newPaths;
+    newPaths.reserve(writer->cpioEntries.size());
+    for (const CpioEntry& entry : writer->cpioEntries)
+        newPaths.push_back(rpmNormalizePath(entry.name));
+
+    for (RpmTag& tag : tags) {
+        if (tag.tag < 1028 || tag.tag >= 1200 || tag.count != oldCount) continue;
+        std::vector<QByteArray> oldValues;
+        if (!rpmTagElements(tag, &oldValues) || oldValues.size() != oldCount) return false;
+        QHash<QByteArray, QByteArray> byPath;
+        for (size_t i = 0; i < oldCount; ++i)
+            byPath.insert(writer->rpmOldFilePaths[i], oldValues[i]);
+        std::vector<QByteArray> reordered;
+        reordered.reserve(newPaths.size());
+        for (const QByteArray& path : newPaths)
+            reordered.push_back(byPath.value(path, rpmDefaultElement(tag.type)));
+        tag.count = quint32(reordered.size());
+        tag.value = tag.type == 6 || tag.type == 8 || tag.type == 9
+            ? rpmJoinStrings(reordered) : QByteArray();
+        if (tag.type != 6 && tag.type != 8 && tag.type != 9)
+            for (const QByteArray& value : reordered) tag.value += value;
+    }
+
+    quint32 digestAlgo = 1;
+    rpmTagUInt32(tags, 5011, &digestAlgo);
+    if (!rpmSupportedDigestAlgorithm(digestAlgo)) return false;
+    const QCryptographicHash::Algorithm algorithm = rpmDigestAlgorithm(digestAlgo);
+    std::vector<quint32> sizes, mtimes, dirIndexes, inodes, flags, verifyFlags;
+    std::vector<quint16> modes;
+    std::vector<QByteArray> digests, basenames, directories, linkTargets, owners, groups;
+    QMap<QByteArray, quint32> directoryMap;
+    quint64 installedSize = 0;
+    for (size_t i = 0; i < writer->cpioEntries.size(); ++i) {
+        const CpioEntry& entry = writer->cpioEntries[i];
+        const QByteArray path = newPaths[i];
+        const int slash = path.lastIndexOf('/');
+        const QByteArray directory = slash < 0 ? QByteArray("/")
+                                               : QByteArray("/") + path.left(slash + 1);
+        const QByteArray basename = slash < 0 ? path : path.mid(slash + 1);
+        auto dir = directoryMap.find(directory);
+        if (dir == directoryMap.end()) {
+            const quint32 index = quint32(directoryMap.size());
+            directoryMap.insert(directory, index);
+            directories.push_back(directory);
+            dir = directoryMap.find(directory);
+        }
+        dirIndexes.push_back(dir.value());
+        basenames.push_back(basename);
+        sizes.push_back(quint32(qMin<quint64>(entry.size, UINT32_MAX)));
+        modes.push_back(quint16(entry.mode & 0xffffu));
+        inodes.push_back(quint32(entry.inode & 0xffffu));
+        mtimes.push_back(quint32(qMin<quint64>(entry.modified, UINT32_MAX)));
+        if ((entry.mode & 0170000u) == 0100000u) installedSize += entry.size;
+        QByteArray digest;
+        if (!rpmHashRange(writer->cpioStage.get(), entry.dataOffset, entry.size,
+                          algorithm, &digest)) return false;
+        digests.push_back(digest.toHex());
+        const bool isSymlink = (entry.mode & 0170000u) == 0120000u;
+        QByteArray link;
+        if (isSymlink && entry.size) {
+            if (!readAt(writer->cpioStage.get(), entry.dataOffset, qint64(entry.size), &link))
+                return false;
+        }
+        linkTargets.push_back(link);
+        const QByteArray oldPath = path;
+        flags.push_back(0);
+        verifyFlags.push_back(0x3f);
+        owners.push_back("root");
+        groups.push_back("root");
+        const size_t old = oldIndex.value(oldPath, std::numeric_limits<size_t>::max());
+        if (old != std::numeric_limits<size_t>::max()) {
+            const auto copyInteger = [&](quint32 id, std::vector<quint32>* output,
+                                         quint32 fallback) {
+                const RpmTag* tag = rpmFindTag(writer->rpmMainTags, id);
+                std::vector<QByteArray> values;
+                if (tag && rpmTagElements(*tag, &values) && old < values.size() &&
+                    values[old].size() == 4)
+                    output->back() = qFromBigEndian<quint32>(values[old].constData());
+                else output->back() = fallback;
+            };
+            copyInteger(1037, &flags, 0);
+            copyInteger(1045, &verifyFlags, 0x3f);
+            const auto copyString = [&](quint32 id, std::vector<QByteArray>* output,
+                                        const QByteArray& fallback) {
+                const RpmTag* tag = rpmFindTag(writer->rpmMainTags, id);
+                std::vector<QByteArray> values;
+                if (tag && rpmTagElements(*tag, &values) && old < values.size())
+                    output->back() = values[old];
+                else output->back() = fallback;
+            };
+            copyString(1039, &owners, "root");
+            copyString(1040, &groups, "root");
+            if (!isSymlink) copyString(1036, &linkTargets, QByteArray());
+        }
+    }
+    if (installedSize > UINT32_MAX) return false;
+    rpmSetTag(&tags, 1009, 4, 1, rpmEncodeUInt32s({quint32(installedSize)}));
+    rpmSetTag(&tags, 1028, 4, quint32(sizes.size()), rpmEncodeUInt32s(sizes));
+    rpmSetTag(&tags, 1030, 3, quint32(modes.size()), rpmEncodeUInt16s(modes));
+    rpmSetTag(&tags, 1033, 3, quint32(inodes.size()), rpmEncodeUInt16s(
+        std::vector<quint16>(inodes.begin(), inodes.end())));
+    rpmSetTag(&tags, 1034, 4, quint32(mtimes.size()), rpmEncodeUInt32s(mtimes));
+    rpmSetTag(&tags, 1035, 8, quint32(digests.size()), rpmJoinStrings(digests));
+    rpmSetTag(&tags, 1036, 8, quint32(linkTargets.size()), rpmJoinStrings(linkTargets));
+    rpmSetTag(&tags, 1037, 4, quint32(flags.size()), rpmEncodeUInt32s(flags));
+    rpmSetTag(&tags, 1039, 8, quint32(owners.size()), rpmJoinStrings(owners));
+    rpmSetTag(&tags, 1040, 8, quint32(groups.size()), rpmJoinStrings(groups));
+    rpmSetTag(&tags, 1045, 4, quint32(verifyFlags.size()), rpmEncodeUInt32s(verifyFlags));
+    rpmSetTag(&tags, 1116, 4, quint32(dirIndexes.size()), rpmEncodeUInt32s(dirIndexes));
+    rpmSetTag(&tags, 1117, 8, quint32(basenames.size()), rpmJoinStrings(basenames));
+    rpmSetTag(&tags, 1118, 8, quint32(directories.size()), rpmJoinStrings(directories));
+    if (rpmFindTag(tags, 5008)) {
+        QByteArray longSizes;
+        for (const CpioEntry& entry : writer->cpioEntries) appendBe64(&longSizes, entry.size);
+        rpmSetTag(&tags, 5008, 5, quint32(writer->cpioEntries.size()), longSizes);
+    }
+    const QByteArray cpioPathUtf8 = cpioPath.toUtf8();
+    const QByteArray payloadPath = writer->rpmStage->filePath(
+        QStringLiteral("payload-updated")).toUtf8();
+    if (writer->rpmCodec == 0) {
+        QFile source(cpioPath);
+        QFile destination(QString::fromUtf8(payloadPath));
+        if (!source.open(QIODevice::ReadOnly) ||
+            !destination.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+            !copyFile(source, &destination) || !destination.flush()) return false;
+    } else {
+        static const char* formats[] = {nullptr, "gzip", "bzip2", "xz", "zstd", "lzma"};
+        static const char* variants[] = {nullptr, "deflate", "level-9", "crc64", "level-3", "level-5"};
+        peare_writer_input_file input{cpioPathUtf8.constData(), "payload.cpio"};
+        peare_writer_handle compressor = nullptr;
+        peare_writer_status status = peare_writer_create(&compressor);
+        if (status == PEARE_WRITER_OK)
+            status = peare_writer_add_files_to(compressor, payloadPath.constData(),
+                formats[writer->rpmCodec], variants[writer->rpmCodec], 0, &input, 1);
+        if (status != PEARE_WRITER_OK) {
+            if (compressor) peare_writer_destroy(compressor);
+            return false;
+        }
+        peare_writer_destroy(compressor);
+    }
+    QFile payload(QString::fromUtf8(payloadPath));
+    QFile rawCpio(cpioPath);
+    if (!payload.open(QIODevice::ReadOnly) || !rawCpio.open(QIODevice::ReadOnly) ||
+        payload.size() < 0 || rawCpio.size() > UINT32_MAX) return false;
+    rpmSetTag(&tags, 1046, 4, 1, rpmEncodeUInt32s({quint32(rawCpio.size())}));
+    const RpmTag* digestTag = rpmFindTag(tags, 5093);
+    quint32 payloadDigestAlgo = 8;
+    if (digestTag && digestTag->type == 4 && digestTag->count == 1 &&
+        digestTag->value.size() == 4)
+        payloadDigestAlgo = qFromBigEndian<quint32>(digestTag->value.constData());
+    if (rpmFindTag(tags, 5092)) {
+        if (!rpmSupportedDigestAlgorithm(payloadDigestAlgo)) return false;
+        QByteArray payloadDigest;
+        if (!rpmHashRange(&payload, 0, quint64(payload.size()),
+                          rpmDigestAlgorithm(payloadDigestAlgo), &payloadDigest)) return false;
+        rpmSetTag(&tags, 5092, 8, 1, rpmJoinStrings({payloadDigest.toHex()}));
+    }
+    *header = rpmHeader(std::move(tags));
+    return !header->isEmpty();
+}
+
+peare_writer_status writeRpmUpdatePackage(peare_writer_handle_s* writer) {
+    if (!writer || !writer->rpmUpdateActive || !writer->rpmStage ||
+        writer->rpmPackagePath.isEmpty())
+        return fail(writer, PEARE_WRITER_INTERNAL_ERROR,
+                    QStringLiteral("RPM update state is incomplete."));
+    const QString cpioPath = writer->updatePath;
+    QFile cpio(cpioPath);
+    QByteArray mainHeader;
+    if (!cpio.open(QIODevice::ReadOnly) ||
+        !rpmUpdatedHeader(writer, &cpio, cpioPath, &mainHeader))
+        return fail(writer, PEARE_WRITER_IO_ERROR,
+                    QStringLiteral("Could not update RPM file metadata."));
+    const QString payloadPath = writer->rpmStage->filePath(QStringLiteral("payload-updated"));
+    QFile payload(payloadPath);
+    QFile original(writer->rpmPackagePath);
+    QByteArray lead;
+    if (!payload.open(QIODevice::ReadOnly) || !original.open(QIODevice::ReadOnly) ||
+        !readAt(&original, 0, 96, &lead))
+        return fail(writer, PEARE_WRITER_IO_ERROR,
+                    QStringLiteral("Could not open RPM package data for publishing."));
+    original.close();
+    QCryptographicHash md5(QCryptographicHash::Md5);
+    md5.addData(mainHeader);
+    if (!md5.addData(&payload) || payload.size() > UINT32_MAX ||
+        quint64(mainHeader.size()) + quint64(payload.size()) > UINT32_MAX)
+        return fail(writer, PEARE_WRITER_UNSUPPORTED_LIMIT,
+                    QStringLiteral("The updated RPM exceeds the supported size."));
+    const quint32 signedSize = quint32(mainHeader.size() + payload.size());
+    std::vector<RpmTag> signatureTags;
+    signatureTags.push_back(rpmInt32Tag(1000, {signedSize}));
+    signatureTags.push_back({1004, 7, 16, md5.result()});
+    QByteArray signature = rpmHeader(std::move(signatureTags));
+    while (signature.size() % 8) signature.append('\0');
+    payload.seek(0);
+    QSaveFile output(writer->rpmPackagePath);
+    if (!output.open(QIODevice::WriteOnly) || !writeAll(&output, lead.constData(), lead.size()) ||
+        !writeAll(&output, signature.constData(), signature.size()) ||
+        !writeAll(&output, mainHeader.constData(), mainHeader.size()) ||
+        !copyFile(payload, &output) || !output.commit())
+        return fail(writer, PEARE_WRITER_IO_ERROR,
+                    QStringLiteral("Could not publish the updated RPM package: ") +
+                        output.errorString());
+    writer->rpmStage.reset();
+    writer->rpmPayloadInput.reset();
+    writer->rpmMainTags.clear();
+    writer->rpmOldFilePaths.clear();
+    writer->rpmPackagePath.clear();
+    writer->rpmUpdateActive = false;
+    writer->active = false;
+    writer->updateMode = false;
+    writer->archiveDirty = false;
+    writer->mode = peare_writer_handle_s::Mode::None;
+    writer->updatePath.clear();
+    writer->error.clear();
+    writer->errorUtf8.clear();
+    return PEARE_WRITER_OK;
+}
+
 bool xarHashFile(const QString& path, QCryptographicHash::Algorithm algorithm,
                  QByteArray* digest, quint64* size = nullptr) {
     QFile file(path);
@@ -5133,6 +6130,289 @@ bool xarCompressFile(const QString& sourcePath, const QString& destinationPath,
     return ok;
 }
 
+struct XarDataRecord {
+    quint64 offset = 0;
+    quint64 length = 0;
+    quint64 size = 0;
+    QString encoding;
+    QString archivedStyle;
+    QByteArray archivedDigest;
+    QString extractedStyle;
+    QByteArray extractedDigest;
+    bool valid = false;
+};
+
+bool xarPathConflict(const std::vector<XarEntry>& entries, const QByteArray& name,
+                     bool directory);
+
+bool xarDigestMatches(const QString& style, const QByteArray& expected,
+                      const QString& path) {
+    QCryptographicHash::Algorithm algorithm;
+    if (style == QLatin1String("sha1")) algorithm = QCryptographicHash::Sha1;
+    else if (style == QLatin1String("sha256")) algorithm = QCryptographicHash::Sha256;
+    else if (style == QLatin1String("md5")) algorithm = QCryptographicHash::Md5;
+    else return false;
+    QByteArray actual;
+    if (!xarHashFile(path, algorithm, &actual)) return false;
+    return actual.toHex().compare(expected.trimmed(), Qt::CaseInsensitive) == 0;
+}
+
+bool xarParseData(QXmlStreamReader* xml, XarDataRecord* data) {
+    while (xml->readNextStartElement()) {
+        const QString tag = xml->name().toString();
+        if (tag == QLatin1String("offset") || tag == QLatin1String("length") ||
+            tag == QLatin1String("size")) {
+            bool ok = false;
+            const quint64 value = xml->readElementText().trimmed().toULongLong(&ok);
+            if (!ok) return false;
+            if (tag == QLatin1String("offset")) data->offset = value;
+            else if (tag == QLatin1String("length")) data->length = value;
+            else data->size = value;
+        } else if (tag == QLatin1String("encoding")) {
+            data->encoding = xml->attributes().value(QStringLiteral("style")).toString();
+            xml->skipCurrentElement();
+        } else if (tag == QLatin1String("archived-checksum")) {
+            data->archivedStyle = xml->attributes().value(QStringLiteral("style")).toString();
+            data->archivedDigest = xml->readElementText().toLatin1().trimmed();
+        } else if (tag == QLatin1String("extracted-checksum")) {
+            data->extractedStyle = xml->attributes().value(QStringLiteral("style")).toString();
+            data->extractedDigest = xml->readElementText().toLatin1().trimmed();
+        } else {
+            xml->skipCurrentElement();
+        }
+    }
+    data->valid = !xml->hasError();
+    return data->valid;
+}
+
+bool xarDecodeMember(const QString& packedPath, const QString& rawPath, int codec,
+                     quint64 expectedSize) {
+    QFile input(packedPath);
+    QFile output(rawPath);
+    if (!input.open(QIODevice::ReadOnly) ||
+        !output.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+    if (codec == 0) {
+        if (!copyFile(input, &output)) return false;
+    } else if (codec == 2) {
+        if (!bunzip2ToFile(&input, &output)) return false;
+    } else {
+        mz_stream stream = {};
+        if (mz_inflateInit(&stream) != MZ_OK) return false;
+        QByteArray inputBuffer(int(kChunkSize), '\0');
+        QByteArray outputBuffer(int(kChunkSize), '\0');
+        bool finished = false;
+        bool ok = true;
+        while (!finished && ok) {
+            if (!stream.avail_in) {
+                const qint64 count = input.read(inputBuffer.data(), inputBuffer.size());
+                if (count <= 0) { ok = false; break; }
+                stream.next_in = reinterpret_cast<const unsigned char*>(inputBuffer.constData());
+                stream.avail_in = mz_uint(count);
+            }
+            stream.next_out = reinterpret_cast<unsigned char*>(outputBuffer.data());
+            stream.avail_out = mz_uint(outputBuffer.size());
+            const int status = mz_inflate(&stream, MZ_NO_FLUSH);
+            const qint64 produced = outputBuffer.size() - stream.avail_out;
+            if (produced && !writeAll(&output, outputBuffer.constData(), produced)) ok = false;
+            if (status == MZ_STREAM_END) finished = true;
+            else if (status != MZ_OK) ok = false;
+        }
+        const bool exactEnd = finished && !stream.avail_in && input.atEnd();
+        mz_inflateEnd(&stream);
+        if (!ok || !exactEnd) return false;
+    }
+    return output.flush() && output.size() >= 0 && quint64(output.size()) == expectedSize;
+}
+
+bool xarReadFileNode(QXmlStreamReader* xml, const QString& parentPath,
+                     QFile* archive, quint64 heapStart, quint64 heapSize,
+                     QTemporaryDir* stage, std::vector<XarEntry>* entries,
+                     QSet<QString>* names) {
+    QString name;
+    QString type;
+    QString linkTarget;
+    XarDataRecord data;
+    bool hasChild = false;
+    bool hasData = false;
+    while (xml->readNextStartElement()) {
+        const QString tag = xml->name().toString();
+        if (tag == QLatin1String("name")) {
+            name = xml->readElementText(QXmlStreamReader::IncludeChildElements);
+        } else if (tag == QLatin1String("type")) {
+            type = xml->readElementText().trimmed();
+        } else if (tag == QLatin1String("link")) {
+            linkTarget = xml->readElementText(QXmlStreamReader::IncludeChildElements);
+        } else if (tag == QLatin1String("data")) {
+            hasData = true;
+            if (!xarParseData(xml, &data)) return false;
+        } else if (tag == QLatin1String("file")) {
+            if (name.isEmpty()) return false;
+            hasChild = true;
+            const QString path = parentPath.isEmpty() ? name : parentPath + QLatin1Char('/') + name;
+            if (!xarReadFileNode(xml, path, archive, heapStart, heapSize,
+                                 stage, entries, names)) return false;
+        } else {
+            xml->skipCurrentElement();
+        }
+    }
+    if (xml->hasError() || name.isEmpty()) return false;
+    const QString path = parentPath.isEmpty() ? name : parentPath + QLatin1Char('/') + name;
+    QByteArray normalized;
+    const bool directory = type == QLatin1String("directory");
+    const bool symlink = type == QLatin1String("symlink");
+    if ((type != QLatin1String("file") && !directory && !symlink) ||
+        !normalizedEntryName(path.toUtf8().constData(), directory, &normalized)) return false;
+    if (directory) {
+        if (data.valid || xarPathConflict(*entries, normalized, true)) return false;
+        XarEntry entry;
+        entry.name = normalized;
+        entry.directory = true;
+        entries->push_back(std::move(entry));
+        names->insert(path);
+        return true;
+    }
+    if (symlink) {
+        if (hasData || linkTarget.isEmpty() ||
+            xarPathConflict(*entries, normalized, false)) return false;
+        XarEntry entry;
+        entry.name = normalized;
+        entry.symlink = true;
+        entry.linkTarget = linkTarget;
+        entries->push_back(std::move(entry));
+        names->insert(path);
+        return true;
+    }
+    if (hasChild || (hasData && !data.valid) || data.offset > heapSize ||
+        data.length > heapSize - data.offset ||
+        data.length > quint64(std::numeric_limits<qint64>::max()) ||
+        data.size > quint64(std::numeric_limits<qint64>::max()) ||
+        xarPathConflict(*entries, normalized, false)) return false;
+    int codec = !hasData || data.encoding.isEmpty() || data.encoding == QLatin1String("application/octet-stream")
+        ? 0 : data.encoding == QLatin1String("application/x-gzip") ? 1
+        : data.encoding == QLatin1String("application/x-bzip2") ? 2 : -1;
+    if (codec < 0 || (codec == 0 && hasData && data.length != data.size) ||
+        (!hasData && (data.offset || data.length || data.size))) return false;
+    const QString packedPath = stage->filePath(QStringLiteral("packed-%1").arg(entries->size()));
+    QFile packed(packedPath);
+    if (!packed.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+    if (hasData) {
+        if (!archive->seek(qint64(heapStart + data.offset))) return false;
+        std::vector<char> buffer(kChunkSize);
+        quint64 remaining = data.length;
+        while (remaining) {
+            const qint64 request = qint64(std::min<quint64>(remaining, buffer.size()));
+            const qint64 count = archive->read(buffer.data(), request);
+            if (count != request || !writeAll(&packed, buffer.data(), count)) return false;
+            remaining -= quint64(count);
+        }
+    }
+    if (!packed.flush()) return false;
+    packed.close();
+    const QString rawPath = stage->filePath(QStringLiteral("raw-%1").arg(entries->size()));
+    if (!hasData) {
+        QFile raw(rawPath);
+        if (!raw.open(QIODevice::WriteOnly | QIODevice::Truncate) || !raw.flush()) return false;
+    }
+    if (hasData && !data.archivedDigest.isEmpty() &&
+        !xarDigestMatches(data.archivedStyle, data.archivedDigest, packedPath)) return false;
+    if (hasData && !xarDecodeMember(packedPath, rawPath, codec, data.size)) return false;
+    if (hasData && !data.extractedDigest.isEmpty() &&
+        !xarDigestMatches(data.extractedStyle, data.extractedDigest, rawPath)) return false;
+    QByteArray archivedDigest;
+    QByteArray extractedDigest;
+    quint64 packedSize = 0;
+    quint64 unpackedSize = 0;
+    if (!xarHashFile(packedPath, QCryptographicHash::Sha256, &archivedDigest, &packedSize) ||
+        !xarHashFile(rawPath, QCryptographicHash::Sha256, &extractedDigest, &unpackedSize)) return false;
+    XarEntry entry;
+    entry.stagedPath = packedPath;
+    entry.name = normalized;
+    entry.archivedDigest = archivedDigest;
+    entry.extractedDigest = extractedDigest;
+    entry.packedSize = packedSize;
+    entry.unpackedSize = unpackedSize;
+    entry.codec = codec;
+    entries->push_back(std::move(entry));
+    names->insert(path);
+    return true;
+}
+
+peare_writer_status loadExistingXar(peare_writer_handle_s* writer, QFile* input) {
+    if (!writer || !input || !input->seek(0)) return PEARE_WRITER_INVALID_ARGUMENT;
+    writer->xarEntries.clear();
+    writer->names.clear();
+    QByteArray header = input->read(28);
+    if (header.size() != 28 || header.left(4) != QByteArrayLiteral("xar!"))
+        return PEARE_WRITER_INVALID_ARGUMENT;
+    const quint16 headerSize = qFromBigEndian<quint16>(
+        reinterpret_cast<const uchar*>(header.constData() + 4));
+    const quint16 version = qFromBigEndian<quint16>(
+        reinterpret_cast<const uchar*>(header.constData() + 6));
+    const quint64 compressedSize = qFromBigEndian<quint64>(
+        reinterpret_cast<const uchar*>(header.constData() + 8));
+    const quint64 expandedSize = qFromBigEndian<quint64>(
+        reinterpret_cast<const uchar*>(header.constData() + 16));
+    const quint32 checksumAlgorithm = qFromBigEndian<quint32>(
+        reinterpret_cast<const uchar*>(header.constData() + 24));
+    if (headerSize != 28 || version != 1 || checksumAlgorithm != 1 ||
+        compressedSize > quint64(INT_MAX) || expandedSize > 256ull * 1024 * 1024 ||
+        expandedSize > quint64(INT_MAX) ||
+        quint64(input->size()) < quint64(headerSize) + compressedSize + 20) return PEARE_WRITER_INVALID_ARGUMENT;
+    const QByteArray compressed = input->read(qint64(compressedSize));
+    if (compressed.size() != qint64(compressedSize)) return PEARE_WRITER_INVALID_ARGUMENT;
+    QByteArray toc(int(expandedSize), Qt::Uninitialized);
+    mz_ulong actualSize = mz_ulong(expandedSize);
+    if (mz_uncompress(reinterpret_cast<unsigned char*>(toc.data()), &actualSize,
+                      reinterpret_cast<const unsigned char*>(compressed.constData()),
+                      mz_ulong(compressed.size())) != MZ_OK || actualSize != expandedSize)
+        return PEARE_WRITER_INVALID_ARGUMENT;
+    const quint64 heapStart = quint64(headerSize) + compressedSize;
+    const quint64 heapSize = quint64(input->size()) - heapStart;
+    const QByteArray storedTocDigest = input->read(20);
+    const QByteArray calculatedTocDigest = QCryptographicHash::hash(
+        compressed, QCryptographicHash::Sha1);
+    if (storedTocDigest != calculatedTocDigest) return PEARE_WRITER_INVALID_ARGUMENT;
+    writer->xarStage.reset(new (std::nothrow) QTemporaryDir);
+    if (!writer->xarStage || !writer->xarStage->isValid()) {
+        writer->xarStage.reset();
+        return PEARE_WRITER_IO_ERROR;
+    }
+    QXmlStreamReader xml(toc);
+    if (!xml.readNextStartElement() || xml.name() != QLatin1String("xar") ||
+        !xml.readNextStartElement() || xml.name() != QLatin1String("toc"))
+        return PEARE_WRITER_INVALID_ARGUMENT;
+    bool checksumFound = false;
+    while (xml.readNextStartElement()) {
+        const QString tag = xml.name().toString();
+        if (tag == QLatin1String("checksum")) {
+            const QString style = xml.attributes().value(QStringLiteral("style")).toString();
+            quint64 offset = std::numeric_limits<quint64>::max();
+            quint64 size = std::numeric_limits<quint64>::max();
+            while (xml.readNextStartElement()) {
+                const QString child = xml.name().toString();
+                if (child == QLatin1String("offset") || child == QLatin1String("size")) {
+                    bool ok = false;
+                    const quint64 value = xml.readElementText().trimmed().toULongLong(&ok);
+                    if (!ok) return PEARE_WRITER_INVALID_ARGUMENT;
+                    if (child == QLatin1String("offset")) offset = value;
+                    else size = value;
+                } else xml.skipCurrentElement();
+            }
+            if (xml.hasError() || (style != QLatin1String("sha1")) || offset != 0 || size != 20)
+                return PEARE_WRITER_INVALID_ARGUMENT;
+            checksumFound = true;
+        } else if (tag == QLatin1String("file")) {
+            if (writer->xarEntries.size() >= kMaxZipEntries ||
+                !xarReadFileNode(&xml, QString(), input, heapStart, heapSize,
+                                 writer->xarStage.get(), &writer->xarEntries,
+                                 &writer->names)) return PEARE_WRITER_INVALID_ARGUMENT;
+        } else xml.skipCurrentElement();
+    }
+    if (xml.hasError() || !checksumFound) return PEARE_WRITER_INVALID_ARGUMENT;
+    writer->xarCodec = 0;
+    return PEARE_WRITER_OK;
+}
+
 bool xarInsertEntry(XarNode* root, std::vector<XarEntry>* entries, int index,
                     QString* error) {
     QString path = QString::fromUtf8(entries->at(size_t(index)).name);
@@ -5184,6 +6464,17 @@ bool isoPathConflict(const std::vector<IsoEntry>& entries, QByteArray name,
     return false;
 }
 
+bool loadIsoUpdateEntries(const QString& path,
+                          std::vector<peare::writer::IsoImageEntry>* entries) {
+    if (!peare::writer::IsoImageWriter::readEntries(path, entries, nullptr)) return false;
+    for (const peare::writer::IsoImageEntry& entry : *entries) {
+        QByteArray encoded;
+        if (!normalizedEntryName(entry.path.toUtf8().constData(), entry.directory,
+                                 &encoded)) return false;
+    }
+    return true;
+}
+
 void xarWriteNode(QXmlStreamWriter* xml, const XarNode& node,
                   const std::vector<XarEntry>& entries, int codec) {
     xml->writeStartElement(QStringLiteral("file"));
@@ -5192,18 +6483,25 @@ void xarWriteNode(QXmlStreamWriter* xml, const XarNode& node,
         ? &entries.at(size_t(node.entryIndex)) : nullptr;
     const bool directory = !node.children.empty() || (entry && entry->directory);
     xml->writeTextElement(QStringLiteral("type"), directory
-        ? QStringLiteral("directory") : QStringLiteral("file"));
+        ? QStringLiteral("directory") : entry && entry->symlink
+            ? QStringLiteral("symlink") : QStringLiteral("file"));
     if (directory) {
         for (auto it = node.children.begin(); it != node.children.end(); ++it)
             xarWriteNode(xml, it->second, entries, codec);
+    } else if (entry && entry->symlink) {
+        xml->writeStartElement(QStringLiteral("link"));
+        xml->writeAttribute(QStringLiteral("type"), QStringLiteral("file"));
+        xml->writeCharacters(entry->linkTarget);
+        xml->writeEndElement();
     } else if (entry) {
         xml->writeStartElement(QStringLiteral("data"));
         xml->writeTextElement(QStringLiteral("length"), QString::number(entry->packedSize));
         xml->writeTextElement(QStringLiteral("offset"), QString::number(entry->offset));
         xml->writeTextElement(QStringLiteral("size"), QString::number(entry->unpackedSize));
+        const int entryCodec = entry->codec >= 0 ? entry->codec : codec;
         xml->writeEmptyElement(QStringLiteral("encoding"));
-        xml->writeAttribute(QStringLiteral("style"), codec == 1
-            ? QStringLiteral("application/x-gzip") : codec == 2
+        xml->writeAttribute(QStringLiteral("style"), entryCodec == 1
+            ? QStringLiteral("application/x-gzip") : entryCodec == 2
                 ? QStringLiteral("application/x-bzip2")
                 : QStringLiteral("application/octet-stream"));
         xml->writeStartElement(QStringLiteral("archived-checksum"));
@@ -5230,7 +6528,7 @@ peare_writer_status writeXarArchive(peare_writer_handle_s* writer) {
             return fail(writer, PEARE_WRITER_DUPLICATE_ENTRY, treeError);
     quint64 offset = 20;
     for (XarEntry& entry : writer->xarEntries) {
-        if (entry.directory) continue;
+        if (entry.directory || entry.symlink) continue;
         if (entry.packedSize > std::numeric_limits<quint64>::max() - offset)
             return fail(writer, PEARE_WRITER_IO_ERROR,
                         QStringLiteral("The XAR heap exceeds the supported size."));
@@ -5294,7 +6592,7 @@ peare_writer_status writeXarArchive(peare_writer_handle_s* writer) {
         !writeAll(writer->output.get(), tocDigest.constData(), tocDigest.size()))
         return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
     for (const XarEntry& entry : writer->xarEntries) {
-        if (entry.directory) continue;
+        if (entry.directory || entry.symlink) continue;
         QFile packed(entry.stagedPath);
         if (!packed.open(QIODevice::ReadOnly) || !copyFile(packed, writer->output.get()))
             return fail(writer, PEARE_WRITER_IO_ERROR, packed.errorString());
@@ -5917,9 +7215,6 @@ peare_writer_status addFilesToImpl(
              std::strcmp(formatIdUtf8, "vmdk") == 0 ||
              std::strcmp(formatIdUtf8, "raw-disk") == 0 ||
              std::strcmp(formatIdUtf8, "floppy") == 0);
-        if (createNew && std::strcmp(formatIdUtf8, "uuencode") == 0 && fileCount != 1)
-            return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
-                        QStringLiteral("UUencode requires exactly one input file."), false);
         if (createNew && std::strcmp(formatIdUtf8, "ihex") == 0 && fileCount != 1)
             return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                         QStringLiteral("Intel HEX requires exactly one input file."), false);
@@ -6056,7 +7351,7 @@ size_t peare_writer_create_variant_count(const char* formatIdUtf8) {
     if (std::strcmp(formatIdUtf8, "xar") == 0) return 3;
     if (std::strcmp(formatIdUtf8, "iso") == 0) return 1;
     if (std::strcmp(formatIdUtf8, "unix-compress") == 0) return 16;
-    if (std::strcmp(formatIdUtf8, "tar") == 0) return 1;
+    if (std::strcmp(formatIdUtf8, "tar") == 0) return 2;
     if (std::strcmp(formatIdUtf8, "tar-gzip") == 0) return 1;
     if (std::strcmp(formatIdUtf8, "tar-bzip2") == 0) return 9;
     if (std::strcmp(formatIdUtf8, "tar-zstd") == 0) return 27;
@@ -6071,7 +7366,7 @@ size_t peare_writer_create_variant_count(const char* formatIdUtf8) {
     if (std::strcmp(formatIdUtf8, "raw-disk") == 0) return 2;
     if (std::strcmp(formatIdUtf8, "vhd") == 0) return 2;
     if (std::strcmp(formatIdUtf8, "vhdx") == 0) return 4;
-    return std::strcmp(formatIdUtf8, "vmdk") == 0 ? 2 : 0;
+    return std::strcmp(formatIdUtf8, "vmdk") == 0 ? 5 : 0;
 }
 
 peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
@@ -6199,7 +7494,9 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
         {"bzip2", "BZIP2"}, {"xz", "XZ"},
         {"zstd", "Zstandard"}, {"lzma", "LZMA-alone"}
     };
-    static const peare_writer_variant tarVariants[] = { {"ustar", "USTAR"} };
+    static const peare_writer_variant tarVariants[] = {
+        {"ustar", "USTAR"}, {"v7", "V7 TAR"}
+    };
     static const peare_writer_variant cpioVariants[] = {
         {"newc", "SVR4 newc"}, {"crc", "SVR4 CRC"},
         {"odc", "POSIX odc"}, {"afio-large", "afio large ASCII"},
@@ -6229,7 +7526,10 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
     };
     static const peare_writer_variant vmdkVariants[] = {
         {"monolithic-sparse", "Monolithic sparse"},
-        {"two-gb-sparse", "Split sparse (2 GiB extents)"}
+        {"two-gb-sparse", "Split sparse (2 GiB extents)"},
+        {"stream-optimized", "Stream-optimized compressed"},
+        {"monolithic-flat", "Monolithic flat"},
+        {"two-gb-flat", "Split flat (2 GiB extents)"}
     };
     static const peare_writer_variant floppyVariants[] = {
         {"160k", "160 KiB (40x1x8)"}, {"180k", "180 KiB (40x1x9)"},
@@ -6300,8 +7600,8 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
         *outVariant = unixCompressVariants[index];
         return PEARE_WRITER_OK;
     }
-    if (std::strcmp(formatIdUtf8, "tar") == 0 && index == 0) {
-        *outVariant = tarVariants[0];
+    if (std::strcmp(formatIdUtf8, "tar") == 0 && index < 2) {
+        *outVariant = tarVariants[index];
         return PEARE_WRITER_OK;
     }
     if (std::strcmp(formatIdUtf8, "tar-gzip") == 0 && index == 0) {
@@ -6356,7 +7656,7 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
         *outVariant = vhdxVariants[index];
         return PEARE_WRITER_OK;
     }
-    if (std::strcmp(formatIdUtf8, "vmdk") == 0 && index < 2) {
+    if (std::strcmp(formatIdUtf8, "vmdk") == 0 && index < 5) {
         *outVariant = vmdkVariants[index];
         return PEARE_WRITER_OK;
     }
@@ -7048,6 +8348,10 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
     if (gzipWrappedTar && variant && std::strcmp(variant, "ustar") != 0)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("The requested TAR variant is not supported."), false);
+    if (std::strcmp(formatIdUtf8, "tar") == 0 && variant &&
+        std::strcmp(variant, "ustar") != 0 && std::strcmp(variant, "v7") != 0)
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("The requested TAR variant is not supported."), false);
     int bzip2Level = 9;
     if (bzip2WrappedTar && variant) {
         if (std::strlen(variant) != 7 || std::strncmp(variant, "level-", 6) != 0 ||
@@ -7138,6 +8442,8 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
         writer->unixCompressWrappedTar = false;
         writer->xzWrappedTar = false;
         writer->lzmaWrappedTar = false;
+        writer->tarV7 = std::strcmp(formatIdUtf8, "tar") == 0 && variant &&
+            std::strcmp(variant, "v7") == 0;
         writer->unixCompressPayloadWritten = false;
         writer->archiveComment.clear();
         if (gzipWrappedTar) {
@@ -7235,6 +8541,10 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer);
 int peare_writer_can_add_files(const char* containerPathUtf8) {
     if (!containerPathUtf8 || !*containerPathUtf8) return 0;
     try {
+        if (isRpmPackageFile(QString::fromUtf8(containerPathUtf8))) return 1;
+        if (isDebPackageFile(QString::fromUtf8(containerPathUtf8))) return 1;
+        std::vector<peare::writer::IsoImageEntry> isoEntries;
+        if (loadIsoUpdateEntries(QString::fromUtf8(containerPathUtf8), &isoEntries)) return 1;
         peare_writer_handle_s probe;
         QFile input(QString::fromUtf8(containerPathUtf8));
         if (!input.open(QIODevice::ReadOnly)) return 0;
@@ -7285,6 +8595,12 @@ int peare_writer_can_add_files(const char* containerPathUtf8) {
         probe.arEntries.clear();
         probe.names.clear();
         if (loadExistingWad(&probe, &input) == PEARE_WRITER_OK) return 1;
+        probe.wadEntries.clear();
+        probe.names.clear();
+        if (loadExistingXar(&probe, &input) == PEARE_WRITER_OK) return 1;
+        QTemporaryDir uueStage;
+        std::vector<UueEntry> uueEntries;
+        if (decodeUueArchive(&input, &uueStage, &uueEntries)) return 1;
         return peare::writer::DiskImageUpdate::canUpdate(QString::fromUtf8(containerPathUtf8));
     } catch (...) {
         return 0;
@@ -7348,6 +8664,19 @@ peare_writer_status peare_writer_get_update_capabilities(
                                 PEARE_WRITER_CAP_RENAME_ENTRY |
                                 PEARE_WRITER_CAP_DELETE_ENTRY;
         };
+        if (isRpmPackageFile(QString::fromUtf8(containerPathUtf8))) {
+            setArchiveCapabilities();
+            return PEARE_WRITER_OK;
+        }
+        if (isDebPackageFile(QString::fromUtf8(containerPathUtf8))) {
+            setArchiveCapabilities();
+            return PEARE_WRITER_OK;
+        }
+        std::vector<peare::writer::IsoImageEntry> isoEntries;
+        if (loadIsoUpdateEntries(QString::fromUtf8(containerPathUtf8), &isoEntries)) {
+            setArchiveCapabilities();
+            return PEARE_WRITER_OK;
+        }
         if (loadExistingZip(&probe, &input) == PEARE_WRITER_OK) {
             setArchiveCapabilities();
             return PEARE_WRITER_OK;
@@ -7431,6 +8760,16 @@ peare_writer_status peare_writer_get_update_capabilities(
             *outCapabilities |= PEARE_WRITER_CAP_UPDATE_FILE |
                                 PEARE_WRITER_CAP_RENAME_ENTRY |
                                 PEARE_WRITER_CAP_DELETE_ENTRY;
+        probe.wadEntries.clear();
+        probe.names.clear();
+        if (loadExistingXar(&probe, &input) == PEARE_WRITER_OK)
+            setArchiveCapabilities();
+        QTemporaryDir uueStage;
+        std::vector<UueEntry> uueEntries;
+        if (decodeUueArchive(&input, &uueStage, &uueEntries))
+            *outCapabilities |= PEARE_WRITER_CAP_UPDATE_FILE |
+                                PEARE_WRITER_CAP_RENAME_ENTRY |
+                                PEARE_WRITER_CAP_DELETE_ENTRY;
     } catch (const std::bad_alloc&) {
         return PEARE_WRITER_ALLOCATION_FAILED;
     } catch (...) {
@@ -7488,6 +8827,26 @@ peare_writer_status peare_writer_add_files_begin(peare_writer_handle writer,
         QFile physicalInput(QString::fromUtf8(containerPathUtf8));
         if (!physicalInput.open(QIODevice::ReadOnly))
             return fail(writer, PEARE_WRITER_IO_ERROR, physicalInput.errorString(), false);
+        writer->uueStage.reset(new (std::nothrow) QTemporaryDir);
+        if (!writer->uueStage || !writer->uueStage->isValid()) {
+            writer->uueStage.reset();
+            return fail(writer, PEARE_WRITER_IO_ERROR,
+                        QStringLiteral("Could not allocate UUencode update staging."), false);
+        }
+        if (decodeUueArchive(&physicalInput, writer->uueStage.get(), &writer->uueEntries)) {
+            writer->updatePath = QString::fromUtf8(containerPathUtf8);
+            writer->names.clear();
+            for (const UueEntry& entry : writer->uueEntries)
+                writer->names.insert(QString::fromLocal8Bit(entry.name));
+            writer->active = true;
+            writer->updateMode = true;
+            writer->archiveDirty = false;
+            writer->mode = peare_writer_handle_s::Mode::UuencodeUpdate;
+            physicalInput.close();
+            return PEARE_WRITER_OK;
+        }
+        writer->uueStage.reset();
+        writer->uueEntries.clear();
         QFile* input = &physicalInput;
         writer->tarGzipInput.reset();
         writer->tarBzip2Input.reset();
@@ -7501,8 +8860,55 @@ peare_writer_status peare_writer_add_files_begin(peare_writer_handle writer,
         writer->unixCompressWrappedTar = false;
         writer->xzWrappedTar = false;
         writer->lzmaWrappedTar = false;
-        peare_writer_status parsed = loadExistingZip(writer, input);
+        writer->tarV7 = false;
+        std::vector<peare::writer::IsoImageEntry> isoEntries;
+        if (loadIsoUpdateEntries(QString::fromUtf8(containerPathUtf8), &isoEntries)) {
+            writer->isoEntries.clear();
+            writer->names.clear();
+            writer->isoStage.reset(new (std::nothrow) QTemporaryDir);
+            if (!writer->isoStage || !writer->isoStage->isValid()) {
+                writer->isoStage.reset();
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            QStringLiteral("Could not allocate ISO update staging."), false);
+            }
+            for (const peare::writer::IsoImageEntry& item : isoEntries) {
+                QByteArray encoded;
+                normalizedEntryName(item.path.toUtf8().constData(), item.directory,
+                                    &encoded);
+                if (item.directory && encoded.endsWith('/')) encoded.chop(1);
+                IsoEntry entry;
+                entry.name = encoded;
+                entry.directory = item.directory;
+                entry.sourcePath = item.sourcePath;
+                entry.sourceOffset = item.sourceOffset;
+                entry.sourceSize = item.sourceSize;
+                entry.sourceIsRange = item.sourceIsRange;
+                if (!item.directory) entry.sourcePath = QString::fromUtf8(containerPathUtf8);
+                writer->isoEntries.push_back(std::move(entry));
+                writer->names.insert(QString::fromUtf8(encoded));
+            }
+            writer->updatePath = QString::fromUtf8(containerPathUtf8);
+            writer->active = true;
+            writer->updateMode = true;
+            writer->archiveDirty = false;
+            writer->mode = peare_writer_handle_s::Mode::IsoUpdate;
+            physicalInput.close();
+            return PEARE_WRITER_OK;
+        }
         auto mode = peare_writer_handle_s::Mode::ZipUpdate;
+        peare_writer_status parsed = PEARE_WRITER_INVALID_ARGUMENT;
+        if (isRpmPackageFile(QString::fromUtf8(containerPathUtf8)) &&
+            loadRpmUpdate(writer, &physicalInput,
+                          QString::fromUtf8(containerPathUtf8), &input)) {
+            parsed = PEARE_WRITER_OK;
+            mode = peare_writer_handle_s::Mode::CpioUpdate;
+        } else if (loadDebUpdate(writer, &physicalInput,
+                          QString::fromUtf8(containerPathUtf8), &input)) {
+            parsed = PEARE_WRITER_OK;
+            mode = peare_writer_handle_s::Mode::TarUpdate;
+        } else {
+            parsed = loadExistingZip(writer, input);
+        }
         if (parsed == PEARE_WRITER_OK) writer->zipMethod = 8;
         if (parsed != PEARE_WRITER_OK) {
             writer->entries.clear();
@@ -7636,11 +9042,17 @@ peare_writer_status peare_writer_add_files_begin(peare_writer_handle writer,
                         mode = peare_writer_handle_s::Mode::WadUpdate;
                         if (parsed != PEARE_WRITER_OK) {
                             writer->wadEntries.clear();
-                            writer->wadStage.reset();
-                            writer->fatTargetSpecified = false;
-                            input->close();
-                            return beginDiskImageUpdate(writer, QString::fromUtf8(containerPathUtf8),
-                                                        false, 0);
+                            writer->names.clear();
+                            parsed = loadExistingXar(writer, input);
+                            mode = peare_writer_handle_s::Mode::XarUpdate;
+                            if (parsed != PEARE_WRITER_OK) {
+                                writer->xarEntries.clear();
+                                writer->xarStage.reset();
+                                writer->fatTargetSpecified = false;
+                                input->close();
+                                return beginDiskImageUpdate(writer, QString::fromUtf8(containerPathUtf8),
+                                                            false, 0);
+                            }
                         }
                     }
                 }
@@ -7663,7 +9075,9 @@ peare_writer_status peare_writer_add_files_begin(peare_writer_handle writer,
             }
             stagedOutput = writer->zipStage.get();
         } else if (mode == peare_writer_handle_s::Mode::TarUpdate) {
-            writer->updatePath = QString::fromUtf8(containerPathUtf8);
+            writer->updatePath = writer->debUpdateActive
+                ? writer->debStage->filePath(QStringLiteral("data-updated.tar"))
+                : QString::fromUtf8(containerPathUtf8);
             writer->tarStage.reset(new (std::nothrow) QTemporaryFile);
             if (!writer->tarStage || !writer->tarStage->open()) {
                 const QString error = writer->tarStage ? writer->tarStage->errorString()
@@ -7673,7 +9087,9 @@ peare_writer_status peare_writer_add_files_begin(peare_writer_handle writer,
             }
             stagedOutput = writer->tarStage.get();
         } else if (mode == peare_writer_handle_s::Mode::CpioUpdate) {
-            writer->updatePath = QString::fromUtf8(containerPathUtf8);
+            writer->updatePath = writer->rpmUpdateActive
+                ? writer->rpmStage->filePath(QStringLiteral("payload-updated.cpio"))
+                : QString::fromUtf8(containerPathUtf8);
             writer->cpioStage.reset(new (std::nothrow) QTemporaryFile);
             if (!writer->cpioStage || !writer->cpioStage->open()) {
                 const QString error = writer->cpioStage ? writer->cpioStage->errorString()
@@ -7697,6 +9113,9 @@ peare_writer_status peare_writer_add_files_begin(peare_writer_handle writer,
         } else if (mode == peare_writer_handle_s::Mode::WadUpdate) {
             writer->updatePath = QString::fromUtf8(containerPathUtf8);
             stagedOutput = writer->wadStage.get();
+        } else if (mode == peare_writer_handle_s::Mode::XarUpdate) {
+            writer->updatePath = QString::fromUtf8(containerPathUtf8);
+            writer->createPath = writer->updatePath;
         } else {
             writer->output.reset(new (std::nothrow) QSaveFile(
                 QString::fromUtf8(containerPathUtf8)));
@@ -7716,7 +9135,8 @@ peare_writer_status peare_writer_add_files_begin(peare_writer_handle writer,
         writer->updateMode = true;
         writer->archiveDirty = false;
         writer->mode = mode;
-        if (mode == peare_writer_handle_s::Mode::WadUpdate) return PEARE_WRITER_OK;
+        if (mode == peare_writer_handle_s::Mode::WadUpdate ||
+            mode == peare_writer_handle_s::Mode::XarUpdate) return PEARE_WRITER_OK;
         if (!input->seek(0))
             return fail(writer, PEARE_WRITER_IO_ERROR, input->errorString());
         std::vector<char> chunk(kChunkSize);
@@ -7738,6 +9158,8 @@ peare_writer_status peare_writer_add_files_begin(peare_writer_handle writer,
         if (mode == peare_writer_handle_s::Mode::TarUpdate && writer->tarStage &&
             !writer->tarStage->seek(writer->tarContentEnd))
             return fail(writer, PEARE_WRITER_IO_ERROR, writer->tarStage->errorString());
+        if (writer->debUpdateActive && writer->debDataTarInput)
+            writer->debDataTarInput->close();
         if (mode == peare_writer_handle_s::Mode::CpioUpdate && writer->cpioStage &&
             !writer->cpioStage->seek(writer->cpioStage->size()))
             return fail(writer, PEARE_WRITER_IO_ERROR, writer->cpioStage->errorString());
@@ -7880,7 +9302,8 @@ peare_writer_status peare_writer_add_file(peare_writer_handle writer,
             writer->names.insert(key);
             return PEARE_WRITER_OK;
         });
-    if (writer->mode == peare_writer_handle_s::Mode::IsoCreate)
+    if (writer->mode == peare_writer_handle_s::Mode::IsoCreate ||
+        writer->mode == peare_writer_handle_s::Mode::IsoUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
                 return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
@@ -7912,9 +9335,12 @@ peare_writer_status peare_writer_add_file(peare_writer_handle writer,
             entry.name = name;
             entry.directory = false;
             writer->isoEntries.push_back(std::move(entry));
+            if (writer->mode == peare_writer_handle_s::Mode::IsoUpdate)
+                writer->archiveDirty = true;
             return PEARE_WRITER_OK;
         });
-    if (writer->mode == peare_writer_handle_s::Mode::XarCreate)
+    if (writer->mode == peare_writer_handle_s::Mode::XarCreate ||
+        writer->mode == peare_writer_handle_s::Mode::XarUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
                 return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
@@ -7975,8 +9401,11 @@ peare_writer_status peare_writer_add_file(peare_writer_handle writer,
             entry.extractedDigest = extractedHash.result();
             entry.packedSize = packedSize;
             entry.unpackedSize = unpackedSize;
+            entry.codec = writer->xarCodec;
             writer->xarEntries.push_back(std::move(entry));
             writer->names.insert(QString::fromUtf8(name));
+            if (writer->mode == peare_writer_handle_s::Mode::XarUpdate)
+                writer->archiveDirty = true;
             return PEARE_WRITER_OK;
         });
     if (writer->mode == peare_writer_handle_s::Mode::TarCreate ||
@@ -8025,6 +9454,46 @@ peare_writer_status peare_writer_add_file(peare_writer_handle writer,
     if (writer->mode == peare_writer_handle_s::Mode::LzipCreate)
         return cBoundary(writer, [&] {
             return writeLzipMember(writer, sourcePathUtf8, entryNameUtf8);
+        });
+    if (writer->mode == peare_writer_handle_s::Mode::UuencodeUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("A source file and UUencode filename are required."), false);
+            const QString filename = QFileInfo(QString::fromUtf8(entryNameUtf8)).fileName();
+            const QByteArray name = filename.toLocal8Bit();
+            if (filename.isEmpty() || filename == QStringLiteral(".") ||
+                filename == QStringLiteral("..") || name.contains('\n') || name.contains('\r'))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The UUencode filename is invalid."), false);
+            const QString key = QString::fromLocal8Bit(name);
+            if (writer->names.contains(key))
+                return fail(writer, PEARE_WRITER_DUPLICATE_ENTRY,
+                            QStringLiteral("The UUencode filename already exists."), false);
+            QFile source(QString::fromUtf8(sourcePathUtf8));
+            if (!source.open(QIODevice::ReadOnly) || !QFileInfo(source).isFile())
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            source.errorString().isEmpty()
+                                ? QStringLiteral("The UUencode source must be a regular file.")
+                                : source.errorString(), false);
+            const QString stagedPath = writer->uueStage->filePath(
+                QStringLiteral("member-%1").arg(writer->uueEntries.size(), 8, 10, QLatin1Char('0')));
+            QFile staged(stagedPath);
+            if (!staged.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+                !copyFile(source, &staged) || !staged.flush())
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            staged.isOpen() ? staged.errorString() : source.errorString(), false);
+            UueEntry entry;
+            entry.sourcePath = stagedPath;
+            entry.name = name;
+            if (!writer->uueEntries.empty()) {
+                entry.base64 = writer->uueEntries.front().base64;
+                entry.encodedName = writer->uueEntries.front().encodedName;
+            }
+            writer->uueEntries.push_back(std::move(entry));
+            writer->names.insert(key);
+            writer->archiveDirty = true;
+            return PEARE_WRITER_OK;
         });
     if (writer->mode == peare_writer_handle_s::Mode::UuencodeCreate)
         return cBoundary(writer, [&] {
@@ -8106,7 +9575,8 @@ peare_writer_status peare_writer_create_directory(peare_writer_handle writer,
             writer->debDirectories.push_back(name);
             return PEARE_WRITER_OK;
         });
-    if (writer->mode == peare_writer_handle_s::Mode::XarCreate)
+    if (writer->mode == peare_writer_handle_s::Mode::XarCreate ||
+        writer->mode == peare_writer_handle_s::Mode::XarUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             QByteArray name;
             if (!normalizedEntryName(entryNameUtf8, true, &name))
@@ -8121,9 +9591,12 @@ peare_writer_status peare_writer_create_directory(peare_writer_handle writer,
             entry.directory = true;
             writer->xarEntries.push_back(std::move(entry));
             writer->names.insert(QString::fromUtf8(name));
+            if (writer->mode == peare_writer_handle_s::Mode::XarUpdate)
+                writer->archiveDirty = true;
             return PEARE_WRITER_OK;
         });
-    if (writer->mode == peare_writer_handle_s::Mode::IsoCreate)
+    if (writer->mode == peare_writer_handle_s::Mode::IsoCreate ||
+        writer->mode == peare_writer_handle_s::Mode::IsoUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             QByteArray name;
             if (!normalizedEntryName(entryNameUtf8, true, &name))
@@ -8137,6 +9610,8 @@ peare_writer_status peare_writer_create_directory(peare_writer_handle writer,
             entry.name = name;
             entry.directory = true;
             writer->isoEntries.push_back(std::move(entry));
+            if (writer->mode == peare_writer_handle_s::Mode::IsoUpdate)
+                writer->archiveDirty = true;
             return PEARE_WRITER_OK;
         });
     if (writer->mode == peare_writer_handle_s::Mode::ZipCreate ||
@@ -8176,6 +9651,127 @@ peare_writer_status peare_writer_replace_file(peare_writer_handle writer,
     if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("A source path and entry name are required."));
+    if (writer->mode == peare_writer_handle_s::Mode::UuencodeUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            const QByteArray name = QFileInfo(QString::fromUtf8(entryNameUtf8))
+                                        .fileName().toLocal8Bit();
+            auto found = writer->uueEntries.end();
+            for (auto it = writer->uueEntries.begin(); it != writer->uueEntries.end(); ++it) {
+                if (it->name != name) continue;
+                if (found != writer->uueEntries.end())
+                    return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                                QStringLiteral("The UUencode filename is ambiguous."), false);
+                found = it;
+            }
+            if (found == writer->uueEntries.end())
+                return fail(writer, PEARE_WRITER_ENTRY_NOT_FOUND,
+                            QStringLiteral("The UUencode entry to replace was not found."), false);
+            QFile source(QString::fromUtf8(sourcePathUtf8));
+            if (!source.open(QIODevice::ReadOnly) || !QFileInfo(source).isFile())
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            source.errorString().isEmpty()
+                                ? QStringLiteral("The replacement source must be a regular file.")
+                                : source.errorString(), false);
+            const size_t index = size_t(found - writer->uueEntries.begin());
+            const QString stagedPath = writer->uueStage->filePath(
+                QStringLiteral("replacement-%1").arg(index, 8, 10, QLatin1Char('0')));
+            QFile staged(stagedPath);
+            if (!staged.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+                !copyFile(source, &staged) || !staged.flush())
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            staged.isOpen() ? staged.errorString() : source.errorString(), false);
+            found->sourcePath = stagedPath;
+            writer->archiveDirty = true;
+            return PEARE_WRITER_OK;
+        });
+    if (writer->mode == peare_writer_handle_s::Mode::IsoUpdate) {
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray encoded;
+            if (!normalizedEntryName(entryNameUtf8, false, &encoded))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The ISO path is invalid or unsafe."), false);
+            const QString key = QString::fromUtf8(encoded).toCaseFolded();
+            auto found = std::find_if(writer->isoEntries.begin(), writer->isoEntries.end(),
+                [&](const IsoEntry& entry) {
+                    return !entry.directory &&
+                        QString::fromUtf8(entry.name).toCaseFolded() == key;
+                });
+            if (found == writer->isoEntries.end())
+                return fail(writer, PEARE_WRITER_ENTRY_NOT_FOUND,
+                            QStringLiteral("The ISO file to replace was not found."), false);
+            QFile source(QString::fromUtf8(sourcePathUtf8));
+            if (!source.open(QIODevice::ReadOnly) || !QFileInfo(source).isFile())
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            source.errorString().isEmpty()
+                                ? QStringLiteral("The replacement source must be a regular file.")
+                                : source.errorString(), false);
+            const QString stagedPath = writer->isoStage->filePath(
+                QStringLiteral("replacement-%1").arg(writer->isoEntries.size()));
+            QFile staged(stagedPath);
+            if (!staged.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+                !copyFile(source, &staged) || !staged.flush())
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            staged.isOpen() ? staged.errorString() : source.errorString());
+            found->sourcePath = stagedPath;
+            found->stagedPath = stagedPath;
+            found->sourceOffset = 0;
+            found->sourceSize = 0;
+            found->sourceIsRange = false;
+            writer->archiveDirty = true;
+            return PEARE_WRITER_OK;
+        });
+    }
+    if (writer->mode == peare_writer_handle_s::Mode::XarUpdate) {
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray encoded;
+            if (!normalizedEntryName(entryNameUtf8, false, &encoded))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The XAR path is invalid or unsafe."), false);
+            const QString key = QString::fromUtf8(encoded);
+            auto found = std::find_if(writer->xarEntries.begin(), writer->xarEntries.end(),
+                [&](const XarEntry& entry) {
+                    return !entry.directory && QString::fromUtf8(entry.name) == key;
+                });
+            if (found == writer->xarEntries.end())
+                return fail(writer, PEARE_WRITER_ENTRY_NOT_FOUND,
+                            QStringLiteral("The XAR file to replace was not found."), false);
+            QFile source(QString::fromUtf8(sourcePathUtf8));
+            if (!source.open(QIODevice::ReadOnly) || !QFileInfo(source).isFile())
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            source.errorString().isEmpty()
+                                ? QStringLiteral("The replacement source must be a regular file.")
+                                : source.errorString(), false);
+            const QString rawPath = writer->xarStage->filePath(
+                QStringLiteral("replacement-raw-%1").arg(size_t(found - writer->xarEntries.begin())));
+            QFile raw(rawPath);
+            if (!raw.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+                !copyFile(source, &raw) || !raw.flush())
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            raw.isOpen() ? raw.errorString() : source.errorString());
+            raw.close();
+            const int codec = found->codec;
+            QString packedPath = rawPath;
+            if (codec != 0) {
+                packedPath = writer->xarStage->filePath(
+                    QStringLiteral("replacement-packed-%1").arg(size_t(found - writer->xarEntries.begin())));
+                QString error;
+                if (!xarCompressFile(rawPath, packedPath, codec, &error))
+                    return fail(writer, PEARE_WRITER_IO_ERROR, error);
+            }
+            XarEntry replacement = *found;
+            if (!xarHashFile(packedPath, QCryptographicHash::Sha256,
+                             &replacement.archivedDigest, &replacement.packedSize) ||
+                !xarHashFile(rawPath, QCryptographicHash::Sha256,
+                             &replacement.extractedDigest, &replacement.unpackedSize))
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            QStringLiteral("Could not hash the replacement XAR data."));
+            replacement.sourcePath = QString::fromUtf8(sourcePathUtf8);
+            replacement.stagedPath = packedPath;
+            *found = std::move(replacement);
+            writer->archiveDirty = true;
+            return PEARE_WRITER_OK;
+        });
+    }
     if (writer->mode == peare_writer_handle_s::Mode::WadUpdate) {
         const qint64 index = findWadEntry(writer, entryNameUtf8);
         if (index == -2)
@@ -8186,7 +9782,7 @@ peare_writer_status peare_writer_replace_file(peare_writer_handle writer,
     if (writer->mode == peare_writer_handle_s::Mode::TarUpdate) {
         QByteArray name;
         QByteArray prefix;
-        if (!tarEntryName(entryNameUtf8, &name, &prefix))
+        if (!tarEntryName(entryNameUtf8, &name, &prefix, writer->tarV7))
             return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
                         QStringLiteral("The TAR entry name is invalid or unsafe."), false);
         QString key = QString::fromUtf8(prefix.isEmpty() ? name : prefix + '/' + name);
@@ -8366,6 +9962,160 @@ peare_writer_status peare_writer_rename_entry(peare_writer_handle writer,
     if (!entryNameUtf8 || !*entryNameUtf8 || !newEntryNameUtf8 || !*newEntryNameUtf8)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("Source and destination entry names are required."));
+    if (writer->mode == peare_writer_handle_s::Mode::UuencodeUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            const QByteArray oldName = QFileInfo(QString::fromUtf8(entryNameUtf8))
+                                           .fileName().toLocal8Bit();
+            const QByteArray newName = QFileInfo(QString::fromUtf8(newEntryNameUtf8))
+                                           .fileName().toLocal8Bit();
+            if (oldName.isEmpty() || newName.isEmpty() || newName == "." || newName == ".." ||
+                newName.contains('\n') || newName.contains('\r'))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The UUencode source or destination filename is invalid."), false);
+            auto found = writer->uueEntries.end();
+            for (auto it = writer->uueEntries.begin(); it != writer->uueEntries.end(); ++it) {
+                if (it->name != oldName) continue;
+                if (found != writer->uueEntries.end())
+                    return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                                QStringLiteral("The UUencode filename is ambiguous."), false);
+                found = it;
+            }
+            if (found == writer->uueEntries.end())
+                return fail(writer, PEARE_WRITER_ENTRY_NOT_FOUND,
+                            QStringLiteral("The UUencode entry to rename was not found."), false);
+            if (oldName != newName && writer->names.contains(QString::fromLocal8Bit(newName)))
+                return fail(writer, PEARE_WRITER_DUPLICATE_ENTRY,
+                            QStringLiteral("The destination UUencode filename already exists."), false);
+            writer->names.remove(QString::fromLocal8Bit(oldName));
+            writer->names.insert(QString::fromLocal8Bit(newName));
+            found->name = newName;
+            writer->archiveDirty = true;
+            return PEARE_WRITER_OK;
+        });
+    if (writer->mode == peare_writer_handle_s::Mode::IsoUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray oldEncoded;
+            QByteArray newEncoded;
+            if (!normalizedEntryName(entryNameUtf8, false, &oldEncoded) ||
+                !normalizedEntryName(newEntryNameUtf8, false, &newEncoded))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The ISO source or destination path is invalid."), false);
+            const QString oldPath = QString::fromUtf8(oldEncoded);
+            const QString newPath = QString::fromUtf8(newEncoded);
+            const QString oldPrefix = oldPath + QLatin1Char('/');
+            bool exact = false;
+            bool directory = false;
+            bool children = false;
+            for (const IsoEntry& entry : writer->isoEntries) {
+                const QString path = QString::fromUtf8(entry.name);
+                if (path.compare(oldPath, Qt::CaseInsensitive) == 0) {
+                    exact = true;
+                    directory = entry.directory;
+                } else if (path.startsWith(oldPrefix, Qt::CaseInsensitive)) {
+                    children = true;
+                }
+            }
+            if (!exact && !children)
+                return fail(writer, PEARE_WRITER_ENTRY_NOT_FOUND,
+                            QStringLiteral("The ISO entry to rename was not found."), false);
+            if (exact && !directory && children)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("The ISO path conflicts with a file and a directory."),
+                            false);
+            directory = directory || children;
+            if (directory && newPath.startsWith(oldPrefix, Qt::CaseInsensitive))
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("An ISO directory cannot be moved inside itself."), false);
+            if (oldPath.compare(newPath, Qt::CaseInsensitive) == 0) return PEARE_WRITER_OK;
+
+            std::vector<IsoEntry> planned;
+            planned.reserve(writer->isoEntries.size());
+            for (const IsoEntry& entry : writer->isoEntries) {
+                const QString path = QString::fromUtf8(entry.name);
+                const bool root = path.compare(oldPath, Qt::CaseInsensitive) == 0;
+                const bool child = directory && path.startsWith(oldPrefix, Qt::CaseInsensitive);
+                if (!root && !child) {
+                    planned.push_back(entry);
+                    continue;
+                }
+                IsoEntry renamed = entry;
+                const QString mapped = root ? newPath : newPath + path.mid(oldPath.size());
+                renamed.name = mapped.toUtf8();
+                if (isoPathConflict(planned, renamed.name, renamed.directory))
+                    return fail(writer, PEARE_WRITER_DUPLICATE_ENTRY,
+                                QStringLiteral("The destination ISO path conflicts with an entry."),
+                                false);
+                planned.push_back(std::move(renamed));
+            }
+            for (size_t i = 0; i < planned.size(); ++i) {
+                std::vector<IsoEntry> earlier(planned.begin(), planned.begin() + i);
+                if (isoPathConflict(earlier, planned[i].name, planned[i].directory))
+                    return fail(writer, PEARE_WRITER_DUPLICATE_ENTRY,
+                                QStringLiteral("The renamed ISO paths conflict with each other."),
+                                false);
+            }
+            writer->isoEntries = std::move(planned);
+            writer->names.clear();
+            for (const IsoEntry& entry : writer->isoEntries)
+                writer->names.insert(QString::fromUtf8(entry.name));
+            writer->archiveDirty = true;
+            return PEARE_WRITER_OK;
+        });
+    if (writer->mode == peare_writer_handle_s::Mode::XarUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray oldEncoded;
+            if (!normalizedEntryName(entryNameUtf8, false, &oldEncoded))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The XAR source path is invalid or unsafe."), false);
+            const QString oldPath = QString::fromUtf8(oldEncoded);
+            const QString oldPrefix = oldPath + QLatin1Char('/');
+            bool exact = false;
+            bool directory = false;
+            bool children = false;
+            for (const XarEntry& entry : writer->xarEntries) {
+                const QString path = QString::fromUtf8(entry.name);
+                if (path == oldPath) { exact = true; directory = entry.directory; }
+                else if (path.startsWith(oldPrefix)) children = true;
+            }
+            if (!exact && !children)
+                return fail(writer, PEARE_WRITER_ENTRY_NOT_FOUND,
+                            QStringLiteral("The XAR entry to rename was not found."), false);
+            if (exact && !directory && children)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("The XAR path conflicts with a file and directory."), false);
+            directory = directory || children;
+            QByteArray newEncoded;
+            if (!normalizedEntryName(newEntryNameUtf8, directory, &newEncoded))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The XAR destination path is invalid or unsafe."), false);
+            const QString newPath = QString::fromUtf8(newEncoded);
+            if (oldPath == newPath) return PEARE_WRITER_OK;
+            if (directory && newPath.startsWith(oldPrefix))
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("A XAR directory cannot be moved inside itself."), false);
+            std::vector<XarEntry> planned;
+            planned.reserve(writer->xarEntries.size());
+            for (const XarEntry& entry : writer->xarEntries) {
+                const QString path = QString::fromUtf8(entry.name);
+                const bool root = path == oldPath;
+                const bool child = directory && path.startsWith(oldPrefix);
+                XarEntry mapped = entry;
+                if (root || child) {
+                    mapped.name = (root ? newPath : newPath + path.mid(oldPath.size())).toUtf8();
+                }
+                if (xarPathConflict(planned, mapped.name, mapped.directory))
+                    return fail(writer, PEARE_WRITER_DUPLICATE_ENTRY,
+                                QStringLiteral("The destination XAR path conflicts with an entry."),
+                                false);
+                planned.push_back(std::move(mapped));
+            }
+            writer->xarEntries = std::move(planned);
+            writer->names.clear();
+            for (const XarEntry& entry : writer->xarEntries)
+                writer->names.insert(QString::fromUtf8(entry.name));
+            writer->archiveDirty = true;
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::WadUpdate) {
         const qint64 index = findWadEntry(writer, entryNameUtf8);
         if (index < 0)
@@ -8407,8 +10157,8 @@ peare_writer_status peare_writer_rename_entry(peare_writer_handle writer,
     }
     if (writer->mode == peare_writer_handle_s::Mode::TarUpdate) {
         QByteArray oldName, oldPrefix, newName, newPrefix;
-        if (!tarEntryName(entryNameUtf8, &oldName, &oldPrefix) ||
-            !tarEntryName(newEntryNameUtf8, &newName, &newPrefix))
+        if (!tarEntryName(entryNameUtf8, &oldName, &oldPrefix, writer->tarV7) ||
+            !tarEntryName(newEntryNameUtf8, &newName, &newPrefix, writer->tarV7))
             return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
                         QStringLiteral("The TAR entry name is invalid or unsafe."), false);
         QString oldKey = QString::fromUtf8(oldPrefix.isEmpty() ? oldName : oldPrefix + '/' + oldName);
@@ -8446,13 +10196,21 @@ peare_writer_status peare_writer_rename_entry(peare_writer_handle writer,
                 return fail(writer, PEARE_WRITER_DUPLICATE_ENTRY,
                             QStringLiteral("The destination TAR path already exists."), false);
         }
-        for (TarEntry& entry : writer->tarEntries) {
+        std::vector<std::pair<size_t, TarEntry>> replacements;
+        for (size_t i = 0; i < size_t(writer->tarEntries.size()); ++i) {
+            const TarEntry& entry = writer->tarEntries.at(int(i));
             if (entry.key != oldKey && !(directory && entry.key.startsWith(prefix))) continue;
             const QString mapped = entry.key == oldKey ? newKey : newKey + entry.key.mid(oldKey.size());
-            if (!rewriteTarName(&entry, mapped))
+            TarEntry replacement = entry;
+            if (!rewriteTarName(&replacement, mapped, writer->tarV7))
                 return fail(writer, PEARE_WRITER_UNSUPPORTED_LIMIT,
-                            QStringLiteral("The renamed path cannot be represented in USTAR."), false);
+                            writer->tarV7
+                                ? QStringLiteral("The renamed path exceeds the TAR V7 name field.")
+                                : QStringLiteral("The renamed path cannot be represented in USTAR."), false);
+            replacements.emplace_back(i, std::move(replacement));
         }
+        for (auto& replacement : replacements)
+            writer->tarEntries.at(int(replacement.first)) = std::move(replacement.second);
         writer->names.clear();
         for (const TarEntry& entry : writer->tarEntries) writer->names.insert(entry.key);
         writer->archiveDirty = true;
@@ -8641,6 +10399,94 @@ peare_writer_status peare_writer_delete_entry(peare_writer_handle writer,
     if (!entryNameUtf8 || !*entryNameUtf8 || (recursive != 0 && recursive != 1))
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("A valid entry name and recursive flag are required."));
+    if (writer->mode == peare_writer_handle_s::Mode::UuencodeUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            const QByteArray name = QFileInfo(QString::fromUtf8(entryNameUtf8))
+                                       .fileName().toLocal8Bit();
+            auto found = writer->uueEntries.end();
+            for (auto it = writer->uueEntries.begin(); it != writer->uueEntries.end(); ++it) {
+                if (it->name != name) continue;
+                if (found != writer->uueEntries.end())
+                    return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                                QStringLiteral("The UUencode filename is ambiguous."), false);
+                found = it;
+            }
+            if (found == writer->uueEntries.end())
+                return fail(writer, PEARE_WRITER_ENTRY_NOT_FOUND,
+                            QStringLiteral("The UUencode entry to delete was not found."), false);
+            writer->names.remove(QString::fromLocal8Bit(found->name));
+            writer->uueEntries.erase(found);
+            writer->archiveDirty = true;
+            return PEARE_WRITER_OK;
+        });
+    if (writer->mode == peare_writer_handle_s::Mode::IsoUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray encoded;
+            if (!normalizedEntryName(entryNameUtf8, false, &encoded))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The ISO path is invalid or unsafe."), false);
+            const QString key = QString::fromUtf8(encoded);
+            const QString prefix = key + QLatin1Char('/');
+            bool exact = false;
+            bool children = false;
+            for (const IsoEntry& entry : writer->isoEntries) {
+                const QString path = QString::fromUtf8(entry.name);
+                if (path.compare(key, Qt::CaseInsensitive) == 0) {
+                    exact = true;
+                } else if (path.startsWith(prefix, Qt::CaseInsensitive)) {
+                    children = true;
+                }
+            }
+            if (!exact && !children)
+                return fail(writer, PEARE_WRITER_ENTRY_NOT_FOUND,
+                            QStringLiteral("The ISO entry to delete was not found."), false);
+            if (children && !recursive)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("The ISO directory is not empty."), false);
+            writer->isoEntries.erase(std::remove_if(writer->isoEntries.begin(),
+                writer->isoEntries.end(), [&](const IsoEntry& entry) {
+                    const QString path = QString::fromUtf8(entry.name);
+                    return path.compare(key, Qt::CaseInsensitive) == 0 ||
+                        (recursive && path.startsWith(prefix, Qt::CaseInsensitive));
+                }), writer->isoEntries.end());
+            writer->names.clear();
+            for (const IsoEntry& entry : writer->isoEntries)
+                writer->names.insert(QString::fromUtf8(entry.name));
+            writer->archiveDirty = true;
+            return PEARE_WRITER_OK;
+        });
+    if (writer->mode == peare_writer_handle_s::Mode::XarUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray encoded;
+            if (!normalizedEntryName(entryNameUtf8, false, &encoded))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The XAR path is invalid or unsafe."), false);
+            const QString key = QString::fromUtf8(encoded);
+            const QString prefix = key + QLatin1Char('/');
+            bool exact = false;
+            bool children = false;
+            for (const XarEntry& entry : writer->xarEntries) {
+                const QString path = QString::fromUtf8(entry.name);
+                if (path == key) exact = true;
+                else if (path.startsWith(prefix)) children = true;
+            }
+            if (!exact && !children)
+                return fail(writer, PEARE_WRITER_ENTRY_NOT_FOUND,
+                            QStringLiteral("The XAR entry to delete was not found."), false);
+            if (children && !recursive)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("The XAR directory is not empty."), false);
+            writer->xarEntries.erase(std::remove_if(writer->xarEntries.begin(),
+                writer->xarEntries.end(), [&](const XarEntry& entry) {
+                    const QString path = QString::fromUtf8(entry.name);
+                    return path == key || (recursive && path.startsWith(prefix));
+                }), writer->xarEntries.end());
+            writer->names.clear();
+            for (const XarEntry& entry : writer->xarEntries)
+                writer->names.insert(QString::fromUtf8(entry.name));
+            writer->archiveDirty = true;
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::WadUpdate) {
         const qint64 index = findWadEntry(writer, entryNameUtf8);
         if (index < 0)
@@ -8670,7 +10516,7 @@ peare_writer_status peare_writer_delete_entry(peare_writer_handle writer,
     }
     if (writer->mode == peare_writer_handle_s::Mode::TarUpdate) {
         QByteArray name, prefix;
-        if (!tarEntryName(entryNameUtf8, &name, &prefix))
+        if (!tarEntryName(entryNameUtf8, &name, &prefix, writer->tarV7))
             return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
                         QStringLiteral("The TAR entry name is invalid or unsafe."), false);
         QString key = QString::fromUtf8(prefix.isEmpty() ? name : prefix + '/' + name);
@@ -8826,6 +10672,9 @@ peare_writer_status peare_writer_update_finish(peare_writer_handle writer) {
         writer->mode != peare_writer_handle_s::Mode::CpioUpdate &&
         writer->mode != peare_writer_handle_s::Mode::ArUpdate &&
         writer->mode != peare_writer_handle_s::Mode::WadUpdate &&
+        writer->mode != peare_writer_handle_s::Mode::UuencodeUpdate &&
+        writer->mode != peare_writer_handle_s::Mode::XarUpdate &&
+        writer->mode != peare_writer_handle_s::Mode::IsoUpdate &&
         writer->mode != peare_writer_handle_s::Mode::DiskUpdate)
         return fail(writer, PEARE_WRITER_NOT_ACTIVE,
                     QStringLiteral("No container update is active."), false);
@@ -8901,18 +10750,94 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
         return cBoundary(writer, [&]() -> peare_writer_status {
             if (!writer->uuencodePayloadWritten)
                 return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
-                            QStringLiteral("UUencode output needs one input file."));
-            const char* ending = writer->uuencodeBase64 ? "====\n" : "end\n";
-            if (!writer->uuencodeBase64 && !writer->uuencodeHasData) {
-                if (!writeAll(writer->output.get(), "`\n", 2))
-                    return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
-            }
-            if (!writeAll(writer->output.get(), ending, qint64(std::strlen(ending))) ||
-                !writer->output->commit())
+                            QStringLiteral("UUencode output needs at least one file."));
+            if (!writer->output->commit())
                 return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
             writer->output.reset();
             writer->active = false;
             writer->mode = peare_writer_handle_s::Mode::None;
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            return PEARE_WRITER_OK;
+        });
+    if (writer->mode == peare_writer_handle_s::Mode::UuencodeUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (!writer->archiveDirty) return finishNoOpArchiveUpdate(writer);
+            if (writer->uueEntries.empty()) {
+                const QString path = writer->updatePath;
+                if (!QFile::remove(path))
+                    return fail(writer, PEARE_WRITER_IO_ERROR,
+                                QStringLiteral("Could not remove the empty UUencode container."));
+                return finishNoOpArchiveUpdate(writer);
+            }
+            writer->output.reset(new (std::nothrow) QSaveFile(writer->updatePath));
+            if (!writer->output || !writer->output->open(QIODevice::WriteOnly))
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            writer->output ? writer->output->errorString()
+                                : QStringLiteral("Could not allocate UUencode output."));
+            writer->uuencodePayloadWritten = false;
+            for (const UueEntry& entry : writer->uueEntries) {
+                writer->uuencodeBase64 = entry.base64;
+                writer->uuencodeEncodedName = entry.encodedName;
+                writer->uuencodeHasData = false;
+                const QByteArray encodedName = QString::fromLocal8Bit(entry.name).toUtf8();
+                const peare_writer_status status = writeUuencodeMember(
+                    writer, entry.sourcePath.toUtf8().constData(), encodedName.constData());
+                if (status != PEARE_WRITER_OK) return status;
+            }
+            if (!writer->output->commit())
+                return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+            writer->output.reset();
+            writer->uueStage.reset();
+            writer->uueEntries.clear();
+            writer->names.clear();
+            writer->updatePath.clear();
+            writer->active = false;
+            writer->updateMode = false;
+            writer->archiveDirty = false;
+            writer->mode = peare_writer_handle_s::Mode::None;
+            writer->uuencodePayloadWritten = false;
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            return PEARE_WRITER_OK;
+        });
+    if (writer->mode == peare_writer_handle_s::Mode::UuencodeUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (!writer->archiveDirty) return finishNoOpArchiveUpdate(writer);
+            if (writer->uueEntries.empty()) {
+                const QString path = writer->updatePath;
+                if (!QFile::remove(path))
+                    return fail(writer, PEARE_WRITER_IO_ERROR,
+                                QStringLiteral("Could not remove the empty UUencode container."));
+                return finishNoOpArchiveUpdate(writer);
+            }
+            writer->output.reset(new (std::nothrow) QSaveFile(writer->updatePath));
+            if (!writer->output || !writer->output->open(QIODevice::WriteOnly))
+                return fail(writer, PEARE_WRITER_IO_ERROR,
+                            writer->output ? writer->output->errorString()
+                                : QStringLiteral("Could not allocate UUencode output."));
+            writer->uuencodePayloadWritten = false;
+            for (const UueEntry& entry : writer->uueEntries) {
+                writer->uuencodeBase64 = entry.base64;
+                writer->uuencodeEncodedName = entry.encodedName;
+                writer->uuencodeHasData = false;
+                const QByteArray encodedName = QString::fromLocal8Bit(entry.name).toUtf8();
+                const peare_writer_status status = writeUuencodeMember(
+                    writer, entry.sourcePath.toUtf8().constData(), encodedName.constData());
+                if (status != PEARE_WRITER_OK) return status;
+            }
+            if (!writer->output->commit())
+                return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
+            writer->output.reset();
+            writer->uueStage.reset();
+            writer->uueEntries.clear();
+            writer->names.clear();
+            writer->updatePath.clear();
+            writer->active = false;
+            writer->updateMode = false;
+            writer->archiveDirty = false;
+            writer->mode = peare_writer_handle_s::Mode::None;
+            writer->uuencodePayloadWritten = false;
             writer->error.clear();
             writer->errorUtf8.clear();
             return PEARE_WRITER_OK;
@@ -8937,6 +10862,49 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
         return cBoundary(writer, [&] { return writeRpmPackage(writer); });
     if (writer->mode == peare_writer_handle_s::Mode::XarCreate)
         return cBoundary(writer, [&] { return writeXarArchive(writer); });
+    if (writer->mode == peare_writer_handle_s::Mode::XarUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (!writer->archiveDirty) return finishNoOpArchiveUpdate(writer);
+            const peare_writer_status status = writeXarArchive(writer);
+            if (status == PEARE_WRITER_OK) {
+                writer->updatePath.clear();
+                writer->archiveDirty = false;
+                writer->updateMode = false;
+            }
+            return status;
+        });
+    if (writer->mode == peare_writer_handle_s::Mode::IsoUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (!writer->archiveDirty) return finishNoOpArchiveUpdate(writer);
+            std::vector<peare::writer::IsoImageEntry> entries;
+            entries.reserve(writer->isoEntries.size());
+            for (const IsoEntry& entry : writer->isoEntries) {
+                peare::writer::IsoImageEntry imageEntry;
+                imageEntry.path = QString::fromUtf8(entry.name);
+                if (entry.directory) imageEntry.path = QString::fromUtf8(entry.name);
+                imageEntry.sourcePath = entry.sourceIsRange
+                    ? writer->updatePath : entry.stagedPath;
+                imageEntry.directory = entry.directory;
+                imageEntry.sourceOffset = entry.sourceOffset;
+                imageEntry.sourceSize = entry.sourceSize;
+                imageEntry.sourceIsRange = entry.sourceIsRange;
+                entries.push_back(std::move(imageEntry));
+            }
+            QString error;
+            if (!peare::writer::IsoImageWriter::write(writer->updatePath, entries, &error))
+                return fail(writer, PEARE_WRITER_IO_ERROR, error);
+            writer->isoStage.reset();
+            writer->isoEntries.clear();
+            writer->names.clear();
+            writer->updatePath.clear();
+            writer->active = false;
+            writer->updateMode = false;
+            writer->mode = peare_writer_handle_s::Mode::None;
+            writer->archiveDirty = false;
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::IsoCreate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             std::vector<peare::writer::IsoImageEntry> entries;
@@ -9182,6 +11150,10 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
             if (!writer->output->commit())
                 return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
             writer->output.reset();
+            if (writer->debUpdateActive) {
+                const peare_writer_status packageStatus = writeDebUpdatePackage(writer);
+                if (packageStatus != PEARE_WRITER_OK) return packageStatus;
+            }
             writer->tarStage.reset();
             writer->tarGzipStage.reset();
             writer->tarOutputStage.reset();
@@ -9213,6 +11185,7 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
             writer->unixCompressWrappedTar = false;
             writer->xzWrappedTar = false;
             writer->lzmaWrappedTar = false;
+            writer->tarV7 = false;
             writer->unixCompressPayloadWritten = false;
             writer->mode = peare_writer_handle_s::Mode::None;
             writer->tarContentEnd = 0;
@@ -9273,6 +11246,10 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
             if (!writer->output->commit())
                 return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
             writer->output.reset();
+            if (writer->rpmUpdateActive) {
+                const peare_writer_status packageStatus = writeRpmUpdatePackage(writer);
+                if (packageStatus != PEARE_WRITER_OK) return packageStatus;
+            }
             writer->cpioStage.reset();
             writer->cpioEntries.clear();
             writer->cpioFormat = CpioFormat::Newc;

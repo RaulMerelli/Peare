@@ -735,22 +735,24 @@ int ext4_mkfs(struct ext4_fs *fs, struct ext4_blockdev *bd,
 
 	info->inodes_per_group = compute_inodes_per_group(info);
 
-	switch (fs_type) {
-	case F_SET_EXT2:
-		info->feat_compat = EXT2_SUPPORTED_FCOM;
-		info->feat_ro_compat = EXT2_SUPPORTED_FRO_COM;
-		info->feat_incompat = EXT2_SUPPORTED_FINCOM;
-		break;
-	case F_SET_EXT3:
-		info->feat_compat = EXT3_SUPPORTED_FCOM;
-		info->feat_ro_compat = EXT3_SUPPORTED_FRO_COM;
-		info->feat_incompat = EXT3_SUPPORTED_FINCOM;
-		break;
-	case F_SET_EXT4:
-		info->feat_compat = EXT4_SUPPORTED_FCOM;
-		info->feat_ro_compat = EXT4_SUPPORTED_FRO_COM;
-		info->feat_incompat = EXT4_SUPPORTED_FINCOM;
-		break;
+	if (!info->custom_features) {
+		switch (fs_type) {
+		case F_SET_EXT2:
+			info->feat_compat = EXT2_SUPPORTED_FCOM;
+			info->feat_ro_compat = EXT2_SUPPORTED_FRO_COM;
+			info->feat_incompat = EXT2_SUPPORTED_FINCOM;
+			break;
+		case F_SET_EXT3:
+			info->feat_compat = EXT3_SUPPORTED_FCOM;
+			info->feat_ro_compat = EXT3_SUPPORTED_FRO_COM;
+			info->feat_incompat = EXT3_SUPPORTED_FINCOM;
+			break;
+		case F_SET_EXT4:
+			info->feat_compat = EXT4_SUPPORTED_FCOM;
+			info->feat_ro_compat = EXT4_SUPPORTED_FRO_COM;
+			info->feat_incompat = EXT4_SUPPORTED_FINCOM;
+			break;
+		}
 	}
 
 	/*TODO: handle this features some day...*/

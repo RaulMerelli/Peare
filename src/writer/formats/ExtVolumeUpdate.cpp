@@ -1357,16 +1357,24 @@ ExtVolumeUpdate::~ExtVolumeUpdate() {
     abort();
 }
 
-bool ExtVolumeUpdate::probe(const peare_ext_io& io, bool* ext3, bool* ext4) {
+bool ExtVolumeUpdate::probe(const peare_ext_io& io, bool* ext3, bool* ext4,
+                            QString* error) {
     bool journaled = false;
     bool ext4Features = false;
     bool orphanFile = false;
-    if (!hasExtFeatures(io, &journaled, &ext4Features, &orphanFile)) return false;
+    if (!hasExtFeatures(io, &journaled, &ext4Features, &orphanFile)) {
+        if (error) *error = QStringLiteral("The Ext superblock or feature set is invalid.");
+        return false;
+    }
     ExtVolumeUpdate volume;
-    if (!volume.mount(io, true, nullptr)) return false;
+    if (!volume.mount(io, true, error)) return false;
     const bool orphanValid = !orphanFile ||
         validateOrphanFile(volume.state_->device.fs);
-    if (!volume.unmount(nullptr) || !orphanValid) return false;
+    if (!volume.unmount(error)) return false;
+    if (!orphanValid) {
+        if (error) *error = QStringLiteral("The Ext orphan file is invalid.");
+        return false;
+    }
     if (ext3) *ext3 = journaled;
     if (ext4) *ext4 = ext4Features;
     return true;
@@ -1409,6 +1417,14 @@ bool ExtVolumeUpdate::format(const peare_ext_io& io, bool ext3, bool ext4,
     options.block_size = 4096;
     options.label = "Peare";
     options.journal = ext3 || ext4;
+    if (ext4) {
+        options.custom_features = true;
+        options.feat_compat = EXT4_FCOM_HAS_JOURNAL | EXT4_FCOM_EXT_ATTR |
+            EXT4_FCOM_RESIZE_INODE | EXT4_FCOM_DIR_INDEX;
+        options.feat_incompat = EXT4_FINCOM_FILETYPE | EXT4_FINCOM_EXTENTS;
+        options.feat_ro_compat = EXT4_FRO_COM_SPARSE_SUPER |
+            EXT4_FRO_COM_LARGE_FILE;
+    }
     const int result = ext4_mkfs(&filesystem, &volume.state_->device,
                                  &options, ext4 ? F_SET_EXT4 :
                                      ext3 ? F_SET_EXT3 : F_SET_EXT2);
@@ -1420,10 +1436,13 @@ bool ExtVolumeUpdate::format(const peare_ext_io& io, bool ext3, bool ext4,
     }
     bool formattedExt3 = false;
     bool formattedExt4 = false;
-    if (!probe(io, &formattedExt3, &formattedExt4) ||
-        formattedExt3 != (ext3 || ext4) ||
-        formattedExt4 != ext4) {
-        if (error) *error = QStringLiteral("The new Ext volume failed validation.");
+    QString validationError;
+    if (!probe(io, &formattedExt3, &formattedExt4, &validationError) ||
+        formattedExt3 != (ext3 || ext4) || formattedExt4 != ext4) {
+        if (error) *error = validationError.isEmpty()
+            ? QStringLiteral("The new Ext volume type does not match the selection.")
+            : QStringLiteral("The new Ext volume failed validation: %1")
+                .arg(validationError);
         return false;
     }
     return true;

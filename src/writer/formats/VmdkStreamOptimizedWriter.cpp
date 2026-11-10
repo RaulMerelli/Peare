@@ -10,6 +10,8 @@
 #include <limits>
 
 #include "DeflateDecoder.h"
+#include "VmdkImageWriter.h"
+#include "../third_party/miniz/miniz.h"
 
 namespace peare {
 namespace writer {
@@ -50,7 +52,202 @@ QString failure(const QString& detail) {
     return QStringLiteral("Invalid or unsupported streamOptimized VMDK: %1").arg(detail);
 }
 
+bool writeExact(QFile* file, const char* data, qint64 length) {
+    qint64 done = 0;
+    while (done < length) {
+        const qint64 written = file->write(data + done, length - done);
+        if (written <= 0) return false;
+        done += written;
+    }
+    return true;
+}
+
+bool writeZeros(QFile* file, qint64 length) {
+    static const QByteArray zeros(4096, '\0');
+    while (length > 0) {
+        const qint64 count = qMin<qint64>(length, zeros.size());
+        if (!writeExact(file, zeros.constData(), count)) return false;
+        length -= count;
+    }
+    return true;
+}
+
+QByteArray sparseHeader(quint64 capacitySectors, quint64 grainSectors,
+                        quint64 descriptorSectors, quint64 grainDirectorySector,
+                        quint64 overheadSectors) {
+    QByteArray header(kSectorSize, '\0');
+    qToLittleEndian<quint32>(kSparseMagic, reinterpret_cast<uchar*>(header.data()));
+    qToLittleEndian<quint32>(3, reinterpret_cast<uchar*>(header.data() + 4));
+    qToLittleEndian<quint32>(0x00030001U, reinterpret_cast<uchar*>(header.data() + 8));
+    qToLittleEndian<quint64>(capacitySectors, reinterpret_cast<uchar*>(header.data() + 12));
+    qToLittleEndian<quint64>(grainSectors, reinterpret_cast<uchar*>(header.data() + 20));
+    qToLittleEndian<quint64>(1, reinterpret_cast<uchar*>(header.data() + 28));
+    qToLittleEndian<quint64>(descriptorSectors, reinterpret_cast<uchar*>(header.data() + 36));
+    qToLittleEndian<quint32>(512, reinterpret_cast<uchar*>(header.data() + 44));
+    qToLittleEndian<quint64>(0, reinterpret_cast<uchar*>(header.data() + 48));
+    qToLittleEndian<quint64>(grainDirectorySector, reinterpret_cast<uchar*>(header.data() + 56));
+    qToLittleEndian<quint64>(overheadSectors, reinterpret_cast<uchar*>(header.data() + 64));
+    std::memcpy(header.data() + 73, "\n \r\n", 4);
+    qToLittleEndian<quint16>(1, reinterpret_cast<uchar*>(header.data() + 77));
+    return header;
+}
+
+QByteArray metadataMarker(quint64 sectors, quint32 type) {
+    QByteArray marker(kSectorSize, '\0');
+    qToLittleEndian<quint64>(sectors, reinterpret_cast<uchar*>(marker.data()));
+    qToLittleEndian<quint32>(type, reinterpret_cast<uchar*>(marker.data() + 12));
+    return marker;
+}
+
 }  // namespace
+
+bool VmdkStreamOptimizedWriter::convertSparseToStreamOptimized(
+    QFile* file, const QString& outputName, QString* error) {
+    auto reject = [&](const QString& reason) {
+        if (error) *error = reason;
+        return false;
+    };
+    if (!file || !file->isOpen() || !file->isReadable() ||
+        outputName.isEmpty() || outputName.contains(QLatin1Char('"')) ||
+        outputName.contains(QLatin1Char('\n')) || outputName.contains(QLatin1Char('\r')))
+        return reject(QStringLiteral("Invalid streamOptimized VMDK destination."));
+
+    VmdkImageWriter source(file, false, error);
+    if (!source.valid()) return false;
+    const quint64 capacitySectors = quint64(source.capacity() / kSectorSize);
+    constexpr quint64 grainSectors = 128;
+    constexpr quint64 grainBytes = grainSectors * kSectorSize;
+    constexpr quint64 entriesPerTable = 512;
+    const quint64 grainCount = (capacitySectors + grainSectors - 1) / grainSectors;
+    const quint64 tableCount = (grainCount + entriesPerTable - 1) / entriesPerTable;
+    if (!capacitySectors || grainCount > 4 * 1024 * 1024 || !tableCount || tableCount > 131072)
+        return reject(QStringLiteral("VMDK geometry exceeds streamOptimized limits."));
+
+    const QByteArray descriptor = QStringLiteral(
+        "# Disk DescriptorFile\nversion=1\nencoding=\"UTF-8\"\n"
+        "CID=fffffffe\nparentCID=ffffffff\ncreateType=\"streamOptimized\"\n\n"
+        "# Extent description\nRW %1 SPARSE \"%2\"\n\n# The Disk Data Base\n#DDB\n"
+        "ddb.adapterType = \"ide\"\n"
+        "ddb.geometry.cylinders = \"%3\"\n"
+        "ddb.geometry.heads = \"16\"\n"
+        "ddb.geometry.sectors = \"63\"\n"
+        "ddb.virtualHWVersion = \"13\"\n")
+        .arg(QString::number(capacitySectors), outputName,
+             QString::number(qMax<quint64>(1, capacitySectors / (16 * 63)))).toUtf8();
+    constexpr quint64 descriptorSectors = 20;
+    const quint64 overheadSectors = alignTo(1 + descriptorSectors, grainSectors);
+    QTemporaryFile output;
+    if (!output.open() || !output.resize(qint64(overheadSectors * kSectorSize)))
+        return reject(QStringLiteral("Could not create streamOptimized staging image."));
+    const QByteArray header = sparseHeader(capacitySectors, grainSectors,
+        descriptorSectors, std::numeric_limits<quint64>::max(), overheadSectors);
+    if (!writeAt(&output, 0, header.constData(), header.size()) ||
+        !writeAt(&output, kSectorSize, descriptor.constData(), descriptor.size()) ||
+        !output.seek(qint64(overheadSectors * kSectorSize)))
+        return reject(QStringLiteral("Could not write streamOptimized header and descriptor."));
+
+    std::vector<quint32> grainMarkerSectors(size_t(grainCount), 0);
+    QByteArray grain(int(grainBytes), Qt::Uninitialized);
+    QByteArray compressed(int(mz_compressBound(uLong(grainBytes))), Qt::Uninitialized);
+    for (quint64 index = 0; index < grainCount; ++index) {
+        const qint64 offset = qint64(index * grainBytes);
+        const qint64 count = qMin<qint64>(qint64(grainBytes), source.capacity() - offset);
+        std::memset(grain.data(), 0, size_t(grain.size()));
+        if (!source.read(offset, grain.data(), count))
+            return reject(QStringLiteral("Could not read sparse VMDK grain."));
+        bool nonzero = false;
+        for (char value : grain) if (value) { nonzero = true; break; }
+        if (!nonzero) continue;
+        uLongf compressedSize = uLongf(compressed.size());
+        if (mz_compress2(reinterpret_cast<unsigned char*>(compressed.data()), &compressedSize,
+                         reinterpret_cast<const unsigned char*>(grain.constData()),
+                         uLong(grain.size()), 6) != MZ_OK || compressedSize == 0 ||
+            compressedSize > std::numeric_limits<quint32>::max())
+            return reject(QStringLiteral("Could not compress a VMDK grain."));
+        const quint64 markerOffset = quint64(output.size());
+        const quint64 markerSector = markerOffset / kSectorSize;
+        if (markerOffset % kSectorSize || markerSector > std::numeric_limits<quint32>::max())
+            return reject(QStringLiteral("StreamOptimized grain marker exceeds sector limits."));
+        grainMarkerSectors[size_t(index)] = quint32(markerSector);
+        QByteArray marker(12, '\0');
+        qToLittleEndian<quint64>(index * grainSectors,
+                                 reinterpret_cast<uchar*>(marker.data()));
+        qToLittleEndian<quint32>(quint32(compressedSize),
+                                 reinterpret_cast<uchar*>(marker.data() + 8));
+        if (!writeExact(&output, marker.constData(), marker.size()) ||
+            !writeExact(&output, compressed.constData(), qint64(compressedSize)))
+            return reject(QStringLiteral("Could not write compressed VMDK grain."));
+        const qint64 padding = alignTo(output.size(), kSectorSize) - output.size();
+        if (!writeZeros(&output, padding))
+            return reject(QStringLiteral("Could not align compressed VMDK grain."));
+    }
+
+    std::vector<quint32> grainTableSectors(static_cast<size_t>(tableCount), 0);
+    for (quint64 table = 0; table < tableCount; ++table) {
+        const quint64 firstGrain = table * entriesPerTable;
+        const quint64 count = qMin<quint64>(entriesPerTable, grainCount - firstGrain);
+        QByteArray grainTable(int(entriesPerTable * 4), '\0');
+        for (quint64 entry = 0; entry < count; ++entry) {
+            const quint32 sector = grainMarkerSectors[size_t(firstGrain + entry)];
+            qToLittleEndian<quint32>(sector,
+                reinterpret_cast<uchar*>(grainTable.data() + entry * 4));
+        }
+        const quint64 markerSector = quint64(output.size()) / kSectorSize;
+        const quint64 tableSectors = grainTable.size() / kSectorSize;
+        grainTableSectors[size_t(table)] = quint32(markerSector + 1);
+        const QByteArray marker = metadataMarker(tableSectors, 1);
+        if (!writeExact(&output, marker.constData(), marker.size()) ||
+            !writeExact(&output, grainTable.constData(), grainTable.size()))
+            return reject(QStringLiteral("Could not write VMDK grain table."));
+    }
+
+    const quint64 directorySector = quint64(output.size()) / kSectorSize + 1;
+    const quint64 directoryBytes = alignTo(qint64(tableCount * 4), kSectorSize);
+    QByteArray directory(int(directoryBytes), '\0');
+    for (quint64 index = 0; index < tableCount; ++index)
+        qToLittleEndian<quint32>(grainTableSectors[size_t(index)],
+            reinterpret_cast<uchar*>(directory.data() + index * 4));
+    const QByteArray directoryMarker = metadataMarker(directoryBytes / kSectorSize, 2);
+    if (!writeExact(&output, directoryMarker.constData(), directoryMarker.size()) ||
+        !writeExact(&output, directory.constData(), directory.size()))
+        return reject(QStringLiteral("Could not write VMDK grain directory."));
+
+    const QByteArray footerMarker = metadataMarker(1, 3);
+    const QByteArray footer = sparseHeader(capacitySectors, grainSectors,
+        descriptorSectors, directorySector, overheadSectors);
+    const QByteArray endMarker = metadataMarker(0, 0);
+    if (!writeExact(&output, footerMarker.constData(), footerMarker.size()) ||
+        !writeExact(&output, footer.constData(), footer.size()) ||
+        !writeExact(&output, endMarker.constData(), endMarker.size()) ||
+        !output.flush() || !output.seek(0))
+        return reject(QStringLiteral("Could not finalize streamOptimized VMDK."));
+
+    VmdkStreamOptimizedWriter validation(&output, false, outputName, error);
+    if (!validation.valid()) return false;
+    QByteArray expected(1024 * 1024, Qt::Uninitialized);
+    QByteArray actual(expected.size(), Qt::Uninitialized);
+    for (qint64 offset = 0; offset < source.capacity();) {
+        const qint64 count = qMin<qint64>(expected.size(), source.capacity() - offset);
+        if (!source.read(offset, expected.data(), count) ||
+            !validation.read(offset, actual.data(), count) ||
+            std::memcmp(expected.constData(), actual.constData(), size_t(count)) != 0)
+            return reject(QStringLiteral("StreamOptimized VMDK verification failed."));
+        offset += count;
+    }
+
+    if (!output.seek(0) || !file->resize(0) || !file->seek(0))
+        return reject(QStringLiteral("Could not replace staged VMDK image."));
+    QByteArray buffer(1024 * 1024, Qt::Uninitialized);
+    qint64 remaining = output.size();
+    while (remaining > 0) {
+        const qint64 count = output.read(buffer.data(), qMin<qint64>(buffer.size(), remaining));
+        if (count <= 0 || !writeExact(file, buffer.constData(), count))
+            return reject(QStringLiteral("Could not copy streamOptimized VMDK."));
+        remaining -= count;
+    }
+    if (!file->flush()) return reject(QStringLiteral("Could not flush streamOptimized VMDK."));
+    return true;
+}
 
 VmdkStreamOptimizedWriter::VmdkStreamOptimizedWriter(QFile* file, bool writable,
                                                      const QString& outputName,

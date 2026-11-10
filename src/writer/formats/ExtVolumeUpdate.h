@@ -26,7 +26,7 @@ public:
     ~ExtVolumeUpdate();
 
     static bool probe(const peare_ext_io& io, bool* ext3 = nullptr,
-                      bool* ext4 = nullptr);
+                      bool* ext4 = nullptr, QString* error = nullptr);
     static bool format(const peare_ext_io& io, bool ext3, bool ext4,
                        QString* error);
     bool begin(const peare_ext_io& io, QString* error,
