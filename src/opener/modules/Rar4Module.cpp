@@ -1,7 +1,7 @@
 #include "Rar4Module.h"
-#include "Rar4LzDecoder.h"
+#include "../../common/rar/Rar4LzDecoder.h"
 #include "Compat.h"
-#include "../compression/peare/Rar4Crypto.h"
+#include "../../common/rar/Rar4Crypto.h"
 #include "../fs/QFileByteStore.h"
 
 #include <QFile>

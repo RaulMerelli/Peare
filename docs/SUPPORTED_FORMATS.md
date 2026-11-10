@@ -103,9 +103,9 @@ package-specific limits on ZIP-based files.
 | ZIPX | WinZip extensions: XZ, Zstandard, PPMd, WavPack, MP3, and JPEG compression; Writer method coverage is tracked in ZIP Writer Methods | Yes | Yes |
 | 7-Zip (7z) | 7z archives | Yes | No |
 | NSIS | Nullsoft Scriptable Install System installers | Yes | No |
-| RAR4 | RAR4 archives | Yes | No |
-| RAR5 | RAR5 archive format, algorithm version 0 | Yes | No |
-| RAR7 | RAR5 archive format, algorithm version 1 | Yes | No |
+| RAR4 | RAR 4.x archives | Yes | Yes |
+| RAR5 | RAR 5 archives, algorithm version 0 | Yes | Yes |
+| RAR7 | RAR 5 archives, algorithm version 1 | Yes | Yes |
 | Nintendo Switch NUP | NUP v1 base, update, and add-on trees; raw and Zstandard file payloads | Yes | No |
 | Java JAR / WAR / EAR / AAR | Java and Android ZIP archives | Yes | Yes |
 | Android APK | ZIP package contents and v2/v3/v3.1 signer leaf-certificate metadata | Yes | Yes |

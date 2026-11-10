@@ -86,6 +86,7 @@ public:
     peare_status lastStatus() const { return lastStatus_; }
     peare_container_format containerFormat() const;
     QString description() const;
+    QString password() const { return password_; }
     size_t folderCount() const;
     QString folderType(size_t folder) const;
     size_t resourceCount(size_t folder) const;

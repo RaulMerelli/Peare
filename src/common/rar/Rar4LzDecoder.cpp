@@ -1,5 +1,5 @@
 #include "Rar4LzDecoder.h"
-#include "../compression/peare/Rar4PpmdDecoder.h"
+#include "Rar4PpmdDecoder.h"
 #include "Rar4Vm.h"
 
 #include <algorithm>
@@ -639,7 +639,6 @@ BlockResult decodePpmdBlock(BitReader* bits, const std::uint8_t* packed,
 {
     std::uint32_t flags = 0;
     if (!bits->read(7, &flags)) return BlockResult::Error;
-
     std::uint32_t memorySize = state->ppmdMemorySize;
     unsigned order = state->ppmdModel.MaxOrder;
     if (flags & 0x20) {
@@ -652,14 +651,16 @@ BlockResult decodePpmdBlock(BitReader* bits, const std::uint8_t* packed,
             return BlockResult::Error;
     }
 
-    std::uint8_t escapeValue = 2;
+    const bool resetModel = (flags & 0x20) != 0;
+    std::uint8_t escapeValue = (!resetModel && state->ppmdValid)
+        ? state->ppmdEscape : 2;
     const bool hasCustomEscape = (flags & 0x40) != 0;
     if (hasCustomEscape) {
         std::uint32_t escape = 0;
         if (!bits->read(8, &escape)) return BlockResult::Error;
         escapeValue = static_cast<std::uint8_t>(escape);
     }
-    if (flags & 0x20) {
+    if (resetModel) {
         state->resetPpmd();
         state->ppmdEscape = escapeValue;
         if (hasCustomEscape)
@@ -671,8 +672,9 @@ BlockResult decodePpmdBlock(BitReader* bits, const std::uint8_t* packed,
         state->ppmdValid = true;
     } else if (!state->ppmdValid) {
         return BlockResult::Error;
-    } else {
+    } else if (hasCustomEscape) {
         state->ppmdEscape = escapeValue;
+        state->ppmdModel.InitEsc = state->ppmdEscape;
     }
     std::size_t startByte = 0;
     if (!bits->bytePosition(&startByte) || startByte > packedSize)

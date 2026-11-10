@@ -2,6 +2,7 @@
 #include "../../common/compression/UnixCompress.h"
 #include "formats/DiskImageWriter.h"
 #include "formats/IsoImageWriter.h"
+#include "formats/RarArchiveWriter.h"
 #include "formats/WinZipJpegEncoder.h"
 #include "../third_party/miniz/miniz.h"
 #include "../third_party/bzip2/bzlib.h"
@@ -296,6 +297,8 @@ struct peare_writer_handle_s {
     std::unique_ptr<QTemporaryDir> xarStage;
     std::unique_ptr<QTemporaryDir> isoStage;
     std::unique_ptr<QTemporaryDir> uueStage;
+    std::unique_ptr<peare::writer::RarArchiveWriter> rarArchive;
+    QString password;
     std::vector<Entry> entries;
     std::vector<TarEntry> tarEntries;
     std::vector<CpioEntry> cpioEntries;
@@ -362,7 +365,7 @@ struct peare_writer_handle_s {
                       CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate, UuencodeCreate, UuencodeUpdate, IhexCreate, DebCreate, RpmCreate, XarCreate, XarUpdate, IsoCreate, IsoUpdate, TarGzipCreate,
                       TarBzip2Create, TarZstdCreate, TarUnixCompressCreate,
                       TarXzCreate, TarLzmaCreate,
-                      FatCreate, DiskUpdate } mode = Mode::None;
+                      FatCreate, DiskUpdate, RarCreate, RarUpdate } mode = Mode::None;
 };
 
 namespace {
@@ -410,6 +413,8 @@ peare_writer_status fail(peare_writer_handle_s* writer, peare_writer_status stat
             writer->xarStage.reset();
             writer->isoStage.reset();
             writer->uueStage.reset();
+            if (writer->rarArchive) writer->rarArchive->abort();
+            writer->rarArchive.reset();
             if (writer->diskUpdate) {
                 writer->diskUpdate->abort();
                 writer->diskUpdate.reset();
@@ -7292,7 +7297,18 @@ peare_writer_status peare_writer_create(peare_writer_handle* outWriter) {
     }
 }
 
-size_t peare_writer_create_format_count(void) { return 30; }
+peare_writer_status peare_writer_set_password(peare_writer_handle writer,
+                                               const char* passwordUtf8) {
+    if (!writer) return PEARE_WRITER_INVALID_HANDLE;
+    if (writer->active)
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("A password cannot change during an active write."), false);
+    writer->password.fill(QChar(0));
+    writer->password = passwordUtf8 ? QString::fromUtf8(passwordUtf8) : QString();
+    return PEARE_WRITER_OK;
+}
+
+size_t peare_writer_create_format_count(void) { return 31; }
 
 peare_writer_status peare_writer_get_create_format(size_t index,
                                                     peare_writer_format* outFormat) {
@@ -7327,7 +7343,8 @@ peare_writer_status peare_writer_get_create_format(size_t index,
         {"deb", "Debian package", "deb"},
         {"rpm", "RPM package", "rpm"},
         {"xar", "XAR archive", "xar"},
-        {"iso", "ISO 9660 image", "iso"}
+        {"iso", "ISO 9660 image", "iso"},
+        {"rar", "RAR archive", "rar"}
     };
     if (index >= sizeof(formats) / sizeof(formats[0]))
         return PEARE_WRITER_INVALID_ARGUMENT;
@@ -7338,6 +7355,7 @@ peare_writer_status peare_writer_get_create_format(size_t index,
 size_t peare_writer_create_variant_count(const char* formatIdUtf8) {
     if (!formatIdUtf8) return 0;
     if (std::strcmp(formatIdUtf8, "zip") == 0) return 18;
+    if (std::strcmp(formatIdUtf8, "rar") == 0) return 18;
     if (std::strcmp(formatIdUtf8, "gzip") == 0) return 1;
     if (std::strcmp(formatIdUtf8, "bzip2") == 0) return 9;
     if (std::strcmp(formatIdUtf8, "zstd") == 0) return 27;
@@ -7383,6 +7401,26 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
         {"dcl-implode", "DCL Implode"}, {"reduce-1", "Reduce 1"},
         {"reduce-2", "Reduce 2"}, {"reduce-3", "Reduce 3"},
         {"reduce-4", "Reduce 4"}, {"jpeg", "JPEG (ZIPX)"}
+    };
+    static const peare_writer_variant rarVariants[] = {
+        {"rar4-store", "RAR 4.x: Store"},
+        {"rar4-m1", "RAR 4.x: Fastest"},
+        {"rar4-m2", "RAR 4.x: Fast"},
+        {"rar4-m3", "RAR 4.x: Normal"},
+        {"rar4-m4", "RAR 4.x: Good"},
+        {"rar4-m5", "RAR 4.x: Best"},
+        {"rar5-store", "RAR 5: Store"},
+        {"rar5-m1", "RAR 5: Fastest"},
+        {"rar5-m2", "RAR 5: Fast"},
+        {"rar5-m3", "RAR 5: Normal"},
+        {"rar5-m4", "RAR 5: Good"},
+        {"rar5-m5", "RAR 5: Best"},
+        {"rar7-store", "RAR 7: Store"},
+        {"rar7-m1", "RAR 7: Fastest"},
+        {"rar7-m2", "RAR 7: Fast"},
+        {"rar7-m3", "RAR 7: Normal"},
+        {"rar7-m4", "RAR 7: Good"},
+        {"rar7-m5", "RAR 7: Best"}
     };
     static const peare_writer_variant xarVariants[] = {
         {"store", "Store"}, {"gzip", "Zlib/Deflate"}, {"bzip2", "BZip2"}
@@ -7545,6 +7583,10 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
     };
     if (std::strcmp(formatIdUtf8, "zip") == 0 && index < 18) {
         *outVariant = zipVariants[index];
+        return PEARE_WRITER_OK;
+    }
+    if (std::strcmp(formatIdUtf8, "rar") == 0 && index < 18) {
+        *outVariant = rarVariants[index];
         return PEARE_WRITER_OK;
     }
     if (std::strcmp(formatIdUtf8, "gzip") == 0 && index == 0) {
@@ -7711,6 +7753,51 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("A format and output path are required."), false);
     const char* variant = variantIdUtf8 && *variantIdUtf8 ? variantIdUtf8 : nullptr;
+    if (std::strcmp(formatIdUtf8, "rar") == 0) {
+        if (!variant)
+            return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                        QStringLiteral("A RAR version is required."), false);
+        peare::writer::RarArchiveVersion version;
+        unsigned method = 0;
+        if (std::strcmp(variant, "rar4-store") == 0)
+            version = peare::writer::RarArchiveVersion::Rar4;
+        else if (std::strcmp(variant, "rar5-store") == 0)
+            version = peare::writer::RarArchiveVersion::Rar5;
+        else if (std::strcmp(variant, "rar7-store") == 0)
+            version = peare::writer::RarArchiveVersion::Rar7;
+        else if ((std::strncmp(variant, "rar4-m", 6) == 0 ||
+                  std::strncmp(variant, "rar5-m", 6) == 0 ||
+                  std::strncmp(variant, "rar7-m", 6) == 0) &&
+                 variant[6] >= '0' && variant[6] <= '5' && !variant[7]) {
+            version = variant[3] == '4' ? peare::writer::RarArchiveVersion::Rar4
+                    : variant[3] == '5' ? peare::writer::RarArchiveVersion::Rar5
+                                        : peare::writer::RarArchiveVersion::Rar7;
+            method = unsigned(variant[6] - '0');
+        } else
+            return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                        QStringLiteral("The requested RAR version is not supported."), false);
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (writer->active)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("A writer operation is already active."), false);
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            writer->rarArchive.reset(new (std::nothrow) peare::writer::RarArchiveWriter);
+            if (!writer->rarArchive)
+                return fail(writer, PEARE_WRITER_ALLOCATION_FAILED,
+                            QStringLiteral("Could not allocate the RAR writer."), false);
+            QString error;
+            if (!writer->rarArchive->beginCreate(QString::fromUtf8(outputPathUtf8),
+                                                  version, method, &error)) {
+                writer->rarArchive.reset();
+                return fail(writer, PEARE_WRITER_IO_ERROR, error, false);
+            }
+            writer->active = true;
+            writer->updateMode = false;
+            writer->mode = peare_writer_handle_s::Mode::RarCreate;
+            return PEARE_WRITER_OK;
+        });
+    }
     if (std::strcmp(formatIdUtf8, "zip") == 0) {
         if (variant && std::strcmp(variant, "store") != 0 &&
             std::strcmp(variant, "deflate") != 0 &&
@@ -8541,6 +8628,8 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer);
 int peare_writer_can_add_files(const char* containerPathUtf8) {
     if (!containerPathUtf8 || !*containerPathUtf8) return 0;
     try {
+        if (peare::writer::RarArchiveWriter::canUpdate(
+                QString::fromUtf8(containerPathUtf8))) return 1;
         if (isRpmPackageFile(QString::fromUtf8(containerPathUtf8))) return 1;
         if (isDebPackageFile(QString::fromUtf8(containerPathUtf8))) return 1;
         std::vector<peare::writer::IsoImageEntry> isoEntries;
@@ -8664,6 +8753,11 @@ peare_writer_status peare_writer_get_update_capabilities(
                                 PEARE_WRITER_CAP_RENAME_ENTRY |
                                 PEARE_WRITER_CAP_DELETE_ENTRY;
         };
+        if (peare::writer::RarArchiveWriter::canUpdate(
+                QString::fromUtf8(containerPathUtf8))) {
+            setArchiveCapabilities();
+            return PEARE_WRITER_OK;
+        }
         if (isRpmPackageFile(QString::fromUtf8(containerPathUtf8))) {
             setArchiveCapabilities();
             return PEARE_WRITER_OK;
@@ -8827,6 +8921,25 @@ peare_writer_status peare_writer_add_files_begin(peare_writer_handle writer,
         QFile physicalInput(QString::fromUtf8(containerPathUtf8));
         if (!physicalInput.open(QIODevice::ReadOnly))
             return fail(writer, PEARE_WRITER_IO_ERROR, physicalInput.errorString(), false);
+        writer->rarArchive.reset(new (std::nothrow) peare::writer::RarArchiveWriter);
+        if (!writer->rarArchive)
+            return fail(writer, PEARE_WRITER_ALLOCATION_FAILED,
+                        QStringLiteral("Could not allocate the RAR update backend."), false);
+        QString rarError;
+        if (writer->rarArchive->beginUpdate(QString::fromUtf8(containerPathUtf8),
+                                            writer->password, &rarError)) {
+            writer->active = true;
+            writer->updateMode = true;
+            writer->archiveDirty = false;
+            writer->updatePath = QString::fromUtf8(containerPathUtf8);
+            writer->mode = peare_writer_handle_s::Mode::RarUpdate;
+            physicalInput.close();
+            return PEARE_WRITER_OK;
+        }
+        writer->rarArchive.reset();
+        if (QFileInfo(QString::fromUtf8(containerPathUtf8)).suffix().compare(
+                QStringLiteral("rar"), Qt::CaseInsensitive) == 0)
+            return fail(writer, PEARE_WRITER_UNSUPPORTED_OPERATION, rarError, false);
         writer->uueStage.reset(new (std::nothrow) QTemporaryDir);
         if (!writer->uueStage || !writer->uueStage->isValid()) {
             writer->uueStage.reset();
@@ -9235,6 +9348,23 @@ peare_writer_status peare_writer_add_file(peare_writer_handle writer,
     if (!writer->active)
         return fail(writer, PEARE_WRITER_NOT_ACTIVE,
                     QStringLiteral("No container write is active."), false);
+    if (writer->mode == peare_writer_handle_s::Mode::RarCreate ||
+        writer->mode == peare_writer_handle_s::Mode::RarUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("A source file and RAR path are required."));
+            QByteArray name;
+            if (!normalizedEntryName(entryNameUtf8, false, &name))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The RAR path is invalid or unsafe."));
+            QString error;
+            if (!writer->rarArchive->addFile(QString::fromUtf8(sourcePathUtf8), name,
+                                              &error))
+                return fail(writer, error.contains(QStringLiteral("conflicts"))
+                    ? PEARE_WRITER_DUPLICATE_ENTRY : PEARE_WRITER_IO_ERROR, error);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::DebCreate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
@@ -9542,6 +9672,19 @@ peare_writer_status peare_writer_create_empty_file(peare_writer_handle writer,
     if (!entryNameUtf8 || !*entryNameUtf8)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("An entry name is required."));
+    if (writer->mode == peare_writer_handle_s::Mode::RarCreate ||
+        writer->mode == peare_writer_handle_s::Mode::RarUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray name;
+            if (!normalizedEntryName(entryNameUtf8, false, &name))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The empty RAR file path is invalid."));
+            QString error;
+            if (!writer->rarArchive->addEmptyFile(name, &error))
+                return fail(writer, error.contains(QStringLiteral("conflicts"))
+                    ? PEARE_WRITER_DUPLICATE_ENTRY : PEARE_WRITER_IO_ERROR, error);
+            return PEARE_WRITER_OK;
+        });
     return cBoundary(writer, [&]() -> peare_writer_status {
         QTemporaryFile emptyFile;
         if (!emptyFile.open())
@@ -9561,6 +9704,20 @@ peare_writer_status peare_writer_create_directory(peare_writer_handle writer,
     if (!entryNameUtf8 || !*entryNameUtf8)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("An entry name is required."));
+    if (writer->mode == peare_writer_handle_s::Mode::RarCreate ||
+        writer->mode == peare_writer_handle_s::Mode::RarUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray name;
+            if (!normalizedEntryName(entryNameUtf8, true, &name))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The RAR directory path is invalid."));
+            if (name.endsWith('/')) name.chop(1);
+            QString error;
+            if (!writer->rarArchive->addDirectory(name, &error))
+                return fail(writer, error.contains(QStringLiteral("conflicts"))
+                    ? PEARE_WRITER_DUPLICATE_ENTRY : PEARE_WRITER_IO_ERROR, error);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::DebCreate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             QByteArray name;
@@ -9651,6 +9808,20 @@ peare_writer_status peare_writer_replace_file(peare_writer_handle writer,
     if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("A source path and entry name are required."));
+    if (writer->mode == peare_writer_handle_s::Mode::RarCreate ||
+        writer->mode == peare_writer_handle_s::Mode::RarUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray name;
+            if (!normalizedEntryName(entryNameUtf8, false, &name))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The RAR path to replace is invalid."));
+            QString error;
+            if (!writer->rarArchive->replaceFile(QString::fromUtf8(sourcePathUtf8),
+                                                  name, &error))
+                return fail(writer, error.contains(QStringLiteral("not found"))
+                    ? PEARE_WRITER_ENTRY_NOT_FOUND : PEARE_WRITER_IO_ERROR, error);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::UuencodeUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             const QByteArray name = QFileInfo(QString::fromUtf8(entryNameUtf8))
@@ -9962,6 +10133,21 @@ peare_writer_status peare_writer_rename_entry(peare_writer_handle writer,
     if (!entryNameUtf8 || !*entryNameUtf8 || !newEntryNameUtf8 || !*newEntryNameUtf8)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("Source and destination entry names are required."));
+    if (writer->mode == peare_writer_handle_s::Mode::RarCreate ||
+        writer->mode == peare_writer_handle_s::Mode::RarUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray oldName;
+            QByteArray newName;
+            if (!normalizedEntryName(entryNameUtf8, false, &oldName) ||
+                !normalizedEntryName(newEntryNameUtf8, false, &newName))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The RAR source or destination path is invalid."));
+            QString error;
+            if (!writer->rarArchive->renameEntry(oldName, newName, &error))
+                return fail(writer, error.contains(QStringLiteral("not found"))
+                    ? PEARE_WRITER_ENTRY_NOT_FOUND : PEARE_WRITER_DUPLICATE_ENTRY, error);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::UuencodeUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             const QByteArray oldName = QFileInfo(QString::fromUtf8(entryNameUtf8))
@@ -10399,6 +10585,20 @@ peare_writer_status peare_writer_delete_entry(peare_writer_handle writer,
     if (!entryNameUtf8 || !*entryNameUtf8 || (recursive != 0 && recursive != 1))
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("A valid entry name and recursive flag are required."));
+    if (writer->mode == peare_writer_handle_s::Mode::RarCreate ||
+        writer->mode == peare_writer_handle_s::Mode::RarUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray name;
+            if (!normalizedEntryName(entryNameUtf8, true, &name))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The RAR path to delete is invalid."));
+            while (name.endsWith('/')) name.chop(1);
+            QString error;
+            if (!writer->rarArchive->deleteEntry(name, recursive != 0, &error))
+                return fail(writer, error.contains(QStringLiteral("not found"))
+                    ? PEARE_WRITER_ENTRY_NOT_FOUND : PEARE_WRITER_INVALID_ARGUMENT, error);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::UuencodeUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             const QByteArray name = QFileInfo(QString::fromUtf8(entryNameUtf8))
@@ -10667,7 +10867,8 @@ peare_writer_status peare_writer_delete_entry_by_id(peare_writer_handle writer,
 
 peare_writer_status peare_writer_update_finish(peare_writer_handle writer) {
     if (!writer) return PEARE_WRITER_INVALID_HANDLE;
-    if (writer->mode != peare_writer_handle_s::Mode::ZipUpdate &&
+    if (writer->mode != peare_writer_handle_s::Mode::RarUpdate &&
+        writer->mode != peare_writer_handle_s::Mode::ZipUpdate &&
         writer->mode != peare_writer_handle_s::Mode::TarUpdate &&
         writer->mode != peare_writer_handle_s::Mode::CpioUpdate &&
         writer->mode != peare_writer_handle_s::Mode::ArUpdate &&
@@ -10689,6 +10890,19 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
     if (writer->mode == peare_writer_handle_s::Mode::ZipCreate ||
         writer->mode == peare_writer_handle_s::Mode::ZipUpdate)
         return peare_writer_zip_finish(writer);
+    if (writer->mode == peare_writer_handle_s::Mode::RarCreate ||
+        writer->mode == peare_writer_handle_s::Mode::RarUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QString error;
+            if (!writer->rarArchive || !writer->rarArchive->finish(&error))
+                return fail(writer, PEARE_WRITER_IO_ERROR, error);
+            writer->rarArchive.reset();
+            writer->active = false;
+            writer->mode = peare_writer_handle_s::Mode::None;
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::GzipCreate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             if (!writer->output->commit())
@@ -11294,6 +11508,7 @@ void peare_writer_destroy(peare_writer_handle writer) {
     if (writer->output) writer->output->cancelWriting();
     if (writer->zipStage) writer->zipStage->close();
     if (writer->diskUpdate) writer->diskUpdate->abort();
+    writer->password.fill(QChar(0));
     delete writer;
 }
 

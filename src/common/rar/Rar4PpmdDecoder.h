@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#include "../third_party/lzma/Ppmd7.h"
+#include "../../opener/compression/third_party/lzma/Ppmd7.h"
 
 #ifdef __cplusplus
 extern "C" {

@@ -33,6 +33,7 @@ jobs:
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
+          -DPEARE_CXX_STANDARD=11
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -82,7 +83,7 @@ jobs:
 
       - name: Configure
         shell: cmd
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="%QT_ROOT_DIR%"
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="%QT_ROOT_DIR%" -DPEARE_CXX_STANDARD=11
 
       - name: Build
         shell: cmd

@@ -74,6 +74,7 @@ private:
     struct WriterViewState {
         QString locationPath;
         QString selectionPath;
+        QString password;
         QStringList expandedPaths;
     };
 
@@ -125,7 +126,7 @@ private:
     WriterViewState captureWriterViewState() const;
     void refreshWriterView(const WriterViewState& state,
                            const QString& selectionPath = QString());
-    bool beginWriterUpdate(peare_writer_handle writer);
+    bool beginWriterUpdate(peare_writer_handle writer, const QString& password);
     void showWriterError(const QString& title, const QString& message);
     void reportOffscreenWriterStage(const QString& stage);
     void createWriterEntry(bool directory);

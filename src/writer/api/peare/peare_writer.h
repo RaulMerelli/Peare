@@ -70,6 +70,8 @@ typedef struct peare_writer_create_options {
 
 PEARE_WRITER_API peare_writer_status peare_writer_create(peare_writer_handle *out_writer);
 PEARE_WRITER_API void peare_writer_destroy(peare_writer_handle writer);
+PEARE_WRITER_API peare_writer_status peare_writer_set_password(
+    peare_writer_handle writer, const char *password_utf8);
 
 /* Generic container creation and format discovery. Strings are static ABI data. */
 PEARE_WRITER_API size_t peare_writer_create_format_count(void);

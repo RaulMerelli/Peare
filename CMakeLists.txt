@@ -237,12 +237,12 @@ add_library(PeareOpener SHARED
     src/opener/compression/third_party/wimlib/src/lzms_common.c
     src/opener/compression/third_party/wimlib/src/decompress_common.c
     src/opener/compression/third_party/wimlib/src/compress_common.c
-    src/opener/compression/peare/Rar4PpmdDecoder.h
-    src/opener/compression/peare/Rar4PpmdDecoder.cpp
-    src/opener/compression/peare/Rar4Crypto.h
-    src/opener/compression/peare/Rar4Crypto.cpp
-    src/opener/modules/Rar4Vm.h
-    src/opener/modules/Rar4Vm.cpp
+    src/common/rar/Rar4PpmdDecoder.h
+    src/common/rar/Rar4PpmdDecoder.cpp
+    src/common/rar/Rar4Crypto.h
+    src/common/rar/Rar4Crypto.cpp
+    src/common/rar/Rar4Vm.h
+    src/common/rar/Rar4Vm.cpp
     src/opener/compression/Bcj2Decoder.h
     src/opener/compression/Bcj2Decoder.cpp
     src/opener/compression/SevenZipAesDecoder.h
@@ -391,8 +391,10 @@ add_library(PeareOpener SHARED
     src/opener/modules/Rar4Module.cpp
     src/opener/modules/Rar5Module.h
     src/opener/modules/Rar5Module.cpp
-    src/opener/modules/Rar4LzDecoder.h
-    src/opener/modules/Rar4LzDecoder.cpp
+    src/common/rar/Rar4LzDecoder.h
+    src/common/rar/Rar4LzDecoder.cpp
+    src/common/rar/Rar5Crypto.h
+    src/common/rar/Rar5Crypto.cpp
     src/opener/modules/UuencodeModule.h
     src/opener/modules/UuencodeModule.cpp
     src/opener/modules/ResxModule.h
@@ -810,6 +812,23 @@ add_library(PeareWriter SHARED
     src/writer/formats/DiskImageWriter.cpp
     src/writer/formats/IsoImageWriter.h
     src/writer/formats/IsoImageWriter.cpp
+    src/writer/formats/RarArchiveWriter.h
+    src/writer/formats/RarArchiveWriter.cpp
+    src/common/rar/Rar5Crypto.h
+    src/common/rar/Rar5Crypto.cpp
+    src/opener/compression/third_party/lzma/Aes.h
+    src/opener/compression/third_party/lzma/Aes.c
+    src/common/rar/Rar4Crypto.h
+    src/common/rar/Rar4Crypto.cpp
+    src/common/rar/Rar4LzDecoder.h
+    src/common/rar/Rar4LzDecoder.cpp
+    src/common/rar/Rar4Vm.h
+    src/common/rar/Rar4Vm.cpp
+    src/common/rar/Rar4PpmdDecoder.h
+    src/common/rar/Rar4PpmdDecoder.cpp
+    src/opener/compression/third_party/lzma/Ppmd7.h
+    src/opener/compression/third_party/lzma/Ppmd7.c
+    src/opener/compression/third_party/lzma/Ppmd7Dec.c
     src/writer/formats/ExtVolumeUpdate.h
     src/writer/formats/ExtVolumeUpdate.cpp
     src/writer/formats/NtfsVolumeUpdate.h

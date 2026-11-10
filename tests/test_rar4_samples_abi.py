@@ -37,6 +37,16 @@ def _seven_zip():
     return next((path for path in candidates if path and Path(path).is_file()), None)
 
 
+def _winrar_cli():
+    configured = os.environ.get("PEARE_WINRAR_CLI_EXE")
+    program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+    candidates = [configured, shutil.which("Rar.exe"),
+                  str(Path(program_files) / "WinRAR" / "Rar.exe")]
+    program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    candidates.append(str(Path(program_files_x86) / "WinRAR" / "Rar.exe"))
+    return next((path for path in candidates if path and Path(path).is_file()), None)
+
+
 def _rar_payload(peare_lib, archive, entry_name, password, expected_format="RAR4"):
     opener = peare_lib.open_file(str(archive), password=password)
     assert opener is not None, peare_lib.status_message(peare_lib.last_open_status)
@@ -131,3 +141,26 @@ def test_rar4_compressed_unicode_filename_matches_source(peare_lib):
     assert hashlib.sha256(actual_payload).hexdigest() == (
         "84f1b1405488f766cfeae58d72cd7d73aef6d38654bb16887f13ef337fd659a0"
     )
+
+
+@pytest.mark.parametrize("method", range(1, 6))
+def test_rar4_small_solid_ppmd_reader_abi(peare_lib, tmp_path, method):
+    rar_cli = _winrar_cli()
+    if not rar_cli:
+        pytest.skip("WinRAR Rar.exe is required to create the solid PPMd sample")
+    first_data = b"small solid stream seed: abcdefghijklmnopqrstuvwxyz\n" * 3
+    second_data = b"small solid stream continuation: abcdefghijklmnopqrstuvwxyz\n" * 4
+    (tmp_path / "first.txt").write_bytes(first_data)
+    (tmp_path / "second.txt").write_bytes(second_data)
+    archive = tmp_path / f"solid-ppmd-m{method}.rar"
+    subprocess.run([rar_cli, "a", "-ma4", f"-m{method}", "-s", "-ep1",
+                    "-mct+", str(archive), "first.txt", "second.txt"],
+                   cwd=tmp_path, check=True, capture_output=True, timeout=30)
+    subprocess.run([rar_cli, "t", str(archive)], check=True,
+                   capture_output=True, timeout=30)
+
+    with peare_lib.open_file(str(archive)) as opener:
+        entries = {row["path"]: row for row in
+                   opener.normalized_tree(recurse_containers=False)}
+    assert entries["first.txt"]["sha256"] == hashlib.sha256(first_data).hexdigest()
+    assert entries["second.txt"]["sha256"] == hashlib.sha256(second_data).hexdigest()

@@ -83,6 +83,16 @@ def _winrar_executable():
             return str(candidate)
     return None
 
+def _winrar_cli_executable():
+    configured = os.environ.get("PEARE_WINRAR_CLI_EXE")
+    if configured and Path(configured).is_file():
+        return configured
+    gui = _winrar_executable()
+    if not gui:
+        return None
+    candidate = Path(gui).with_name("Rar.exe")
+    return str(candidate) if candidate.is_file() else None
+
 def _bsdtar_executable():
     return shutil.which("bsdtar.exe") or shutil.which("bsdtar")
 
@@ -4506,7 +4516,8 @@ def test_tar_cud_with_archive_created_by_external_tool(
             writer, b"CUD-EMPTY.TXT", 0) == 0
         assert writer_lib.peare_writer_delete_entry(
             writer, b"CUD-DIR", 1) == 0
-        assert writer_lib.peare_writer_update_finish(writer) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
     finally:
         writer_lib.peare_writer_destroy(writer)
 
@@ -4676,7 +4687,7 @@ def test_tar_bzip2_create_and_cud_roundtrip_with_7zip(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 30
+    assert writer_lib.peare_writer_create_format_count() == 31
     assert writer_lib.peare_writer_create_variant_count(b"tar-bzip2") == 9
     for level in range(1, 10):
         archive = tmp_path / f"created-level-{level}.tbz2"
@@ -4813,7 +4824,7 @@ def test_tar_zstd_create_and_cud_roundtrip_with_independent_decoder(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 30
+    assert writer_lib.peare_writer_create_format_count() == 31
     assert writer_lib.peare_writer_create_variant_count(b"tar-zstd") == 27
     variants = [f"fast-{level}" for level in range(5, 0, -1)] + [
         f"level-{level}" for level in range(1, 23)]
@@ -5054,7 +5065,7 @@ def test_tar_xz_create_all_checks_and_7zip(writer_lib, peare_lib, tmp_path):
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     checks = ("none", "crc32", "crc64", "sha256")
-    assert writer_lib.peare_writer_create_format_count() == 30
+    assert writer_lib.peare_writer_create_format_count() == 31
     assert writer_lib.peare_writer_create_variant_count(b"tar-xz") == len(checks)
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for check in checks:
@@ -5185,7 +5196,7 @@ def test_tar_lzma_create_all_levels_and_7zip(writer_lib, peare_lib, tmp_path):
         pytest.skip("7-Zip is required for independent TAR.LZMA validation")
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    assert writer_lib.peare_writer_create_format_count() == 30
+    assert writer_lib.peare_writer_create_format_count() == 31
     assert writer_lib.peare_writer_create_variant_count(b"tar-lzma") == 9
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for level in range(1, 10):
@@ -5302,7 +5313,7 @@ def test_lzip_writer_all_levels_and_winrar(
     source = ROOT / "README.md"
     expected = source.read_bytes()
     expected_hash = hashlib.sha256(expected).hexdigest()
-    assert writer_lib.peare_writer_create_format_count() == 30
+    assert writer_lib.peare_writer_create_format_count() == 31
     assert writer_lib.peare_writer_create_variant_count(b"lzip") == 10
     variants = []
     for index in range(10):
@@ -5419,7 +5430,7 @@ def test_lzip_writer_concatenates_selected_inputs(writer_lib, peare_lib, tmp_pat
     "classic", "classic-encoded-name", "base64", "base64-encoded-name"])
 def test_uuencode_writer_roundtrip_all_headers(
         writer_lib, peare_lib, peare_gui_path, tmp_path, variant):
-    assert writer_lib.peare_writer_create_format_count() == 30
+    assert writer_lib.peare_writer_create_format_count() == 31
     formats = (_WriterFormat * 30)()
     assert all(writer_lib.peare_writer_get_create_format(
         index, C.byref(formats[index])) == 0 for index in range(len(formats)))
@@ -5568,7 +5579,8 @@ def test_uuencode_writer_full_cud_on_libarchive_sample(
         assert writer_lib.peare_writer_update_begin(writer, archive_path) == 0
         assert writer_lib.peare_writer_add_file(
             writer, str(added).encode(), b"added.txt") == 0
-        assert writer_lib.peare_writer_update_finish(writer) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
     finally:
         writer_lib.peare_writer_destroy(writer)
     first_members = _decode_classic_uue_members(archive.read_bytes())
@@ -7837,7 +7849,8 @@ def test_writer_create_format_through_gui_dialog(
     sample = ROOT / "tests" / "formats" / "tar" / "fixtures" / "docs.tar"
     assert sample.is_file()
     format_sources = [
-        ("zip", "README.md"), ("gzip", "README.md"),
+        ("zip", "README.md"), ("rar", "README.md"),
+        ("gzip", "README.md"),
         ("bzip2", "README.md"), ("zstd", "README.md"),
         ("xz", "README.md"), ("lzma", "README.md"),
         ("tar", "README.md"), ("tar-gzip", "README.md"),
@@ -9363,6 +9376,8 @@ def writer_lib():
     lib = C.CDLL(str(path))
     lib.peare_writer_create.argtypes = [C.POINTER(_HANDLE)]
     lib.peare_writer_create.restype = C.c_int
+    lib.peare_writer_set_password.argtypes = [_HANDLE, C.c_char_p]
+    lib.peare_writer_set_password.restype = C.c_int
     lib.peare_writer_destroy.argtypes = [_HANDLE]
     lib.peare_writer_create_format_count.restype = C.c_size_t
     lib.peare_writer_get_create_format.argtypes = [C.c_size_t, C.POINTER(_WriterFormat)]
@@ -9462,6 +9477,1212 @@ def _cpio_tar_entries(tar, archive):
     result = subprocess.run([tar, "-tf", str(archive)], check=True, capture_output=True)
     return [line.decode("utf-8", "replace").rstrip("/").removeprefix("./")
             for line in result.stdout.splitlines() if line]
+
+
+@pytest.mark.parametrize(("variant", "expected_format"), [
+    ("rar4-store", "RAR4"),
+    *((f"rar4-m{method}", "RAR4") for method in range(1, 6)),
+    ("rar5-store", "RAR5"),
+    ("rar7-store", "RAR5"),
+    *((f"rar5-m{method}", "RAR5") for method in range(1, 6)),
+    *((f"rar7-m{method}", "RAR5") for method in range(1, 6)),
+])
+def test_rar_store_create_abi_roundtrip(writer_lib, peare_lib, tmp_path,
+                                        variant, expected_format):
+    empty_archive = tmp_path / f"empty-{variant}.rar"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"rar", variant.encode(), str(empty_archive).encode()) == 0
+        assert writer_lib.peare_writer_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    with peare_lib.open_file(str(empty_archive)) as opener:
+        assert opener.normalized_tree() == []
+    rar_cli = _winrar_cli_executable()
+    if rar_cli:
+        checked = subprocess.run([rar_cli, "t", str(empty_archive)],
+                                 capture_output=True, text=True, timeout=30)
+        assert checked.returncode == 10
+
+    archive = tmp_path / f"created-{variant}.rar"
+    source = tmp_path / "payload.txt"
+    source.write_bytes(b"Peare RAR writer ABI payload\n")
+    replacement = tmp_path / "replacement.txt"
+    replacement.write_bytes(b"replacement RAR payload\n")
+    unicode_source = tmp_path / "unicode.txt"
+    unicode_source.write_bytes("Unicode archive name\n".encode("utf-8"))
+    discarded = tmp_path / "discarded.txt"
+    discarded.write_bytes(b"this entry must be removed\n")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"rar", variant.encode(), str(archive).encode()) == 0
+        assert writer_lib.peare_writer_create_directory(writer, b"folder/") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(source).encode(), b"folder/payload.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            writer, b"folder/empty.txt") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(source).encode(), b"folder/sub/child.txt") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(unicode_source).encode(), "資料/café.txt".encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(discarded).encode(), b"folder/discarded.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"folder/payload.txt") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"folder/empty.txt", b"folder/renamed-empty.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"folder/sub", 1) == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"folder/discarded.txt", 0) == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"folder", b"renamed-folder") == 0
+        status = writer_lib.peare_writer_finish(writer)
+        assert status == 0, writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with peare_lib.open_file(str(archive)) as opener:
+        assert opener.container_format() == expected_format
+        rows = opener.normalized_tree()
+        entries = {row["path"]: row["size"] for row in rows}
+        assert entries["renamed-folder/payload.txt"] == len(replacement.read_bytes())
+        assert entries["renamed-folder/renamed-empty.txt"] == 0
+        assert entries["資料/café.txt"] == len(unicode_source.read_bytes())
+        hashes = {row["path"]: row["sha256"] for row in rows}
+        assert hashes["renamed-folder/payload.txt"] == hashlib.sha256(
+            replacement.read_bytes()).hexdigest()
+        assert hashes["資料/café.txt"] == hashlib.sha256(
+            unicode_source.read_bytes()).hexdigest()
+        assert "renamed-folder/sub/child.txt" not in entries
+        assert "renamed-folder/discarded.txt" not in entries
+
+    update_addition = tmp_path / f"update-{variant}.txt"
+    update_replacement = tmp_path / f"replace-{variant}.txt"
+    update_addition.write_bytes(b"added through existing-archive CUD\n")
+    update_replacement.write_bytes(b"replaced through existing-archive CUD\n")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_begin(
+            writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_add_file(
+            writer, str(update_addition).encode(), b"update-added.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            writer, b"update-empty.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(update_replacement).encode(),
+            b"renamed-folder/payload.txt") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"update-added.txt", b"update-renamed.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"renamed-folder/renamed-empty.txt", 0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with peare_lib.open_file(str(archive)) as opener:
+        entries = {row["path"]: row for row in opener.normalized_tree()}
+        assert entries["renamed-folder/payload.txt"]["sha256"] == hashlib.sha256(
+            update_replacement.read_bytes()).hexdigest()
+        assert entries["update-renamed.txt"]["sha256"] == hashlib.sha256(
+            update_addition.read_bytes()).hexdigest()
+        assert entries["update-empty.txt"]["size"] == 0
+        assert "renamed-folder/renamed-empty.txt" not in entries
+
+    seven_zip = _seven_zip_executable()
+    if seven_zip and not variant.startswith("rar7"):
+        subprocess.run([seven_zip, "t", str(archive)], check=True,
+                       capture_output=True, timeout=30)
+        extracted = subprocess.run(
+            [seven_zip, "x", "-so", str(archive),
+             "renamed-folder/payload.txt"],
+            check=True, capture_output=True, timeout=30)
+        assert extracted.stdout == update_replacement.read_bytes()
+        extracted_unicode = subprocess.run(
+            [seven_zip, "x", "-so", str(archive), "資料/café.txt"],
+            check=True, capture_output=True, timeout=30)
+        assert extracted_unicode.stdout == unicode_source.read_bytes()
+    rar_cli = _winrar_cli_executable()
+    if rar_cli:
+        subprocess.run([rar_cli, "t", str(archive)], check=True,
+                       capture_output=True, timeout=30)
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_rar_create_variants_gui_persistent(
+        peare_gui_path, peare_lib, tmp_path, view):
+    sample_root = os.environ.get("PEARE_RAR_SAMPLE_ROOT")
+    if not sample_root:
+        pytest.skip("Set PEARE_RAR_SAMPLE_ROOT to the local RAR sample corpus.")
+    image = Path(sample_root) / "rar4-samples" / "rar4-m3.rar"
+    if not image.is_file():
+        pytest.skip("The real RAR4 GUI entry sample is unavailable.")
+
+    source = tmp_path / "gui-rar-payload.txt"
+    source_data = b"RAR GUI variant creation payload\n"
+    source.write_bytes(source_data)
+    addition = tmp_path / "gui-rar-addition.txt"
+    addition_data = b"RAR GUI variant added payload\n"
+    addition.write_bytes(addition_data)
+    replacement = tmp_path / "gui-rar-replacement.txt"
+    replacement_data = b"RAR GUI variant replacement payload\n"
+    replacement.write_bytes(replacement_data)
+    variants = ["rar4-store"] + [f"rar4-m{method}" for method in range(1, 6)]
+    variants += ["rar5-store"] + [f"rar5-m{method}" for method in range(1, 6)]
+    variants += ["rar7-store"] + [f"rar7-m{method}" for method in range(1, 6)]
+    operations = []
+    outputs = {}
+    for variant in variants:
+        destination = tmp_path / f"gui-created-{variant}.rar"
+        outputs[variant] = destination
+        operations.append({
+            "type": "create_container",
+            "test_id": f"create-{variant}",
+            "format": "rar",
+            "variant": variant,
+            "destination": str(destination),
+            "sources": [str(source)],
+        })
+        operations.extend([
+            {"type": "create_file", "test_id": f"empty-{variant}",
+             "name": "empty.txt", "expect_present": "empty.txt"},
+            {"type": "create_directory", "test_id": f"directory-{variant}",
+             "name": "empty-dir", "expect_present": "empty-dir"},
+            {"type": "add_files", "test_id": f"add-{variant}",
+             "sources": [str(addition)], "destination": "",
+             "expect_present": addition.name},
+            {"type": "replace", "test_id": f"replace-{variant}",
+             "path": source.name, "source": str(replacement),
+             "expect_present": source.name},
+            {"type": "rename", "test_id": f"rename-{variant}",
+             "path": addition.name, "name": "renamed.txt",
+             "expect_present": "renamed.txt", "expect_absent": addition.name},
+            {"type": "delete", "test_id": f"delete-empty-{variant}",
+             "path": "empty.txt", "expect_absent": "empty.txt"},
+            {"type": "delete", "test_id": f"delete-directory-{variant}",
+             "path": "empty-dir", "expect_absent": "empty-dir"},
+        ])
+    scenario = tmp_path / "rar-create-variants-gui.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / "rar-create-variants-gui-output"
+    runner = ROOT / "tests" / "run_gui_writer_tests.py"
+    result = subprocess.run([
+        sys.executable, str(runner), "--exe", str(peare_gui_path),
+        "--image", str(image), "--scenario", str(scenario),
+        "--output-dir", str(output_dir), "--timeout", "300",
+    ], capture_output=True, text=True, timeout=330)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    for variant, archive in outputs.items():
+        with peare_lib.open_file(str(archive)) as opener:
+            entries = {row["path"]: row for row in opener.normalized_tree()}
+            assert entries[source.name]["sha256"] == hashlib.sha256(
+                replacement_data).hexdigest()
+            assert entries["renamed.txt"]["sha256"] == hashlib.sha256(
+                addition_data).hexdigest()
+            assert "empty.txt" not in entries
+            assert "empty-dir" not in entries
+        rar_cli = _winrar_cli_executable()
+        if rar_cli:
+            subprocess.run([rar_cli, "t", str(archive)], check=True,
+                           capture_output=True, timeout=30)
+
+
+def test_rar_create_query_and_add_files_to_abi(writer_lib, peare_lib, tmp_path):
+    assert writer_lib.peare_writer_create_format_count() == 31
+    assert writer_lib.peare_writer_create_variant_count(b"rar") == 18
+    found_rar = False
+    for index in range(writer_lib.peare_writer_create_format_count()):
+        item = _WriterFormat()
+        assert writer_lib.peare_writer_get_create_format(index, C.byref(item)) == 0
+        found_rar = found_rar or item.id == b"rar"
+    assert found_rar
+    ids = []
+    for index in range(writer_lib.peare_writer_create_variant_count(b"rar")):
+        item = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"rar", index, C.byref(item)) == 0
+        ids.append(item.id.decode())
+    assert ids == [
+        "rar4-store", "rar4-m1", "rar4-m2", "rar4-m3", "rar4-m4", "rar4-m5",
+        "rar5-store", "rar5-m1", "rar5-m2", "rar5-m3", "rar5-m4", "rar5-m5",
+        "rar7-store", "rar7-m1", "rar7-m2", "rar7-m3", "rar7-m4", "rar7-m5",
+    ]
+
+    source = tmp_path / "add-files-to.txt"
+    second_source = tmp_path / "add-files-to-second.txt"
+    archive = tmp_path / "add-files-to.rar"
+    source.write_bytes(b"generic RAR creation workflow\n")
+    second_source.write_bytes(b"second generic RAR creation member\n")
+    items = (_WriterInputFile * 2)(
+        _WriterInputFile(str(source).encode(), b"inside.txt"),
+        _WriterInputFile(str(second_source).encode(), b"inside-second.txt"),
+    )
+    options = _WriterCreateOptions(b"rar", b"rar4-m3", b"")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_to_ex(
+            writer, str(archive).encode(), C.byref(options), 0,
+            items, len(items)) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = opener.normalized_tree()
+        assert any(row["path"] == "inside.txt" and row["sha256"] ==
+                   hashlib.sha256(source.read_bytes()).hexdigest() for row in rows)
+        assert any(row["path"] == "inside-second.txt" and row["sha256"] ==
+                   hashlib.sha256(second_source.read_bytes()).hexdigest()
+                   for row in rows)
+
+
+@pytest.mark.parametrize("variant", [
+    "rar4-store", *(f"rar4-m{method}" for method in range(1, 6)),
+    "rar5-store", *(f"rar5-m{method}" for method in range(1, 6)),
+    "rar7-store", *(f"rar7-m{method}" for method in range(1, 6)),
+])
+def test_rar_invalid_operations_and_abort_preserve_target(
+        writer_lib, tmp_path, variant):
+    archive = tmp_path / f"failure-{variant}.rar"
+    source = tmp_path / "failure-source.txt"
+    source.write_bytes(b"RAR transaction must remain unchanged\n")
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"rar", variant.encode(), str(archive).encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(source).encode(), b"keep.txt") == 0
+        assert writer_lib.peare_writer_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    original_hash = hashlib.sha256(archive.read_bytes()).hexdigest()
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"rar", variant.encode(), str(archive).encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(source).encode(), b"replacement.txt") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(source).encode(), b"replacement.txt") != 0
+        writer_lib.peare_writer_abort(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == original_hash
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_begin(
+            writer, str(archive).encode()) == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(source).encode(), b"../escape.txt") != 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(source).encode(), b"keep.txt") != 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(source).encode(), b"missing.txt") != 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"missing.txt", b"renamed.txt") != 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"missing.txt", 0) != 0
+        writer_lib.peare_writer_abort(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == original_hash
+
+
+@pytest.mark.parametrize("variant", ["rar4-store", "rar5-store", "rar7-store"])
+def test_rar_existing_archive_cud_abi_roundtrip(
+        writer_lib, peare_lib, tmp_path, variant):
+    archive = tmp_path / f"existing-{variant}.rar"
+    original = tmp_path / "original.txt"
+    added = tmp_path / "added.txt"
+    replacement = tmp_path / "replacement.txt"
+    original.write_bytes(b"original payload stays intact\n")
+    added.write_bytes(b"new payload\n")
+    replacement.write_bytes(b"replacement payload\n")
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"rar", variant.encode(), str(archive).encode()) == 0
+        assert writer_lib.peare_writer_create_directory(writer, b"folder/") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(original).encode(), b"folder/original.txt") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(added).encode(), b"removed.txt") == 0
+        assert writer_lib.peare_writer_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    assert writer_lib.peare_writer_can_add_files(str(archive).encode()) == 1
+    caps = C.c_uint32()
+    assert writer_lib.peare_writer_get_update_capabilities(
+        str(archive).encode(), 0, C.byref(caps)) == 0
+    assert caps.value == 0x3F
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_begin(
+            writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_add_file(
+            writer, str(added).encode(), b"folder/added.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(writer, b"empty.txt") == 0
+        assert writer_lib.peare_writer_create_directory(writer, b"new-dir/") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"folder/original.txt") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"folder/added.txt", b"folder/renamed.txt") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"new-dir", b"moved-dir") == 0
+        assert writer_lib.peare_writer_delete_entry(writer, b"removed.txt", 0) == 0
+        assert writer_lib.peare_writer_delete_entry(writer, b"moved-dir", 1) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = opener.normalized_tree()
+        entries = {row["path"]: row for row in rows}
+        assert entries["folder/original.txt"]["sha256"] == hashlib.sha256(
+            replacement.read_bytes()).hexdigest()
+        assert entries["folder/renamed.txt"]["sha256"] == hashlib.sha256(
+            added.read_bytes()).hexdigest()
+        assert entries["empty.txt"]["size"] == 0
+        assert "removed.txt" not in entries
+        assert "moved-dir" not in entries
+
+    rar_cli = _winrar_cli_executable()
+    if rar_cli:
+        subprocess.run([rar_cli, "t", str(archive)], check=True,
+                       capture_output=True, timeout=30)
+
+
+def test_rar4_winrar_compressed_archive_update_abi(writer_lib, peare_lib, tmp_path):
+    winrar = _winrar_executable()
+    rar_cli = str(Path(winrar).with_name("Rar.exe")) if winrar else None
+    if not rar_cli:
+        pytest.skip("A WinRAR command-line oracle is required for this sample.")
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    original = source_dir / "compressed.txt"
+    original.write_bytes((b"WinRAR compressed member payload\n" * 100))
+    archive = tmp_path / "winrar-created.rar"
+    subprocess.run([rar_cli, "a", "-ma4", "-m3", "-s-", str(archive),
+                    original.name], cwd=source_dir, check=True,
+                   capture_output=True, timeout=30)
+
+    added = tmp_path / "added.txt"
+    replacement = tmp_path / "replacement.txt"
+    added.write_bytes(b"new member\n")
+    replacement.write_bytes(b"replacement member\n")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_begin(
+            writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_add_file(
+            writer, str(added).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"compressed.txt") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"added.txt", b"renamed.txt") == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = opener.normalized_tree()
+        entries = {row["path"]: row for row in rows}
+        assert entries["compressed.txt"]["sha256"] == hashlib.sha256(
+            replacement.read_bytes()).hexdigest()
+        assert entries["renamed.txt"]["sha256"] == hashlib.sha256(
+            added.read_bytes()).hexdigest()
+    subprocess.run([rar_cli, "t", str(archive)], check=True,
+                   capture_output=True, timeout=30)
+
+
+def test_rar4_winrar_compressed_unicode_name_update_abi(
+        writer_lib, peare_lib, tmp_path):
+    winrar = _winrar_executable()
+    rar_cli = str(Path(winrar).with_name("Rar.exe")) if winrar else None
+    if not rar_cli:
+        rar_cli = _winrar_cli_executable()
+    if not rar_cli:
+        pytest.skip("WinRAR command-line tool is not installed")
+    original_name = "資料-café.txt"
+    original = tmp_path / original_name
+    original.write_text("RAR4 compressed Unicode filename\n", encoding="utf-8")
+    archive = tmp_path / "unicode-rar4.rar"
+    subprocess.run([rar_cli, "a", "-ma4", "-m3", "-s-", "-ep1",
+                    str(archive), str(original)], check=True,
+                   capture_output=True, timeout=30)
+    assert b"\0" in archive.read_bytes()
+
+    replacement = tmp_path / "replacement.txt"
+    replacement.write_bytes(b"updated unicode member\n")
+    addition = tmp_path / "addition.txt"
+    addition.write_bytes(b"new member\n")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_begin(
+            writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_add_file(
+            writer, str(addition).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            writer, b"empty.txt") == 0
+        assert writer_lib.peare_writer_create_directory(writer, b"delete-dir/") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(addition).encode(), b"delete-dir/child.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), original_name.encode()) == 0
+        renamed_name = "rénamed-資料.txt"
+        assert writer_lib.peare_writer_rename_entry(
+            writer, original_name.encode(), renamed_name.encode()) == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"delete-dir", 1) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with peare_lib.open_file(str(archive)) as opener:
+        entries = {row["path"]: row for row in
+                   opener.normalized_tree(recurse_containers=False)}
+    assert entries[renamed_name]["sha256"] == hashlib.sha256(
+        replacement.read_bytes()).hexdigest()
+    assert entries["added.txt"]["sha256"] == hashlib.sha256(
+        addition.read_bytes()).hexdigest()
+    assert entries["empty.txt"]["size"] == 0
+    assert not any(path.startswith("delete-dir/") for path in entries)
+    subprocess.run([rar_cli, "t", str(archive)], check=True,
+                   capture_output=True, timeout=30)
+
+
+def test_rar5_winrar_compressed_archive_update_abi(writer_lib, peare_lib, tmp_path):
+    winrar = _winrar_executable()
+    rar_cli = str(Path(winrar).with_name("Rar.exe")) if winrar else None
+    if not rar_cli:
+        pytest.skip("A WinRAR command-line oracle is required for this sample.")
+    original = tmp_path / "compressed-rar5.txt"
+    original.write_bytes(b"WinRAR RAR5 compressed payload\n" * 128)
+    archive = tmp_path / "winrar-created-rar5.rar"
+    subprocess.run([rar_cli, "a", "-ma5", "-m3", "-s-", str(archive),
+                    original.name], cwd=tmp_path, check=True,
+                   capture_output=True, timeout=30)
+
+    added = tmp_path / "added-rar5.txt"
+    replacement = tmp_path / "replacement-rar5.txt"
+    added.write_bytes(b"new RAR5 member\n")
+    replacement.write_bytes(b"replacement RAR5 member\n")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_begin(
+            writer, str(archive).encode()) == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(added).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"compressed-rar5.txt") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"added.txt", b"renamed-rar5.txt") == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = opener.normalized_tree()
+        entries = {row["path"]: row for row in rows}
+        assert entries["compressed-rar5.txt"]["sha256"] == hashlib.sha256(
+            replacement.read_bytes()).hexdigest()
+        assert entries["renamed-rar5.txt"]["sha256"] == hashlib.sha256(
+            added.read_bytes()).hexdigest()
+    subprocess.run([rar_cli, "t", str(archive)], check=True,
+                   capture_output=True, timeout=30)
+
+
+@pytest.mark.parametrize("method", range(1, 6))
+def test_rar4_small_solid_members_cud_abi(writer_lib, peare_lib, tmp_path, method):
+    winrar = _winrar_executable()
+    rar_cli = str(Path(winrar).with_name("Rar.exe")) if winrar else None
+    if not rar_cli or not Path(rar_cli).is_file():
+        pytest.skip("WinRAR Rar.exe is required to create the solid PPMd sample.")
+    first = tmp_path / "first-small-solid.txt"
+    second = tmp_path / "second-small-solid.txt"
+    first_data = b"small solid stream seed: abcdefghijklmnopqrstuvwxyz\n" * 3
+    second_data = b"small solid stream continuation: abcdefghijklmnopqrstuvwxyz\n" * 4
+    first.write_bytes(first_data)
+    second.write_bytes(second_data)
+    archive = tmp_path / f"solid-ppmd-cud-m{method}.rar"
+    subprocess.run([rar_cli, "a", "-ma4", f"-m{method}", "-s", "-ep1",
+                    "-mct+", str(archive), first.name, second.name],
+                   cwd=tmp_path, check=True, capture_output=True, timeout=30)
+
+    addition = tmp_path / "solid-addition.txt"
+    replacement = tmp_path / "solid-replacement.txt"
+    addition_data = b"new solid member\n"
+    replacement_data = b"replacement solid member\n"
+    addition.write_bytes(addition_data)
+    replacement.write_bytes(replacement_data)
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_begin(
+            writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_add_file(
+            writer, str(addition).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            writer, b"empty.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), first.name.encode()) == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"added.txt", b"renamed.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, second.name.encode(), 0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with peare_lib.open_file(str(archive)) as opener:
+        entries = {row["path"]: row for row in
+                   opener.normalized_tree(recurse_containers=False)}
+    assert entries[first.name]["sha256"] == hashlib.sha256(
+        replacement_data).hexdigest()
+    assert entries["renamed.txt"]["sha256"] == hashlib.sha256(
+        addition_data).hexdigest()
+    assert entries["empty.txt"]["size"] == 0
+    assert second.name not in entries
+    subprocess.run([rar_cli, "t", str(archive)], check=True,
+                   capture_output=True, timeout=30)
+
+
+@pytest.mark.parametrize("method", range(1, 6))
+def test_rar4_small_solid_members_gui_preview(
+        peare_gui_path, tmp_path, method):
+    winrar = _winrar_executable()
+    rar_cli = str(Path(winrar).with_name("Rar.exe")) if winrar else None
+    if not rar_cli or not Path(rar_cli).is_file():
+        pytest.skip("WinRAR Rar.exe is required to create the solid PPMd sample.")
+    first_data = b"small solid stream seed: abcdefghijklmnopqrstuvwxyz\n" * 3
+    second_data = b"small solid stream continuation: abcdefghijklmnopqrstuvwxyz\n" * 4
+    (tmp_path / "first.txt").write_bytes(first_data)
+    (tmp_path / "second.txt").write_bytes(second_data)
+    archive = tmp_path / f"solid-ppmd-gui-m{method}.rar"
+    subprocess.run([rar_cli, "a", "-ma4", f"-m{method}", "-s", "-ep1",
+                    "-mct+", str(archive), "first.txt", "second.txt"],
+                   cwd=tmp_path, check=True, capture_output=True, timeout=30)
+
+    output_dir = tmp_path / "gui-preview-output"
+    runner = ROOT / "tests" / "run_gui_preview_tests.py"
+    subprocess.run([
+        sys.executable, str(runner), "--exe", str(peare_gui_path),
+        "--output-dir", str(output_dir), "--case",
+        f"rar4-solid-ppmd-m{method}", str(archive), "second.txt",
+    ], check=True, capture_output=True, text=True, timeout=120)
+
+
+@pytest.mark.parametrize("archive_version", [4, 5])
+def test_rar_encrypted_file_data_update_abi(writer_lib, tmp_path,
+                                           archive_version):
+    winrar = _winrar_executable()
+    rar_cli = str(Path(winrar).with_name("Rar.exe")) if winrar else None
+    if not rar_cli:
+        pytest.skip("WinRAR command-line tool is not installed")
+    archive = tmp_path / f"encrypted-rar{archive_version}.rar"
+    retained = tmp_path / "retained.txt"
+    replaced = tmp_path / "replaced.txt"
+    deleted = tmp_path / "deleted.txt"
+    retained.write_bytes(b"encrypted payload retained\n")
+    replaced.write_bytes(b"encrypted payload to replace\n")
+    deleted.write_bytes(b"encrypted payload to delete\n")
+    subprocess.run([rar_cli, "a", f"-ma{archive_version}", "-m3", "-s-", "-ep1",
+                    "-pPeareTestPassword", str(archive), str(retained),
+                    str(replaced), str(deleted)], check=True,
+                   capture_output=True, timeout=30)
+
+    added = tmp_path / "added.txt"
+    replacement = tmp_path / "replacement.txt"
+    added.write_bytes(b"new unencrypted payload\n")
+    replacement.write_bytes(b"replacement unencrypted payload\n")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_begin(
+            writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_add_file(
+            writer, str(added).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"replaced.txt") == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"retained.txt", b"renamed-retained.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"deleted.txt", 0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    subprocess.run([rar_cli, "t", "-pPeareTestPassword", str(archive)],
+                   check=True, capture_output=True, timeout=30)
+    extracted_dir = tmp_path / "encrypted-extracted"
+    extracted_dir.mkdir()
+    subprocess.run([rar_cli, "x", "-pPeareTestPassword", "-o+",
+                    str(archive), str(extracted_dir) + "\\"],
+                   check=True, capture_output=True, timeout=30)
+    assert (extracted_dir / "renamed-retained.txt").read_bytes() == \
+        retained.read_bytes()
+    assert (extracted_dir / "replaced.txt").read_bytes() == \
+        replacement.read_bytes()
+    assert (extracted_dir / "added.txt").read_bytes() == added.read_bytes()
+    assert not (extracted_dir / "deleted.txt").exists()
+
+
+@pytest.mark.parametrize("archive_version", [4, 5])
+def test_rar_encrypted_headers_update_abi(writer_lib, peare_lib, tmp_path,
+                                          archive_version):
+    winrar = _winrar_executable()
+    rar_cli = str(Path(winrar).with_name("Rar.exe")) if winrar else None
+    if not rar_cli:
+        pytest.skip("WinRAR command-line tool is not installed")
+    archive = tmp_path / f"encrypted-headers-rar{archive_version}.rar"
+    retained = tmp_path / "retained-header-encrypted.txt"
+    second = tmp_path / "second-header-encrypted.txt"
+    replaced = tmp_path / "replaced-header-encrypted.txt"
+    solid_data = b"RAR4 solid encrypted CUD verification payload 0123456789\n" * 1024
+    retained.write_bytes(solid_data)
+    second.write_bytes(solid_data + solid_data)
+    replaced.write_bytes(b"old data to replace\n")
+    subprocess.run([rar_cli, "a", f"-ma{archive_version}", "-m3", "-s", "-ep1",
+                    "-hpPeareTestPassword", str(archive), str(retained),
+                    str(second), str(replaced)], check=True, capture_output=True,
+                   timeout=30)
+    assert writer_lib.peare_writer_can_add_files(str(archive).encode()) == 1
+    capabilities = C.c_uint32()
+    assert writer_lib.peare_writer_get_update_capabilities(
+        str(archive).encode(), 0, C.byref(capabilities)) == 0
+    assert capabilities.value == 0x3f
+
+    addition = tmp_path / "header-encrypted-addition.txt"
+    replacement = tmp_path / "header-encrypted-replacement.txt"
+    addition.write_bytes(b"new unencrypted data\n")
+    replacement.write_bytes(b"replacement data\n")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_set_password(
+            writer, b"PeareTestPassword") == 0
+        assert writer_lib.peare_writer_add_files_begin(
+            writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_add_file(
+            writer, str(addition).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"replaced-header-encrypted.txt") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"retained-header-encrypted.txt", b"renamed.txt") == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with peare_lib.open_file(str(archive), password="PeareTestPassword") as opener:
+        entries = {row["path"]: row for row in
+                   opener.normalized_tree(recurse_containers=False)}
+    assert entries["renamed.txt"]["sha256"] == hashlib.sha256(
+        retained.read_bytes()).hexdigest()
+    assert entries["replaced-header-encrypted.txt"]["sha256"] == hashlib.sha256(
+        replacement.read_bytes()).hexdigest()
+    assert entries["added.txt"]["sha256"] == hashlib.sha256(
+        addition.read_bytes()).hexdigest()
+    assert entries["second-header-encrypted.txt"]["sha256"] == hashlib.sha256(
+        second.read_bytes()).hexdigest()
+    subprocess.run([rar_cli, "t", "-pPeareTestPassword", str(archive)],
+                   check=True, capture_output=True, timeout=30)
+
+
+def test_rar4_recovery_record_is_rebuilt_after_cud(
+        writer_lib, peare_lib, tmp_path):
+    winrar = _winrar_executable()
+    rar_cli = str(Path(winrar).with_name("Rar.exe")) if winrar else None
+    if not rar_cli or not Path(rar_cli).is_file():
+        pytest.skip("WinRAR Rar.exe is required to create the recovery-record sample.")
+    sample_root = os.environ.get("PEARE_RAR_SAMPLE_ROOT")
+    if not sample_root:
+        pytest.skip("Set PEARE_RAR_SAMPLE_ROOT to the local RAR oracle corpus.")
+    archive = tmp_path / "recovery-record.rar"
+    shutil.copy2(Path(sample_root) / "rar4-samples" / "rar4-m3.rar", archive)
+    subprocess.run([rar_cli, "rr", "-rr3", str(archive)], check=True,
+                   capture_output=True, timeout=30)
+    with peare_lib.open_file(str(archive)) as opener:
+        before = opener.normalized_tree(recurse_containers=False)
+    original_file = next(row for row in before if row["size"] > 0)
+    source = tmp_path / "recovery-replacement.txt"
+    source_data = b"updated archive payload with rebuilt recovery sectors\n" * 64
+    source.write_bytes(source_data)
+    addition = tmp_path / "recovery-addition.txt"
+    addition.write_bytes(b"new recovery-protected member\n")
+    raw = archive.read_bytes()
+    assert int.from_bytes(raw[10:12], "little") & 0x0040
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_begin(
+            writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_add_file(
+            writer, str(addition).encode(), b"new-recovery-member.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(source).encode(), original_file["path"].encode()) == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"new-recovery-member.txt", b"renamed-recovery-member.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            writer, b"empty-recovery-member.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"empty-recovery-member.txt", 0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    updated = archive.read_bytes()
+    assert int.from_bytes(updated[10:12], "little") & 0x0040
+    assert b"RRProtect+" in updated
+
+    with peare_lib.open_file(str(archive)) as opener:
+        entries = {row["path"]: row for row in
+                   opener.normalized_tree(recurse_containers=False)}
+    assert entries[original_file["path"]]["sha256"] == hashlib.sha256(source_data).hexdigest()
+    assert entries["renamed-recovery-member.txt"]["sha256"] == hashlib.sha256(
+        addition.read_bytes()).hexdigest()
+    subprocess.run([rar_cli, "t", str(archive)], check=True,
+                   capture_output=True, timeout=30)
+    oracle = tmp_path / "recovery-oracle.rar"
+    shutil.copy2(archive, oracle)
+    subprocess.run([rar_cli, "rr", "-rr3", str(oracle)], check=True,
+                   capture_output=True, timeout=30)
+
+    def recovery_payload(path):
+        data = path.read_bytes()
+        marker = data.find(b"RRProtect+")
+        assert marker >= 32
+        header_start = marker - 32
+        header_size = int.from_bytes(data[header_start + 5:header_start + 7], "little")
+        packed_size = int.from_bytes(data[header_start + 7:header_start + 11], "little")
+        return data[header_start + header_size:
+                    header_start + header_size + packed_size]
+
+    assert recovery_payload(archive) == recovery_payload(oracle)
+
+
+@pytest.mark.parametrize("variant", ["rar5-store", "rar7-store"])
+def test_rar_recovery_record_is_rebuilt_after_cud(
+        writer_lib, peare_lib, tmp_path, variant):
+    winrar = _winrar_executable()
+    rar_cli = os.environ.get("PEARE_WINRAR_CLI_EXE")
+    if not rar_cli and winrar:
+        rar_cli = str(Path(winrar).with_name("Rar.exe"))
+    if not rar_cli or not Path(rar_cli).is_file():
+        pytest.skip("WinRAR Rar.exe is required to create a recovery-record sample.")
+    version_name = "RAR7" if variant.startswith("rar7") else "RAR5"
+    source = tmp_path / f"recovery-{version_name.lower()}-payload.txt"
+    source_data = f"{version_name} recovery locator probe payload.\n".encode() * 64
+    source.write_bytes(source_data)
+    archive = tmp_path / f"recovery-{version_name.lower()}.rar"
+    if variant.startswith("rar7"):
+        writer = _HANDLE()
+        assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+        try:
+            assert writer_lib.peare_writer_create_begin_variant(
+                writer, b"rar", variant.encode(), str(archive).encode()) == 0
+            assert writer_lib.peare_writer_add_file(
+                writer, str(source).encode(), source.name.encode()) == 0
+            assert writer_lib.peare_writer_finish(writer) == 0
+        finally:
+            writer_lib.peare_writer_destroy(writer)
+        subprocess.run([rar_cli, "rr", "-rr3", str(archive)], check=True,
+                       capture_output=True, timeout=30)
+    else:
+        subprocess.run([rar_cli, "a", "-ma5", "-rr3", "-ep1", str(archive),
+                        source.name], cwd=tmp_path, check=True,
+                       capture_output=True, timeout=30)
+
+    def has_locator(path):
+        data = path.read_bytes()
+
+        def read_vint(buffer, offset):
+            value = 0
+            shift = 0
+            while offset < len(buffer):
+                byte = buffer[offset]
+                offset += 1
+                value |= (byte & 0x7f) << shift
+                if byte < 0x80:
+                    return value, offset
+                shift += 7
+            raise AssertionError("Truncated RAR5 variable integer")
+
+        header_size, body_start = read_vint(data, 12)
+        body = data[body_start:body_start + header_size]
+        kind, cursor = read_vint(body, 0)
+        flags, cursor = read_vint(body, cursor)
+        assert kind == 1
+        if flags & 2:
+            _, cursor = read_vint(body, cursor)
+        extra_size = 0
+        if flags & 1:
+            extra_size, cursor = read_vint(body, cursor)
+        archive_flags, cursor = read_vint(body, cursor)
+        if archive_flags & 2:
+            _, cursor = read_vint(body, cursor)
+        extra = body[len(body) - extra_size:] if extra_size else b""
+        offset = 0
+        while offset < len(extra):
+            record_size, record_body = read_vint(extra, offset)
+            record_end = record_body + record_size
+            record_type, _ = read_vint(extra, record_body)
+            if record_type == 1:
+                return True
+            offset = record_end
+        return False
+
+    assert has_locator(archive)
+    addition = tmp_path / f"{version_name.lower()}-recovery-addition.txt"
+    replacement = tmp_path / f"{version_name.lower()}-recovery-replacement.txt"
+    addition.write_bytes(f"{version_name} recovery CUD addition.\n".encode())
+    replacement.write_bytes(f"{version_name} recovery CUD replacement.\n".encode())
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_begin(
+            writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_add_file(
+            writer, str(addition).encode(), b"recovery-added.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            writer, b"recovery-empty.txt") == 0
+        assert writer_lib.peare_writer_create_directory(
+            writer, b"recovery-delete/") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(addition).encode(), b"recovery-delete/nested.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), source.name.encode()) == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"recovery-added.txt", b"recovery-renamed.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"recovery-delete", 1) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    assert has_locator(archive)
+    with peare_lib.open_file(str(archive)) as opener:
+        entries = {row["path"]: row for row in
+                   opener.normalized_tree(recurse_containers=False)}
+    assert entries[source.name]["sha256"] == hashlib.sha256(
+        replacement.read_bytes()).hexdigest()
+    assert entries["recovery-renamed.txt"]["sha256"] == hashlib.sha256(
+        addition.read_bytes()).hexdigest()
+    assert entries["recovery-empty.txt"]["size"] == 0
+    assert not any(path.startswith("recovery-delete/") for path in entries)
+    subprocess.run([rar_cli, "t", str(archive)], check=True,
+                   capture_output=True, timeout=30)
+
+    damaged = tmp_path / f"recovery-{version_name.lower()}-damaged.rar"
+    damaged_data = bytearray(archive.read_bytes())
+
+    def read_vint(buffer, offset):
+        value = 0
+        shift = 0
+        while offset < len(buffer):
+            byte = buffer[offset]
+            offset += 1
+            value |= (byte & 0x7f) << shift
+            if byte < 0x80:
+                return value, offset
+            shift += 7
+        raise AssertionError("Truncated RAR5 variable integer")
+
+    cursor = 8
+    first_file_data = None
+    while cursor < len(damaged_data):
+        body_size, body_start = read_vint(damaged_data, cursor + 4)
+        body_end = body_start + body_size
+        body_cursor = body_start
+        block_type, body_cursor = read_vint(damaged_data, body_cursor)
+        block_flags, body_cursor = read_vint(damaged_data, body_cursor)
+        extra_size = 0
+        data_size = 0
+        if block_flags & 1:
+            extra_size, body_cursor = read_vint(damaged_data, body_cursor)
+        if block_flags & 2:
+            data_size, body_cursor = read_vint(damaged_data, body_cursor)
+        if block_type == 2 and data_size:
+            file_flags, body_cursor = read_vint(damaged_data, body_cursor)
+            _, body_cursor = read_vint(damaged_data, body_cursor)
+            _, body_cursor = read_vint(damaged_data, body_cursor)
+            if file_flags & 2:
+                body_cursor += 4
+            if file_flags & 4:
+                body_cursor += 4
+            _, body_cursor = read_vint(damaged_data, body_cursor)
+            _, body_cursor = read_vint(damaged_data, body_cursor)
+            name_size, body_cursor = read_vint(damaged_data, body_cursor)
+            body_cursor += name_size
+            if extra_size:
+                body_cursor += extra_size
+            first_file_data = body_end
+            break
+        cursor = body_end + data_size
+    assert first_file_data is not None
+    damaged_data[first_file_data] ^= 0x5a
+    damaged.write_bytes(damaged_data)
+    subprocess.run([rar_cli, "r", damaged.name], cwd=tmp_path,
+                   check=True, capture_output=True, timeout=60)
+    repaired = tmp_path / f"fixed.{damaged.name}"
+    assert repaired.is_file()
+    subprocess.run([rar_cli, "t", str(repaired)], check=True,
+                   capture_output=True, timeout=30)
+    with peare_lib.open_file(str(repaired)) as opener:
+        repaired_entries = {row["path"]: row for row in
+                            opener.normalized_tree()}
+    assert repaired_entries[source.name]["sha256"] == hashlib.sha256(
+        replacement.read_bytes()).hexdigest()
+    assert repaired_entries["recovery-renamed.txt"]["sha256"] == hashlib.sha256(
+        addition.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("archive_version", [5, 7])
+def test_rar_multivolume_recovery_cud_abi(
+        writer_lib, peare_lib, tmp_path, archive_version):
+    rar_cli = os.environ.get("PEARE_WINRAR_CLI_EXE")
+    if not rar_cli or not Path(rar_cli).is_file():
+        pytest.skip("WinRAR Rar.exe is required for the recovery-volume oracle.")
+    payload = ROOT / "build-windows" / "Release" / "Peare.exe"
+    if not payload.is_file():
+        pytest.skip("The official Windows build is required for this test.")
+    archive = tmp_path / f"recovery-multivol-v{archive_version}.rar"
+    create_args = [rar_cli, "a"]
+    if archive_version == 5:
+        create_args.extend(["-ma5", "-m0"])
+    else:
+        create_args.append("-m5")
+    create_args.extend(["-rr3", "-v100k", "-ep1", str(archive), str(payload)])
+    subprocess.run(create_args, cwd=tmp_path, check=True,
+                   capture_output=True, timeout=60)
+    first_volume = tmp_path / f"recovery-multivol-v{archive_version}.part01.rar"
+    assert first_volume.is_file()
+    source = tmp_path / f"recovery-multivol-v{archive_version}-add.txt"
+    source_data = f"RAR{archive_version} recovery volume CUD addition\n".encode()
+    source.write_bytes(source_data)
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_begin(
+            writer, str(first_volume).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_add_file(
+            writer, str(source).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(writer, b"empty.txt") == 0
+        assert writer_lib.peare_writer_create_directory(writer, b"removed") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(source).encode(), b"removed/nested.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(payload).encode(), b"Peare.exe") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"added.txt", b"renamed.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"removed", 1) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    output_volumes = sorted(tmp_path.glob(
+        f"recovery-multivol-v{archive_version}.part*.rar"))
+    assert len(output_volumes) > 1
+    assert all(path.stat().st_size <= 100 * 1024 for path in output_volumes)
+    with peare_lib.open_file(str(first_volume)) as opener:
+        entries = {row["path"]: row for row in
+                   opener.normalized_tree(recurse_containers=False)}
+    assert entries["Peare.exe"]["sha256"] == hashlib.sha256(
+        payload.read_bytes()).hexdigest()
+    assert entries["renamed.txt"]["sha256"] == hashlib.sha256(
+        source_data).hexdigest()
+    assert entries["empty.txt"]["size"] == 0
+    assert not any(path.startswith("removed/") for path in entries)
+    result = subprocess.run([rar_cli, "t", str(first_volume)], check=True,
+                            capture_output=True, text=True, timeout=60)
+    assert result.stdout.count("Testing the recovery record") == len(output_volumes)
+    assert "Recovery record is corrupt" not in result.stdout
+    assert "All OK" in result.stdout
+
+
+@pytest.mark.parametrize("relative_sample", [
+    *(f"rar4-samples/rar4-m{method}.rar" for method in range(6)),
+    "rar4-samples/rar4-solid-m3.rar",
+    "rar4-samples/winrar/rar4-multivol-old.rar",
+    "rar4-samples/winrar/rar4-multivol-ep.part1.rar",
+    *(f"rar4-samples/winrar/rar5-m{method}.rar" for method in range(1, 6)),
+    "rar4-samples/winrar/rar5-solid-m5.rar",
+    "rar4-samples/winrar/rar5-split.part1.rar",
+    "rar4-samples/winrar/rar5-split-m5.part1.rar",
+    "rar7-samples/rar7-md6g.rar",
+])
+def test_rar_real_sample_cud_abi(writer_lib, peare_lib, tmp_path,
+                                 relative_sample):
+    sample_root = os.environ.get("PEARE_RAR_SAMPLE_ROOT")
+    if not sample_root:
+        pytest.skip("Set PEARE_RAR_SAMPLE_ROOT to the local RAR oracle corpus.")
+    source_archive = Path(sample_root) / relative_sample
+    if not source_archive.is_file():
+        pytest.skip(f"Local RAR sample is unavailable: {relative_sample}")
+    archive = tmp_path / source_archive.name
+    source_volumes = [source_archive]
+    if ".part1." in source_archive.name:
+        prefix = source_archive.name.split(".part1.", 1)[0] + ".part"
+        source_volumes = sorted(source_archive.parent.glob(prefix + "*.rar"))
+        for volume in source_volumes:
+            shutil.copy2(volume, tmp_path / volume.name)
+    elif source_archive.suffix.lower() == ".rar" and list(
+            source_archive.parent.glob(source_archive.stem + ".r[0-9][0-9]")):
+        source_volumes = [source_archive] + sorted(source_archive.parent.glob(
+            source_archive.stem + ".r[0-9][0-9]"))
+        for volume in source_volumes:
+            shutil.copy2(volume, tmp_path / volume.name)
+    else:
+        shutil.copy2(source_archive, archive)
+    if "rar4-multivol" in relative_sample:
+        winrar = _winrar_executable()
+        rar_cli = str(Path(winrar).with_name("Rar.exe")) if winrar else None
+        if rar_cli and Path(rar_cli).is_file():
+            subprocess.run([rar_cli, "rr", "-rr3", str(archive)], check=True,
+                           capture_output=True, timeout=60)
+    with peare_lib.open_file(str(archive)) as opener:
+        before = opener.normalized_tree(recurse_containers=False)
+    original_entries = {row["path"]: row for row in before}
+    original_file = next(row for row in before if row["size"] > 0)
+    is_multivolume = "multivol" in relative_sample or "split" in relative_sample
+    original_file_sha256 = original_file["sha256"]
+    replacement = tmp_path / "sample-replacement.txt"
+    addition = tmp_path / "sample-addition.txt"
+    replacement.write_bytes(
+        b"".join(path.read_bytes() for path in source_volumes)
+        if is_multivolume else b"replacement for an independent RAR sample\n")
+    addition.write_bytes(b"addition to an independent RAR sample\n")
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_add_files_begin(
+            writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_add_file(
+            writer, str(addition).encode(), b"writer-dir/addition.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            writer, b"writer-dir/empty.txt") == 0
+        assert writer_lib.peare_writer_create_directory(writer, b"delete-dir/") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(addition).encode(), b"delete-dir/nested.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(),
+            original_file["path"].encode()) == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"writer-dir/addition.txt", b"writer-dir/renamed.txt") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"writer-dir/empty.txt", b"writer-dir/renamed-empty.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"delete-dir", 1) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    with peare_lib.open_file(str(archive)) as opener:
+        after = opener.normalized_tree(recurse_containers=False)
+    entries = {row["path"]: row for row in after}
+    assert entries[original_file["path"]]["sha256"] == hashlib.sha256(
+        replacement.read_bytes()).hexdigest()
+    assert entries["writer-dir/renamed.txt"]["sha256"] == hashlib.sha256(
+        addition.read_bytes()).hexdigest()
+    assert entries["writer-dir/renamed-empty.txt"]["size"] == 0
+    assert not any(path.startswith("delete-dir/") for path in entries)
+    if is_multivolume:
+        assert archive.is_file()
+        if ".part1." in archive.name:
+            prefix = archive.name.split(".part1.", 1)[0] + ".part"
+            assert len(list(tmp_path.glob(prefix + "*.rar"))) > 1
+        else:
+            assert len(list(tmp_path.glob(archive.stem + ".r[0-9][0-9]"))) > 0
+    for path, row in original_entries.items():
+        if path != original_file["path"]:
+            assert entries[path]["sha256"] == row["sha256"]
+    rar_cli = os.environ.get("PEARE_WINRAR_CLI_EXE")
+    if not rar_cli and not relative_sample.startswith("rar7-"):
+        rar_cli = _winrar_cli_executable()
+    if rar_cli:
+        subprocess.run([rar_cli, "t", str(archive)], check=True,
+                       capture_output=True, timeout=60)
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+@pytest.mark.parametrize(("relative_sample", "gui_root"), [
+    ("rar4-samples/rar4-m3.rar", ""),
+    ("rar4-samples/winrar/rar5-m3.rar", ""),
+])
+def test_rar_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
+                               tmp_path, view, relative_sample, gui_root):
+    sample_root = os.environ.get("PEARE_RAR_SAMPLE_ROOT")
+    if not sample_root:
+        pytest.skip("Set PEARE_RAR_SAMPLE_ROOT to the local RAR sample corpus.")
+    sample = Path(sample_root) / relative_sample
+    if not sample.is_file():
+        pytest.skip(f"Local RAR sample is unavailable: {relative_sample}")
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      str(sample), view, gui_root, timeout_seconds=240)
+
+
+@pytest.mark.parametrize("archive_version", [4, 5])
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_rar_encrypted_headers_gui_cud_offscreen(
+        writer_lib, peare_lib, peare_gui_path, tmp_path,
+        archive_version, view):
+    winrar = _winrar_executable()
+    rar_cli = str(Path(winrar).with_name("Rar.exe")) if winrar else None
+    if not rar_cli:
+        pytest.skip("WinRAR command-line tool is not installed")
+    archive = tmp_path / f"gui-encrypted-headers-rar{archive_version}.rar"
+    retained = tmp_path / "gui-encrypted-retained.txt"
+    second = tmp_path / "gui-encrypted-second.txt"
+    gui_data = b"RAR4 and RAR5 encrypted solid GUI CUD payload 0123456789\n" * 1024
+    retained.write_bytes(gui_data)
+    second.write_bytes(gui_data + gui_data)
+    subprocess.run([rar_cli, "a", f"-ma{archive_version}", "-m3", "-s",
+                    "-ep1", "-hpPeareTestPassword", str(archive),
+                    str(retained), str(second)], check=True, capture_output=True,
+                   timeout=30)
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      str(archive), view, "", timeout_seconds=240,
+                      open_password="PeareTestPassword")
 
 
 def _cpio_extract(tar, archive, entry):
@@ -13395,7 +14616,8 @@ def _gui_cud_scenario(view, gui_root, payload_add, payload_keep,
 def _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
                       sample, view, gui_root, target_index=0,
                       oracle_preserved_paths=(), tree_max_depth=8,
-                      dos_83=False, timeout_seconds=180):
+                      dos_83=False, timeout_seconds=180,
+                      open_password=None):
     sample_hash = _sha256_file(sample)
     image_path = str(sample).encode()
     assert writer_lib.peare_writer_can_add_files(image_path) == 1
@@ -13403,7 +14625,7 @@ def _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
     assert writer_lib.peare_writer_get_update_capabilities(
         image_path, target_index, C.byref(capabilities)) == 0
     assert capabilities.value == 0x3f
-    before = peare_lib.open_file(sample)
+    before = peare_lib.open_file(sample, password=open_password)
     assert before is not None
     try:
         original_rows = {row["path"]: row["sha256"]
@@ -13441,6 +14663,8 @@ def _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
     scenario_path = tmp_path / f"gui-writer-{view}.json"
     scenario = _gui_cud_scenario(view, gui_root, payload_add, payload_keep,
                                  payload_replace, target_index, dos_83)
+    if open_password is not None:
+        scenario["initial_password"] = open_password
     scenario_path.write_text(json.dumps(scenario, indent=2), encoding="utf-8")
     runner = ROOT / "tests" / "run_gui_writer_tests.py"
     result = subprocess.run(
@@ -13455,7 +14679,7 @@ def _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
     report = json.loads((disposable_dir / "writer-test-report.json").read_text(
         encoding="utf-8"))
     image = Path(report["image"])
-    after = peare_lib.open_file(str(image))
+    after = peare_lib.open_file(str(image), password=open_password)
     assert after is not None
     try:
         rows = {row["path"]: row["sha256"]

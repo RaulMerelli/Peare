@@ -454,6 +454,15 @@ NTFS updates write a rollback journal before they change the source image.
 Peare flushes committed image ranges before it marks the journal complete.
 On the next open, Peare restores an incomplete update before it exposes a target.
 
+## RAR
+
+The Writer can create and update RAR4, RAR5, and RAR7 archives. It supports all
+CUD operations for all three archive versions and all six compression levels.
+RAR5 and RAR7 use the RAR5 archive layout with algorithm versions 0 and 1.
+
+The Writer rebuilds recovery records after CUD updates for RAR4, RAR5, and RAR7.
+It supports multi-volume updates for RAR4, RAR5, and RAR7 archives.
+
 ## ZIP
 
 The ZIP-specific API can create a new archive transactionally. The destination

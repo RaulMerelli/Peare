@@ -1350,7 +1350,8 @@ bool MainWindow::runOffscreenWriterScenario(const QString& imagePath,
 
     resize(1280, 800);
     show();
-    openFilePath(imagePath);
+    openFilePath(imagePath,
+        scenario.value(QStringLiteral("initial_password")).toString());
     QApplication::processEvents();
     if (!currentSession_.isOpen())
         return fail(QStringLiteral("The GUI could not open the test image."));
@@ -1827,12 +1828,18 @@ void MainWindow::addFilesToContainer(const QStringList& requestedSources,
         inputFiles.push_back({sourcePaths[i].constData(), entryNames[i].constData()});
 
     const WriterViewState viewState = captureWriterViewState();
+    const QString password = currentSession_.password();
     currentSession_.close();
     childSessions_.clear();
     directResourcePayloads_.clear();
     directResourceType_.clear();
     peare_writer_handle writer = nullptr;
     peare_writer_status status = peare_writer_create(&writer);
+    if (status == PEARE_WRITER_OK) {
+        const QByteArray passwordUtf8 = password.toUtf8();
+        status = peare_writer_set_password(
+            writer, password.isNull() ? nullptr : passwordUtf8.constData());
+    }
     if (status == PEARE_WRITER_OK)
         reportOffscreenWriterStage(QStringLiteral("writer-update-started"));
     if (status == PEARE_WRITER_OK)
@@ -2971,6 +2978,7 @@ QString MainWindow::writerDestinationPath(QTreeWidgetItem* item) const {
 
 MainWindow::WriterViewState MainWindow::captureWriterViewState() const {
     WriterViewState state;
+    state.password = currentSession_.password();
     if (detailsMode_ && currentDetailsLocation_)
         state.locationPath = detailsPath(currentDetailsLocation_);
     if (treeView_->currentItem())
@@ -2990,7 +2998,7 @@ MainWindow::WriterViewState MainWindow::captureWriterViewState() const {
 void MainWindow::refreshWriterView(const WriterViewState& state,
                                    const QString& selectionPath) {
     reportOffscreenWriterStage(QStringLiteral("view-refresh-started"));
-    openFilePath(currentFilePath_);
+    openFilePath(currentFilePath_, state.password);
     if (!currentSession_.isOpen()) return;
 
     for (const QString& path : state.expandedPaths) {
@@ -3014,7 +3022,8 @@ void MainWindow::refreshWriterView(const WriterViewState& state,
     reportOffscreenWriterStage(QStringLiteral("view-refreshed"));
 }
 
-bool MainWindow::beginWriterUpdate(peare_writer_handle writer) {
+bool MainWindow::beginWriterUpdate(peare_writer_handle writer,
+                                   const QString& password) {
     const QByteArray container = currentFilePath_.toUtf8();
     const size_t count = peare_writer_update_target_count(container.constData());
     if (!count) {
@@ -3051,6 +3060,14 @@ bool MainWindow::beginWriterUpdate(peare_writer_handle writer) {
         targetIndex = size_t(names.indexOf(selected));
         }
     }
+    const QByteArray passwordUtf8 = password.toUtf8();
+    const peare_writer_status passwordStatus = peare_writer_set_password(
+        writer, password.isNull() ? nullptr : passwordUtf8.constData());
+    if (passwordStatus != PEARE_WRITER_OK) {
+        showWriterError(QStringLiteral("Archive update"),
+                        QString::fromUtf8(peare_writer_last_error(writer)));
+        return false;
+    }
     const peare_writer_status status = peare_writer_update_begin_target(
         writer, container.constData(), targetIndex);
     if (status != PEARE_WRITER_OK) {
@@ -3077,11 +3094,12 @@ void MainWindow::createWriterEntry(bool directory) {
         name.contains(QLatin1Char('\\'))) return;
     const QString entry = parent.isEmpty() ? name : parent + QLatin1Char('/') + name;
     const WriterViewState viewState = captureWriterViewState();
+    const QString password = currentSession_.password();
     currentSession_.close();
     childSessions_.clear();
     peare_writer_handle writer = nullptr;
     peare_writer_status status = peare_writer_create(&writer);
-    if (status == PEARE_WRITER_OK && !beginWriterUpdate(writer)) {
+    if (status == PEARE_WRITER_OK && !beginWriterUpdate(writer, password)) {
         peare_writer_destroy(writer);
         refreshWriterView(viewState);
         return;
@@ -3126,11 +3144,12 @@ void MainWindow::renameWriterEntry(QTreeWidgetItem* item) {
     const QByteArray pathUtf8 = path.toUtf8();
     const QByteArray targetUtf8 = target.toUtf8();
     const WriterViewState viewState = captureWriterViewState();
+    const QString password = currentSession_.password();
     currentSession_.close();
     childSessions_.clear();
     peare_writer_handle writer = nullptr;
     peare_writer_status status = peare_writer_create(&writer);
-    if (status == PEARE_WRITER_OK && !beginWriterUpdate(writer)) {
+    if (status == PEARE_WRITER_OK && !beginWriterUpdate(writer, password)) {
         peare_writer_destroy(writer);
         refreshWriterView(viewState);
         return;
@@ -3165,11 +3184,12 @@ void MainWindow::deleteWriterEntry(QTreeWidgetItem* item) {
             QStringLiteral("Delete %1 and its contents?").arg(path),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
     const WriterViewState viewState = captureWriterViewState();
+    const QString password = currentSession_.password();
     currentSession_.close();
     childSessions_.clear();
     peare_writer_handle writer = nullptr;
     peare_writer_status status = peare_writer_create(&writer);
-    if (status == PEARE_WRITER_OK && !beginWriterUpdate(writer)) {
+    if (status == PEARE_WRITER_OK && !beginWriterUpdate(writer, password)) {
         peare_writer_destroy(writer);
         refreshWriterView(viewState);
         return;
@@ -3206,11 +3226,12 @@ void MainWindow::replaceWriterEntry(QTreeWidgetItem* item) {
     if (source.isEmpty()) return;
     const QByteArray sourceUtf8 = source.toUtf8();
     const WriterViewState viewState = captureWriterViewState();
+    const QString password = currentSession_.password();
     currentSession_.close();
     childSessions_.clear();
     peare_writer_handle writer = nullptr;
     peare_writer_status status = peare_writer_create(&writer);
-    if (status == PEARE_WRITER_OK && !beginWriterUpdate(writer)) {
+    if (status == PEARE_WRITER_OK && !beginWriterUpdate(writer, password)) {
         peare_writer_destroy(writer);
         refreshWriterView(viewState);
         return;

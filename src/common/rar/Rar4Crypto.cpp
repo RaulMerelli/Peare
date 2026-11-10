@@ -1,6 +1,6 @@
 #include "Rar4Crypto.h"
 
-#include "../third_party/lzma/Aes.h"
+#include "../../opener/compression/third_party/lzma/Aes.h"
 
 #include <QCryptographicHash>
 
