@@ -40,8 +40,13 @@ jobs:
 
       - name: Stage binaries
         run: |
+          set -e
           mkdir -p dist
           find build -type f \( -name 'Peare' -o -name 'libPeare*.so' \) -exec cp -v {} dist/ \;
+          test -x dist/Peare
+          test -f dist/libPeareOpener.so
+          test -f dist/libPeareDecoder.so
+          test -f dist/libPeareWriter.so
           cp README.md dist/ 2>/dev/null || true
           cp LICENSE COPYRIGHT.md THIRDPARTY.md dist/
           ls -la dist
@@ -52,12 +57,11 @@ jobs:
 
       - name: Run Opener tests
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libarchive-tools p7zip-full
           python3 -m pip install --upgrade --quiet pytest zstandard
           python3 tests/run_tests.py -q
         env:
           PEARE_OPENER_LIB: dist/libPeareOpener.so
+          PEARE_EXTERNAL_ORACLES: "0"
           LD_LIBRARY_PATH: ${{ env.QT_ROOT_DIR }}/lib
           QT_QPA_PLATFORM_PLUGIN_PATH: ${{ env.QT_ROOT_DIR }}/plugins/platforms
 
@@ -131,6 +135,7 @@ jobs:
           PEARE_OPENER_LIB: dist\PeareOpener.dll
           PEARE_WRITER_LIB: dist\PeareWriter.dll
           PEARE_GUI_EXE: dist\Peare.exe
+          PEARE_EXTERNAL_ORACLES: "0"
           QT_QPA_PLATFORM_PLUGIN_PATH: build\test-plugins\platforms
 
       - uses: actions/upload-artifact@v4

@@ -5,6 +5,12 @@ out/
 /$out/
 cmake-build-*/
 
+!tools/build/
+tools/build/*
+!tools/build/build_android.cmd
+!tools/build/build_windows.bat
+!tools/build/verify_local.ps1
+
 # CMake (in-source leftovers)
 CMakeCache.txt
 CMakeFiles/

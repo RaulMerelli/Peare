@@ -11,6 +11,7 @@ import subprocess
 
 import pytest
 import peare_opener as po
+from external_tools import enabled, find
 
 
 LOCAL_PEARE_ROOT = Path.home() / "Documents" / "inerente a" / "Peare"
@@ -101,8 +102,10 @@ EXTENDED_METHOD_SAMPLES = (
 
 
 def _seven_zip():
+    if not enabled():
+        return None
     configured = os.environ.get("PEARE_7ZIP_EXE")
-    candidates = [configured, shutil.which("7z"), shutil.which("7z.exe")]
+    candidates = [configured, find("7z", "7z.exe")]
     program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
     candidates.append(str(Path(program_files) / "7-Zip" / "7z.exe"))
     return next((path for path in candidates if path and Path(path).is_file()), None)

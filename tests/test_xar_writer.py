@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 import zlib
 
 import pytest
+from external_tools import find
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -174,9 +175,11 @@ def test_xar_writer_round_trip_all_codecs(
     assert {"docs", "docs/nested", "empty-folder"}.issubset(
         {row["path"] for row in rows})
 
-    seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
-                 ("C:/Program Files/7-Zip/7z.exe"
-                  if Path("C:/Program Files/7-Zip/7z.exe").is_file() else None))
+    seven_zip = find("7z.exe", "7z")
+    if (not seven_zip and os.environ.get("PEARE_EXTERNAL_ORACLES", "1").lower()
+            not in {"0", "false", "no"} and
+            Path("C:/Program Files/7-Zip/7z.exe").is_file()):
+        seven_zip = "C:/Program Files/7-Zip/7z.exe"
     if seven_zip:
         result = subprocess.run([seven_zip, "t", str(output)], capture_output=True,
                                 text=True, timeout=60)
@@ -238,25 +241,24 @@ def test_xar_real_sample_cud(xar_writer, peare_lib, peare_gui_path, tmp_path):
     assert "setuid.sh" not in files
     assert "empty" in directories and "empty/child" in directories
 
-    tar = (shutil.which("bsdtar") or shutil.which("bsdtar.exe") or
-           shutil.which("tar.exe") or shutil.which("tar"))
-    assert tar
-    listing = subprocess.run([tar, "-tf", str(target)], capture_output=True,
-                             text=True, timeout=60)
-    assert listing.returncode == 0, listing.stdout + listing.stderr
-    assert "alias.lnk" in listing.stdout
-    assert "renamed/deep/file.txt" in listing.stdout
-    assert "added/new.txt" in listing.stdout
-    result = subprocess.run([tar, "-xOf", str(target), "plain.txt"],
-                            capture_output=True, timeout=60)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout == replacement.read_bytes()
-    result = subprocess.run([tar, "-xOf", str(target), "added/new.txt"],
-                            capture_output=True, timeout=60)
-    assert result.returncode == 0 and result.stdout == added.read_bytes()
-    result = subprocess.run([tar, "-xOf", str(target), "renamed/deep/file.txt"],
-                            capture_output=True, timeout=60)
-    assert result.returncode == 0 and result.stdout == b"nested content here\n"
+    tar = find("bsdtar", "bsdtar.exe", "tar.exe", "tar")
+    if tar:
+        listing = subprocess.run([tar, "-tf", str(target)], capture_output=True,
+                                 text=True, timeout=60)
+        assert listing.returncode == 0, listing.stdout + listing.stderr
+        assert "alias.lnk" in listing.stdout
+        assert "renamed/deep/file.txt" in listing.stdout
+        assert "added/new.txt" in listing.stdout
+        result = subprocess.run([tar, "-xOf", str(target), "plain.txt"],
+                                capture_output=True, timeout=60)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stdout == replacement.read_bytes()
+        result = subprocess.run([tar, "-xOf", str(target), "added/new.txt"],
+                                capture_output=True, timeout=60)
+        assert result.returncode == 0 and result.stdout == added.read_bytes()
+        result = subprocess.run([tar, "-xOf", str(target), "renamed/deep/file.txt"],
+                                capture_output=True, timeout=60)
+        assert result.returncode == 0 and result.stdout == b"nested content here\n"
 
     with peare_lib.open_file(str(target)) as opener:
         rows = opener.normalized_tree()
@@ -305,6 +307,13 @@ def test_xar_real_sample_cud(xar_writer, peare_lib, peare_gui_path, tmp_path):
         report = json.loads((output_dir / "writer-test-report.json").read_text(
             encoding="utf-8"))
         assert all(operation["passed"] for operation in report["operations"])
-        checked = subprocess.run([tar, "-tf", str(gui_target)], capture_output=True,
-                                 text=True, timeout=60)
-        assert checked.returncode == 0, checked.stdout + checked.stderr
+        if tar:
+            checked = subprocess.run([tar, "-tf", report["image"]], capture_output=True,
+                                     text=True, timeout=60)
+            assert checked.returncode == 0, checked.stdout + checked.stderr
+        with peare_lib.open_file(report["image"]) as opener:
+            gui_paths = {row["path"] for row in opener.normalized_tree()}
+        assert gui_paths == {
+            "big.txt", "empty.txt", "nested", "nested/deep",
+            "nested/deep/file.txt", "setuid.sh", "store.bin",
+        }

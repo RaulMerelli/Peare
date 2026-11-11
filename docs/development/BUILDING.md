@@ -16,7 +16,7 @@ CMake selects Qt 5 for Windows and Linux, and Qt 6 for Android and macOS. The re
 
 ## Linux
 
-The Linux workflow is designed for an Ubuntu 20.04 x86-64 host. It does not use Docker or Ubuntu's Qt 5.12 packages. When necessary, it builds Qt Base 5.15.2 from the official source archive.
+The Linux workflow runs on Ubuntu 22.04 x86-64. It does not use Docker or Ubuntu's Qt 5.12 packages. When necessary, it builds Qt Base 5.15.2 from the official source archive.
 
 ### One-time host setup
 
@@ -107,12 +107,29 @@ file build-linux-arm64/Peare
 
 ## Windows x64
 
+The Windows build script enables the local Git hooks. The pre-commit hook runs
+the Windows and Android builds, the Android package test, and the full Python
+test suite. The pre-push hook requires a successful gate for the current tree.
+The gate uses Python 3.12 and disables third-party command-line oracles, as CI
+does. Run third-party comparisons separately on the local machine.
+
+Run the gate manually with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/build/verify_local.ps1
+```
+
+The test runner stores pytest output in ignored `tests/output`. The gate stores
+its logs and pass receipt in ignored `tmp`. It stops a test run if either
+directory reaches 10,000,000,000 bytes. The Android package test uses the same
+Gradle APK path that the Android CI job validates.
+
 `tools/build/build_windows.bat` expects:
 
 - Qt 5.15.2 MSVC 2019 x64 at `C:\Qt\5.15.2\msvc2019_64`.
 - Visual Studio with the C++ x64 toolchain.
-- CMake 3.17 or later.
-- Ninja in `PATH`.
+- CMake 3.22 or later and earlier than 5.0.
+- Ninja 1.10 or later and earlier than 2.0 in `PATH`.
 - CMake in `PATH`.
 - `vswhere.exe` in the standard Visual Studio Installer location.
 

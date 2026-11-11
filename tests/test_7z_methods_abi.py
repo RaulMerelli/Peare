@@ -8,6 +8,7 @@ import subprocess
 
 import pytest
 import peare_opener as po
+from external_tools import find, enabled
 
 LOCAL_7Z_ROOT = Path.home() / "Documents" / "inerente a" / "Peare" / "7z-research"
 SAMPLE_ROOT = LOCAL_7Z_ROOT / "tool-created-method-samples" / "plain-header-test"
@@ -40,8 +41,10 @@ SUPPORTED_SAMPLES = (
 ADDITIONAL_CODECS = (("deflate64.7z", "Deflate64"),)
 
 def _seven_zip():
+    if not enabled():
+        return None
     configured = os.environ.get("PEARE_7ZIP_EXE")
-    candidates = [configured, shutil.which("7z"), shutil.which("7z.exe")]
+    candidates = [configured, find("7z", "7z.exe")]
     candidates.append(LOCAL_7Z_ROOT / "tools" / "7z-26.05" / "extract" /
                       "x64" / "7za.exe")
     candidates.append(str(Path(os.environ.get("ProgramFiles", r"C:\Program Files")) /

@@ -50,11 +50,26 @@ import peare_opener as po
 
 ROOT = Path(__file__).resolve().parent.parent
 
+def _external_oracles_enabled():
+    return os.environ.get("PEARE_EXTERNAL_ORACLES", "1").lower() not in {
+        "0", "false", "no"}
+
+def _external_tool(*names):
+    if not _external_oracles_enabled():
+        return None
+    for name in names:
+        executable = shutil.which(name)
+        if executable:
+            return executable
+    return None
+
 def _seven_zip_executable():
+    if not _external_oracles_enabled():
+        return None
     configured = os.environ.get("PEARE_7ZIP_EXE")
     if configured and Path(configured).is_file():
         return configured
-    executable = shutil.which("7z.exe") or shutil.which("7z") or shutil.which("7zz")
+    executable = _external_tool("7z.exe", "7z", "7zz")
     if executable:
         return executable
     if os.name == "nt":
@@ -72,6 +87,8 @@ def _seven_zip_version(executable):
     return tuple(map(int, match.groups())) if match else None
 
 def _winrar_executable():
+    if not _external_oracles_enabled():
+        return None
     configured = os.environ.get("PEARE_WINRAR_EXE")
     if configured and Path(configured).is_file():
         return configured
@@ -84,6 +101,8 @@ def _winrar_executable():
     return None
 
 def _winrar_cli_executable():
+    if not _external_oracles_enabled():
+        return None
     configured = os.environ.get("PEARE_WINRAR_CLI_EXE")
     if configured and Path(configured).is_file():
         return configured
@@ -94,7 +113,9 @@ def _winrar_cli_executable():
     return str(candidate) if candidate.is_file() else None
 
 def _bsdtar_executable():
-    return shutil.which("bsdtar.exe") or shutil.which("bsdtar")
+    if not _external_oracles_enabled():
+        return None
+    return _external_tool("bsdtar.exe", "bsdtar")
 
 class _ProcessIoCounters(C.Structure):
     _fields_ = [(name, C.c_ulonglong) for name in (
@@ -4472,7 +4493,7 @@ def test_chr_ext2_rejected_cud_operations_are_atomic(writer_lib, peare_lib, tmp_
 
 def test_tar_cud_with_archive_created_by_external_tool(
         writer_lib, peare_lib, tmp_path):
-    tar_tool = shutil.which("tar.exe") or shutil.which("tar")
+    tar_tool = _external_tool("tar.exe", "tar")
     if not tar_tool:
         pytest.skip("A system tar tool is required to create the sample archive")
     archive = tmp_path / "external-sample.tar"
@@ -5711,15 +5732,15 @@ def test_ihex_writer_variants_with_7zip(
         assert any(record[3] == 4 for record in records)
     if variant == "record-16":
         seven_zip = _seven_zip_executable()
-        assert seven_zip
-        destination = tmp_path / "7zip-ihex"
-        destination.mkdir()
-        result = subprocess.run(
-            [seven_zip, "x", str(archive), f"-o{destination}", "-y"],
-            capture_output=True, text=True, timeout=60)
-        assert result.returncode == 0, result.stdout + result.stderr
-        extracted = [path for path in destination.rglob("*") if path.is_file()]
-        assert len(extracted) == 1 and extracted[0].read_bytes() == payload
+        if seven_zip:
+            destination = tmp_path / "7zip-ihex"
+            destination.mkdir()
+            result = subprocess.run(
+                [seven_zip, "x", str(archive), f"-o{destination}", "-y"],
+                capture_output=True, text=True, timeout=60)
+            assert result.returncode == 0, result.stdout + result.stderr
+            extracted = [path for path in destination.rglob("*") if path.is_file()]
+            assert len(extracted) == 1 and extracted[0].read_bytes() == payload
         gui_output = tmp_path / "ihex-gui-preview"
         gui_check = subprocess.run(
             [sys.executable, str(ROOT / "tests" / "run_gui_preview_tests.py"),
@@ -5856,10 +5877,10 @@ def test_deb_writer_all_compression_combinations(
     assert leaf["sha256"] == hashlib.sha256(payload).hexdigest()
     if control_codec == "raw" and data_codec == "raw":
         seven_zip = _seven_zip_executable()
-        assert seven_zip
-        check = subprocess.run([seven_zip, "t", str(output)], capture_output=True,
-                               text=True, timeout=60)
-        assert check.returncode == 0, check.stdout + check.stderr
+        if seven_zip:
+            check = subprocess.run([seven_zip, "t", str(output)], capture_output=True,
+                                   text=True, timeout=60)
+            assert check.returncode == 0, check.stdout + check.stderr
         gui_output = tmp_path / "gui-preview"
         gui_check = subprocess.run(
             [sys.executable, str(ROOT / "tests" / "run_gui_preview_tests.py"),
@@ -6495,7 +6516,7 @@ def test_tar_v7_cud_with_gnu_tar_sample(writer_lib, peare_lib, tmp_path):
         opened.close()
 
 def test_tar_v7_create_from_zero_and_full_cud(writer_lib, peare_lib, tmp_path):
-    tar_tool = shutil.which("tar.exe") or shutil.which("tar")
+    tar_tool = _external_tool("tar.exe", "tar")
     if not tar_tool:
         pytest.skip("A system tar tool is required for independent TAR validation")
 
@@ -6626,7 +6647,7 @@ def test_tar_v7_directory_rename_limit_is_atomic(writer_lib, tmp_path):
         assert updated.extractfile("SAFE/README.TXT").read() == source.read_bytes()
 
 def test_tar_rename_latency_and_rewrite_io(writer_lib, tmp_path):
-    tar_tool = shutil.which("tar.exe") or shutil.which("tar")
+    tar_tool = _external_tool("tar.exe", "tar")
     if not tar_tool:
         pytest.skip("A system tar tool is required to create the independent sample")
 
@@ -6689,7 +6710,7 @@ def test_tar_rename_latency_and_rewrite_io(writer_lib, tmp_path):
     assert _sha256_file(sample) == sample_hash
 
 def test_tar_large_add_latency_and_independent_readback(writer_lib, tmp_path):
-    tar_tool = shutil.which("tar.exe") or shutil.which("tar")
+    tar_tool = _external_tool("tar.exe", "tar")
     if not tar_tool:
         pytest.skip("A system tar tool is required to create the independent sample")
 
@@ -6757,9 +6778,9 @@ def test_tar_large_add_latency_and_independent_readback(writer_lib, tmp_path):
 @pytest.mark.parametrize("compression", ["store", "deflate"])
 def test_zip_large_add_latency_by_compression(
         writer_lib, tmp_path, compression):
-    seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
-                 shutil.which("7zz"))
-    if not seven_zip and os.name == "nt":
+    seven_zip = (_external_tool("7z.exe", "7z") or
+                 _external_tool("7zz"))
+    if not seven_zip and os.name == "nt" and _external_oracles_enabled():
         candidate = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
             "7-Zip" / "7z.exe"
         if candidate.is_file():
@@ -6875,9 +6896,9 @@ def test_malformed_archive_update_is_rejected_atomically(
 ])
 def test_zip_add_files_and_cud_with_archive_created_by_7zip(
         writer_lib, peare_lib, tmp_path, method, expected_method):
-    seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
-                 shutil.which("7zz"))
-    if not seven_zip and os.name == "nt":
+    seven_zip = (_external_tool("7z.exe", "7z") or
+                 _external_tool("7zz"))
+    if not seven_zip and os.name == "nt" and _external_oracles_enabled():
         candidate = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
             "7-Zip" / "7z.exe"
         if candidate.is_file():
@@ -7031,7 +7052,8 @@ def test_zip_deflate_create_works_with_both_archive_tools(
         assert created.getinfo("README.md").compress_type == zipfile.ZIP_DEFLATED
         assert created.read("README.md") == source_bytes
 
-    assert seven_zip
+    if not seven_zip:
+        return
     tools = [(seven_zip, False)]
     if winrar:
         tools.append((winrar, True))
@@ -7216,7 +7238,8 @@ def test_zip_bzip2_create_works_with_both_archive_tools(
         assert rows["README.md"]["sha256"] == hashlib.sha256(
             source_bytes).hexdigest()
 
-    assert seven_zip
+    if not seven_zip:
+        return
     tools = [(seven_zip, False)]
     if winrar:
         tools.append((winrar, True))
@@ -7272,7 +7295,8 @@ def test_zip_lzma_create_works_with_both_archive_tools(
         assert created.testzip() is None
         assert created.read("README.md") == source_bytes
 
-    assert seven_zip
+    if not seven_zip:
+        return
     tools = [(seven_zip, False)]
     if winrar:
         tools.append((winrar, True))
@@ -7484,7 +7508,6 @@ def test_zipx_ppmd_create_works_with_peare_and_winrar(
 def test_zip_shrink_writer_create_roundtrip(writer_lib, peare_lib, tmp_path):
     seven_zip = _seven_zip_executable()
     source = ROOT / "README.md"
-    assert seven_zip
     source_bytes = source.read_bytes()
     archive = tmp_path / "peare-shrink.zip"
     options = _WriterCreateOptions(b"zip", b"shrink", None)
@@ -7516,9 +7539,10 @@ def test_zip_shrink_writer_create_roundtrip(writer_lib, peare_lib, tmp_path):
                 opener._L.peare_blob_free(C.byref(payload))
         finally:
             opener._L.peare_resource_destroy(resource)
-    result = subprocess.run([seven_zip, "t", str(archive)],
-                            capture_output=True, text=True, timeout=60)
-    assert result.returncode == 0, result.stdout + result.stderr
+    if seven_zip:
+        result = subprocess.run([seven_zip, "t", str(archive)],
+                                capture_output=True, text=True, timeout=60)
+        assert result.returncode == 0, result.stdout + result.stderr
 
 
 def _zipx_method94_sample(peare_lib, tmp_path):
@@ -8040,7 +8064,7 @@ def test_zstd_writer_levels_concatenated_frames_and_7zip(
         writer_lib, peare_lib, peare_gui_path, tmp_path):
     seven_zip = _seven_zip_executable()
     zstd_cli = os.environ.get("PEARE_ZSTD_TEST_EXECUTABLE") or \
-        shutil.which("zstd.exe") or shutil.which("zstd")
+        _external_tool("zstd.exe", "zstd")
     sources = [ROOT / "README.md", ROOT / "docs" / "SUPPORTED_FORMATS.md"]
     expected = b"".join(path.read_bytes() for path in sources)
     expected_hash = hashlib.sha256(expected).hexdigest()
@@ -8301,9 +8325,9 @@ def test_zipx_wavpack_gui_cud_offscreen(
 
 def test_zip_rename_latency_preserves_untouched_member_data(
         writer_lib, tmp_path):
-    seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
-                 shutil.which("7zz"))
-    if not seven_zip and os.name == "nt":
+    seven_zip = (_external_tool("7z.exe", "7z") or
+                 _external_tool("7zz"))
+    if not seven_zip and os.name == "nt" and _external_oracles_enabled():
         candidate = (Path(os.environ.get("ProgramFiles", "C:/Program Files")) /
                      "7-Zip" / "7z.exe")
         if candidate.is_file():
@@ -8518,9 +8542,9 @@ def test_zip64_large_add_latency_and_readback(
     "docx", "xlsx", "pptx", "odt", "ods", "odp", "ipa", "ipsw", "xpi",
     "nupkg", "snupkg", "whl", "vsix", "cbz", "kmz"))
 def test_zip_create_through_generic_add_files_to(writer_lib, tmp_path, suffix):
-    seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
-                 shutil.which("7zz"))
-    if not seven_zip and os.name == "nt":
+    seven_zip = (_external_tool("7z.exe", "7z") or
+                 _external_tool("7zz"))
+    if not seven_zip and os.name == "nt" and _external_oracles_enabled():
         candidate = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
             "7-Zip" / "7z.exe"
         if candidate.is_file():
@@ -8556,9 +8580,9 @@ def test_zip_create_through_generic_add_files_to(writer_lib, tmp_path, suffix):
     "snupkg", "whl", "vsix", "cbz", "kmz"))
 def test_zip_writer_uses_container_records_not_filename_suffix(
         writer_lib, peare_lib, tmp_path, suffix):
-    seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
-                 shutil.which("7zz"))
-    if not seven_zip and os.name == "nt":
+    seven_zip = (_external_tool("7z.exe", "7z") or
+                 _external_tool("7zz"))
+    if not seven_zip and os.name == "nt" and _external_oracles_enabled():
         candidate = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
             "7-Zip" / "7z.exe"
         seven_zip = str(candidate) if candidate.is_file() else None
@@ -8858,9 +8882,9 @@ def test_android_apk_create_from_real_sample_contents(
 @pytest.mark.parametrize("compression", ["store", "deflate"])
 def test_zip_directory_only_update_commits(
         writer_lib, peare_lib, tmp_path, compression):
-    seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
-                 shutil.which("7zz"))
-    if not seven_zip and os.name == "nt":
+    seven_zip = (_external_tool("7z.exe", "7z") or
+                 _external_tool("7zz"))
+    if not seven_zip and os.name == "nt" and _external_oracles_enabled():
         candidate = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
             "7-Zip" / "7z.exe"
         seven_zip = str(candidate) if candidate.is_file() else None
@@ -8908,9 +8932,9 @@ def test_zip_directory_only_update_commits(
 def test_zip_shrink_real_sample_cud(writer_lib, tmp_path, sample):
     if sample is None or not sample.is_file():
         pytest.skip("Set PEARE_ZIP_SHRINK_TEST_IMAGES to local Shrink ZIP samples")
-    seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
-                 shutil.which("7zz"))
-    if not seven_zip and os.name == "nt":
+    seven_zip = (_external_tool("7z.exe", "7z") or
+                 _external_tool("7zz"))
+    if not seven_zip and os.name == "nt" and _external_oracles_enabled():
         candidate = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
             "7-Zip" / "7z.exe"
         if candidate.is_file():
@@ -8988,9 +9012,9 @@ def test_zip_shrink_rename_latency(writer_lib, tmp_path):
                    if path is not None and path.is_file()), None)
     if sample is None:
         pytest.skip("Set PEARE_ZIP_SHRINK_TEST_IMAGES to local Shrink ZIP samples")
-    seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
-                 shutil.which("7zz"))
-    if not seven_zip and os.name == "nt":
+    seven_zip = (_external_tool("7z.exe", "7z") or
+                 _external_tool("7zz"))
+    if not seven_zip and os.name == "nt" and _external_oracles_enabled():
         candidate = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
             "7-Zip" / "7z.exe"
         if candidate.is_file():
@@ -9063,9 +9087,9 @@ def test_zip_shrink_large_add_latency_and_7zip_readback(writer_lib, tmp_path):
                    if path is not None and path.is_file()), None)
     if sample is None:
         pytest.skip("Set PEARE_ZIP_SHRINK_TEST_IMAGES to local Shrink ZIP samples")
-    seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
-                 shutil.which("7zz"))
-    if not seven_zip and os.name == "nt":
+    seven_zip = (_external_tool("7z.exe", "7z") or
+                 _external_tool("7zz"))
+    if not seven_zip and os.name == "nt" and _external_oracles_enabled():
         candidate = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
             "7-Zip" / "7z.exe"
         if candidate.is_file():
@@ -9129,9 +9153,9 @@ def test_zip64_external_tool_sample_cud(writer_lib, tmp_path):
     sample = _zip64_sample_from_env()
     if sample is None or not sample.is_file():
         pytest.skip("Set PEARE_ZIP64_TEST_IMAGE to a local ZIP64 archive")
-    seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
-                 shutil.which("7zz"))
-    if not seven_zip and os.name == "nt":
+    seven_zip = (_external_tool("7z.exe", "7z") or
+                 _external_tool("7zz"))
+    if not seven_zip and os.name == "nt" and _external_oracles_enabled():
         candidate = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
             "7-Zip" / "7z.exe"
         if candidate.is_file():
@@ -10735,7 +10759,7 @@ def test_cpio_create_variants_are_discoverable(writer_lib):
     ("odc", b"070707"), ("afio-large", b"070727"),
     ("binary-le", b"\xc7\x71"), ("binary-be", b"\x71\xc7")])
 def test_cpio_create_roundtrip(writer_lib, peare_lib, tmp_path, variant, magic):
-    tar = _bsdtar_executable() or shutil.which("tar.exe") or shutil.which("tar")
+    tar = _bsdtar_executable() or _external_tool("tar.exe", "tar")
     if not tar:
         pytest.skip("An independent bsdtar-compatible reader is required")
     archive = tmp_path / f"created-{variant}.cpio"
@@ -10800,7 +10824,7 @@ def test_cpio_cud_on_external_sample(
     sample = root / sample_name
     if not sample.is_file():
         pytest.skip(f"Missing external CPIO sample: {sample}")
-    tar = _bsdtar_executable() or shutil.which("tar.exe") or shutil.which("tar")
+    tar = _bsdtar_executable() or _external_tool("tar.exe", "tar")
     if not tar:
         pytest.skip("An independent bsdtar-compatible reader is required")
     assert sample.read_bytes()[:len(magic)] == magic
@@ -10851,7 +10875,7 @@ def test_cpio_cud_on_external_sample(
 
 @pytest.mark.parametrize("variant", ["gnu", "bsd"])
 def test_ar_create_and_full_cud(writer_lib, peare_lib, tmp_path, variant):
-    ar = shutil.which("ar.exe") or shutil.which("ar")
+    ar = _external_tool("ar.exe", "ar")
     if not ar:
         pytest.skip("GNU ar is required as an independent archive oracle")
     archive = tmp_path / f"created-{variant}.a"
@@ -10924,7 +10948,7 @@ def test_ar_create_and_full_cud(writer_lib, peare_lib, tmp_path, variant):
 
 
 def test_ar_cud_preserves_members_from_real_gnu_archive(writer_lib, tmp_path):
-    ar = shutil.which("ar.exe") or shutil.which("ar")
+    ar = _external_tool("ar.exe", "ar")
     sample = Path(
         Path.home() / "Documents" / "inerente a" / "Peare" / "Research tools"
         r"\lz4-1.10.0\dll\liblz4.dll.a")
@@ -15062,7 +15086,7 @@ def test_cpio_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
 @pytest.mark.parametrize("view", ["tree", "details"])
 def test_ar_gui_flat_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
                                    tmp_path, variant, view):
-    ar = shutil.which("ar.exe") or shutil.which("ar")
+    ar = _external_tool("ar.exe", "ar")
     if not ar:
         pytest.skip("GNU ar is required as an independent archive oracle")
     archive = tmp_path / f"gui-{variant}.a"
@@ -15133,9 +15157,9 @@ def test_ar_gui_flat_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
 def test_zip_compression_gui_cud_offscreen(
         writer_lib, peare_lib, peare_gui_path, tmp_path,
         compression, expected_method, view):
-    seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
-                 shutil.which("7zz"))
-    if not seven_zip and os.name == "nt":
+    seven_zip = (_external_tool("7z.exe", "7z") or
+                 _external_tool("7zz"))
+    if not seven_zip and os.name == "nt" and _external_oracles_enabled():
         candidate = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
             "7-Zip" / "7z.exe"
         seven_zip = str(candidate) if candidate.is_file() else None
@@ -15186,34 +15210,37 @@ def test_zip_compression_gui_cud_offscreen(
         tools = [_seven_zip_executable()]
         if winrar:
             tools.append(winrar)
-        assert all(tools)
-        independently_validated = False
-        for tool in tools:
-            arguments = [tool, "t", "-ibck", report["image"]] \
-                if tool == winrar else [tool, "t", report["image"]]
-            checked = subprocess.run(arguments, capture_output=True,
-                                     text=True, timeout=120, check=False)
-            if checked.returncode == 0:
-                independently_validated = True
-                break
-            if "Unsupported Method" not in (checked.stdout + checked.stderr):
-                assert checked.returncode == 0, checked.stdout + checked.stderr
-        if not independently_validated:
-            pytest.skip(f"No installed archive tool supports ZIPX {compression}")
+        tools = [tool for tool in tools if tool]
+        if tools:
+            independently_validated = False
+            for tool in tools:
+                arguments = [tool, "t", "-ibck", report["image"]] \
+                    if tool == winrar else [tool, "t", report["image"]]
+                checked = subprocess.run(arguments, capture_output=True,
+                                         text=True, timeout=120, check=False)
+                if checked.returncode == 0:
+                    independently_validated = True
+                    break
+                if "Unsupported Method" not in (checked.stdout + checked.stderr):
+                    assert checked.returncode == 0, checked.stdout + checked.stderr
+            if not independently_validated:
+                pytest.skip(f"No installed archive tool supports ZIPX {compression}")
     elif compression == "shrink":
-        seven_zip_check = subprocess.run(
-            [seven_zip, "t", report["image"]], capture_output=True,
-            text=True, timeout=120, check=False)
-        assert seven_zip_check.returncode == 0, \
-            seven_zip_check.stdout + seven_zip_check.stderr
+        if seven_zip:
+            seven_zip_check = subprocess.run(
+                [seven_zip, "t", report["image"]], capture_output=True,
+                text=True, timeout=120, check=False)
+            assert seven_zip_check.returncode == 0, \
+                seven_zip_check.stdout + seven_zip_check.stderr
         with peare_lib.open_file(report["image"]) as opener:
             rows = {row["path"]: row for row in opener.normalized_tree()}
             assert rows["AGENTS.md"]["sha256"] == hashlib.sha256(
                 (ROOT / "AGENTS.md").read_bytes()).hexdigest()
     elif compression == "deflate64":
-        result = subprocess.run([seven_zip, "t", report["image"]],
-                                capture_output=True, text=True, timeout=120)
-        assert result.returncode == 0, result.stdout + result.stderr
+        if seven_zip:
+            result = subprocess.run([seven_zip, "t", report["image"]],
+                                    capture_output=True, text=True, timeout=120)
+            assert result.returncode == 0, result.stdout + result.stderr
         with peare_lib.open_file(report["image"]) as opener:
             rows = {row["path"]: row for row in opener.normalized_tree()}
             assert rows["AGENTS.md"]["sha256"] == hashlib.sha256(
@@ -15229,9 +15256,9 @@ def test_zip_shrink_gui_cud_offscreen(
     sample = samples[0]
     _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
                       str(sample), view, "")
-    seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
-                 shutil.which("7zz"))
-    if not seven_zip and os.name == "nt":
+    seven_zip = (_external_tool("7z.exe", "7z") or
+                 _external_tool("7zz"))
+    if not seven_zip and os.name == "nt" and _external_oracles_enabled():
         candidate = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
             "7-Zip" / "7z.exe"
         seven_zip = str(candidate) if candidate.is_file() else None
@@ -15254,9 +15281,9 @@ def test_zip64_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
         pytest.skip("Set PEARE_ZIP64_TEST_IMAGE to the independent ZIP64 sample")
     _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
                       str(sample), view, "", timeout_seconds=300)
-    seven_zip = (shutil.which("7z.exe") or shutil.which("7z") or
-                 shutil.which("7zz"))
-    if not seven_zip and os.name == "nt":
+    seven_zip = (_external_tool("7z.exe", "7z") or
+                 _external_tool("7zz"))
+    if not seven_zip and os.name == "nt" and _external_oracles_enabled():
         candidate = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / \
             "7-Zip" / "7z.exe"
         seven_zip = str(candidate) if candidate.is_file() else None

@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUT = ROOT / "tmp" / "test-output"
+OUTPUT = ROOT / "tests" / "output"
 OUTPUT.mkdir(parents=True, exist_ok=True)
 os.environ["PYTHONPYCACHEPREFIX"] = str(OUTPUT / "pycache")
 sys.pycache_prefix = str(OUTPUT / "pycache")

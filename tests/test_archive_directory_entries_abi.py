@@ -7,14 +7,17 @@ import shutil
 import subprocess
 
 import pytest
+from external_tools import enabled, find
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _tool(env_name, candidates):
+    if not enabled():
+        return None
     configured = os.environ.get(env_name)
-    paths = [configured, *(shutil.which(name) for name in candidates)]
+    paths = [configured, find(*candidates)]
     program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
     paths.append(str(program_files / "7-Zip" / "7z.exe") if "7ZIP" in env_name else
                  str(program_files / "WinRAR" / "rar.exe"))
@@ -62,6 +65,8 @@ def test_7z_explicit_directories_keep_their_children(peare_lib, tmp_path):
 
 @pytest.mark.parametrize(("format_name", "rar_switch"), (("rar4", "-ma4"), ("rar5", "-ma5")))
 def test_rar_directory_entries_are_not_ghost_paths(peare_lib, tmp_path, format_name, rar_switch):
+    if not enabled():
+        pytest.skip("External archive oracles are disabled")
     rar = os.environ.get("PEARE_RAR_EXE") or str(
         Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "WinRAR" / "rar.exe")
     if not Path(rar).is_file():

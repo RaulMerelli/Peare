@@ -9,6 +9,7 @@ import subprocess
 
 import pytest
 import peare_opener as po
+from external_tools import enabled, find
 
 
 DEFAULT_ROOT = Path.home() / "Documents" / "inerente a" / "Peare" / "cpio-samples"
@@ -78,7 +79,8 @@ def test_cpio_samples_match_libarchive(peare_lib, relative_name):
     if not sample.is_file():
         pytest.skip(f"Missing external CPIO sample: {sample}")
     assert sample.read_bytes()[: len(SAMPLE_MAGICS[relative_name])] == SAMPLE_MAGICS[relative_name]
-    tar = os.environ.get("PEARE_LIBARCHIVE_TAR") or shutil.which("tar")
+    tar = ((os.environ.get("PEARE_LIBARCHIVE_TAR") or find("bsdtar", "tar"))
+           if enabled() else None)
     if not tar:
         pytest.skip("Set PEARE_LIBARCHIVE_TAR to bsdtar for the independent oracle")
 

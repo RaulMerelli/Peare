@@ -8,6 +8,7 @@ import shutil
 import subprocess
 
 import pytest
+from external_tools import enabled, find
 import peare_opener as po
 
 
@@ -82,7 +83,8 @@ def test_unix_compress_tar_samples_match_libarchive(peare_lib, sample_name):
     sample = root / sample_name
     if not sample.is_file():
         pytest.skip(f"Missing external .Z sample: {sample}")
-    tar = os.environ.get("PEARE_LIBARCHIVE_TAR") or shutil.which("tar")
+    tar = ((os.environ.get("PEARE_LIBARCHIVE_TAR") or find("bsdtar", "tar"))
+           if enabled() else None)
     if not tar:
         pytest.skip("Set PEARE_LIBARCHIVE_TAR to bsdtar for the independent oracle")
 

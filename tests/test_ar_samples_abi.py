@@ -8,6 +8,7 @@ import subprocess
 
 import pytest
 import peare_opener as po
+from external_tools import enabled, find
 
 
 SAMPLE = Path(
@@ -20,7 +21,7 @@ def test_gnu_ar_archive_matches_independent_ar(peare_lib, tmp_path):
     sample = Path(os.environ.get("PEARE_AR_SAMPLE", SAMPLE))
     if not sample.is_file():
         pytest.skip("Set PEARE_AR_SAMPLE to a local GNU or BSD ar archive")
-    tool = os.environ.get("PEARE_AR_TOOL") or shutil.which("ar")
+    tool = (os.environ.get("PEARE_AR_TOOL") or find("ar")) if enabled() else None
     if not tool:
         pytest.skip("Set PEARE_AR_TOOL or install ar for the independent oracle")
 

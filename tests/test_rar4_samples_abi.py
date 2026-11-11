@@ -9,6 +9,7 @@ import subprocess
 
 import pytest
 import peare_opener as po
+from external_tools import enabled, find
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -30,17 +31,21 @@ SAMPLES = tuple(
 
 
 def _seven_zip():
+    if not enabled():
+        return None
     configured = os.environ.get("PEARE_7ZIP_EXE")
-    candidates = [configured, shutil.which("7z"), shutil.which("7z.exe")]
+    candidates = [configured, find("7z", "7z.exe")]
     program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
     candidates.append(str(Path(program_files) / "7-Zip" / "7z.exe"))
     return next((path for path in candidates if path and Path(path).is_file()), None)
 
 
 def _winrar_cli():
+    if not enabled():
+        return None
     configured = os.environ.get("PEARE_WINRAR_CLI_EXE")
     program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
-    candidates = [configured, shutil.which("Rar.exe"),
+    candidates = [configured, find("Rar.exe"),
                   str(Path(program_files) / "WinRAR" / "Rar.exe")]
     program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
     candidates.append(str(Path(program_files_x86) / "WinRAR" / "Rar.exe"))

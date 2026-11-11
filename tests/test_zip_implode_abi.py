@@ -5,14 +5,16 @@ import subprocess
 
 import pytest
 import peare_opener as po
+from external_tools import enabled, find
 
 
 SAMPLE = Path.home() / "Desktop" / "ArcaOS-0-s001_JFS_FILE_symbols.zip"
 
 
 def test_real_zip_implode_members_match_7zip(peare_lib):
-    seven_zip = (shutil.which("7z") or shutil.which("7z.exe") or
-                 r"C:\Program Files\7-Zip\7z.exe")
+    if not enabled():
+        pytest.skip("External archive oracles are disabled")
+    seven_zip = find("7z", "7z.exe")
     if not SAMPLE.is_file():
         pytest.skip("Local ArcaOS Implode ZIP sample is not available")
     if not Path(seven_zip).is_file():
