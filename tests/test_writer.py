@@ -4708,7 +4708,7 @@ def test_tar_bzip2_create_and_cud_roundtrip_with_7zip(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 32
+    assert writer_lib.peare_writer_create_format_count() == 33
     assert writer_lib.peare_writer_create_variant_count(b"tar-bzip2") == 9
     for level in range(1, 10):
         archive = tmp_path / f"created-level-{level}.tbz2"
@@ -4845,7 +4845,7 @@ def test_tar_zstd_create_and_cud_roundtrip_with_independent_decoder(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 32
+    assert writer_lib.peare_writer_create_format_count() == 33
     assert writer_lib.peare_writer_create_variant_count(b"tar-zstd") == 27
     variants = [f"fast-{level}" for level in range(5, 0, -1)] + [
         f"level-{level}" for level in range(1, 23)]
@@ -5086,7 +5086,7 @@ def test_tar_xz_create_all_checks_and_7zip(writer_lib, peare_lib, tmp_path):
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     checks = ("none", "crc32", "crc64", "sha256")
-    assert writer_lib.peare_writer_create_format_count() == 32
+    assert writer_lib.peare_writer_create_format_count() == 33
     assert writer_lib.peare_writer_create_variant_count(b"tar-xz") == len(checks)
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for check in checks:
@@ -5217,7 +5217,7 @@ def test_tar_lzma_create_all_levels_and_7zip(writer_lib, peare_lib, tmp_path):
         pytest.skip("7-Zip is required for independent TAR.LZMA validation")
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    assert writer_lib.peare_writer_create_format_count() == 32
+    assert writer_lib.peare_writer_create_format_count() == 33
     assert writer_lib.peare_writer_create_variant_count(b"tar-lzma") == 9
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for level in range(1, 10):
@@ -5334,7 +5334,7 @@ def test_lzip_writer_all_levels_and_winrar(
     source = ROOT / "README.md"
     expected = source.read_bytes()
     expected_hash = hashlib.sha256(expected).hexdigest()
-    assert writer_lib.peare_writer_create_format_count() == 32
+    assert writer_lib.peare_writer_create_format_count() == 33
     assert writer_lib.peare_writer_create_variant_count(b"lzip") == 10
     variants = []
     for index in range(10):
@@ -5451,7 +5451,7 @@ def test_lzip_writer_concatenates_selected_inputs(writer_lib, peare_lib, tmp_pat
     "classic", "classic-encoded-name", "base64", "base64-encoded-name"])
 def test_uuencode_writer_roundtrip_all_headers(
         writer_lib, peare_lib, peare_gui_path, tmp_path, variant):
-    assert writer_lib.peare_writer_create_format_count() == 32
+    assert writer_lib.peare_writer_create_format_count() == 33
     formats = (_WriterFormat * 30)()
     assert all(writer_lib.peare_writer_get_create_format(
         index, C.byref(formats[index])) == 0 for index in range(len(formats)))
@@ -10121,6 +10121,390 @@ def test_7z_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
     _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
                       str(archive), view, "")
 
+
+@pytest.mark.parametrize("variant", ["store", "xpress", "lzx"])
+def test_wim_create_and_full_cud_roundtrip(writer_lib, peare_lib, tmp_path, variant):
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required for independent WIM validation")
+
+    source_file = ROOT / "src" / "writer" / "api" / "Api.cpp"
+    replacement = ROOT / "docs" / "ABI" / "API_WRITER.md"
+    sample = ROOT / "tests" / "formats" / "wim" / "fixtures" / "README.md"
+    archive = tmp_path / f"created-{variant}.wim"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"wim", variant.encode(), str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_create_file(
+            writer, str(source_file).encode(), b"folder/alpha.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            writer, b"empty.txt") == 0
+        assert writer_lib.peare_writer_create_directory(
+            writer, b"empty-dir") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(replacement).encode(), b"to-delete/child.txt") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(source_file).encode(), b"rename-me.txt") == 0
+        assert writer_lib.peare_writer_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    opened = peare_lib.open_file(str(archive))
+    assert opened is not None
+    try:
+        rows = {row["path"]: row for row in opened.normalized_tree()}
+        assert rows["folder/alpha.txt"]["sha256"] == hashlib.sha256(source_file.read_bytes()).hexdigest()
+        assert rows["empty.txt"]["size"] == 0
+        assert rows["to-delete/child.txt"]["sha256"] == hashlib.sha256(replacement.read_bytes()).hexdigest()
+    finally:
+        opened.close()
+
+    checked = subprocess.run([seven_zip, "t", str(archive)], capture_output=True,
+                             text=True, timeout=60)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    extracted = tmp_path / "extracted"
+    extracted.mkdir()
+    result = subprocess.run([seven_zip, "x", str(archive),
+                             f"-o{extracted}", "-y"], capture_output=True,
+                            text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (extracted / "folder" / "alpha.txt").read_bytes() == source_file.read_bytes()
+    assert (extracted / "empty.txt").read_bytes() == b""
+
+    updated = tmp_path / f"updated-{variant}.wim"
+    shutil.copyfile(archive, updated)
+    assert writer_lib.peare_writer_can_add_files(str(updated).encode()) == 1
+    capabilities = C.c_uint32()
+    assert writer_lib.peare_writer_get_update_capabilities(
+        str(updated).encode(), 0, C.byref(capabilities)) == 0
+    assert capabilities.value == 63
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(writer, str(updated).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"folder/alpha.txt") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"rename-me.txt", b"renamed.txt") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(sample).encode(), b"new/sample.swm") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            writer, b"new/empty.bin") == 0
+        assert writer_lib.peare_writer_create_directory(writer, b"new/dir") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"to-delete", 1) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    opened = peare_lib.open_file(str(updated))
+    assert opened is not None
+    try:
+        rows = {row["path"]: row for row in opened.normalized_tree()}
+        assert rows["folder/alpha.txt"]["sha256"] == hashlib.sha256(replacement.read_bytes()).hexdigest()
+        assert rows["renamed.txt"]["sha256"] == hashlib.sha256(source_file.read_bytes()).hexdigest()
+        assert rows["new/sample.swm"]["sha256"] == hashlib.sha256(sample.read_bytes()).hexdigest()
+        assert rows["new/empty.bin"]["size"] == 0
+        assert "to-delete/child.txt" not in rows
+    finally:
+        opened.close()
+    checked = subprocess.run([seven_zip, "t", str(updated)], capture_output=True,
+                             text=True, timeout=60)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+def test_wim_full_cud_update_of_7zip_created_image(
+        writer_lib, peare_lib, tmp_path):
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required to create the independent WIM sample")
+    archive = tmp_path / "7zip-created.wim"
+    created = subprocess.run(
+        [seven_zip, "a", "-tWIM", str(archive), str(ROOT / "README.md"), "-y"],
+        capture_output=True, text=True, timeout=60)
+    assert created.returncode == 0, created.stdout + created.stderr
+    assert writer_lib.peare_writer_can_add_files(str(archive).encode()) == 1
+
+    replacement = ROOT / "docs" / "ABI" / "API_WRITER.md"
+    added = ROOT / "tests" / "formats" / "wim" / "fixtures" / "README.md"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"README.md", b"renamed.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"renamed.txt") == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(added).encode(), b"nested/added.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            writer, b"empty.bin") == 0
+        assert writer_lib.peare_writer_create_directory(
+            writer, b"empty-dir") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"empty.bin", 0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    opened = peare_lib.open_file(str(archive))
+    assert opened is not None
+    try:
+        rows = {row["path"]: row for row in opened.normalized_tree()}
+        assert rows["renamed.txt"]["sha256"] == hashlib.sha256(
+            replacement.read_bytes()).hexdigest()
+        assert rows["nested/added.txt"]["sha256"] == hashlib.sha256(
+            added.read_bytes()).hexdigest()
+        assert "empty.bin" not in rows
+        assert "README.md" not in rows
+    finally:
+        opened.close()
+    checked = subprocess.run([seven_zip, "t", str(archive)], capture_output=True,
+                             text=True, timeout=60)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+@pytest.mark.parametrize("compression", ["none", "xpress", "lzx"])
+def test_wim_full_cud_update_of_wimlib_created_image(
+        writer_lib, peare_lib, tmp_path, compression):
+    wimlib = os.environ.get("PEARE_WIMLIB_IMAGE")
+    if not wimlib or not Path(wimlib).is_file():
+        pytest.skip("Set PEARE_WIMLIB_IMAGE for independent compressed WIM samples")
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required for independent WIM validation")
+    source_dir = ROOT / "tests" / "formats" / "wim" / "fixtures"
+    archive = tmp_path / f"wimlib-{compression}.wim"
+    created = subprocess.run(
+        [wimlib, "capture", str(source_dir), str(archive), "First Image",
+         f"--compress={compression}", "--no-acls", "--check"],
+        capture_output=True, text=True, timeout=120)
+    assert created.returncode == 0, created.stdout + created.stderr
+    original_header = archive.read_bytes()[:208]
+    assert struct.unpack_from("<Q", original_header, 124)[0] & 0x00ffffffffffffff
+    second_dir = tmp_path / "second-image"
+    second_dir.mkdir()
+    second_payload = ROOT / "docs" / "ABI" / "API_WRITER.md"
+    shutil.copyfile(second_payload, second_dir / "second.txt")
+    appended = subprocess.run(
+        [wimlib, "append", str(second_dir), str(archive), "Second Image", "--no-acls"],
+        capture_output=True, text=True, timeout=120)
+    assert appended.returncode == 0, appended.stdout + appended.stderr
+
+    source = ROOT / "docs" / "ABI" / "API_WRITER.md"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(source).encode(), b"README.md") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"README.md", b"renamed.txt") == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(source).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(writer, b"empty.bin") == 0
+        assert writer_lib.peare_writer_create_directory(writer, b"empty-dir") == 0
+        assert writer_lib.peare_writer_delete_entry(writer, b"empty.bin", 0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    opened = peare_lib.open_file(str(archive))
+    assert opened is not None
+    try:
+        rows = {row["path"]: row for row in opened.normalized_tree()}
+        expected_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+        assert rows["renamed.txt"]["sha256"] == expected_hash
+        assert rows["added.txt"]["sha256"] == expected_hash
+        assert "empty.bin" not in rows
+    finally:
+        opened.close()
+    checked = subprocess.run([seven_zip, "t", str(archive)], capture_output=True,
+                             text=True, timeout=60)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    verified = subprocess.run([wimlib, "verify", str(archive)], capture_output=True,
+                              text=True, timeout=120)
+    assert verified.returncode == 0, verified.stdout + verified.stderr
+    updated_header = archive.read_bytes()[:208]
+    assert struct.unpack_from("<Q", updated_header, 124)[0] & 0x00ffffffffffffff
+    second_output = tmp_path / "second-image-output"
+    extracted = subprocess.run(
+        [wimlib, "extract", str(archive), "2", "second.txt",
+         f"--dest-dir={second_output}"],
+        capture_output=True, text=True, timeout=120)
+    assert extracted.returncode == 0, extracted.stdout + extracted.stderr
+    assert (second_output / "second.txt").read_bytes() == second_payload.read_bytes()
+
+
+def test_wim_cud_preserves_named_streams(writer_lib, tmp_path):
+    wimlib = os.environ.get("PEARE_WIMLIB_IMAGE")
+    if os.name != "nt" or not wimlib or not Path(wimlib).is_file():
+        pytest.skip("Windows and wimlib are required for WIM named stream validation")
+    source_dir = tmp_path / "ads-source"
+    source_dir.mkdir()
+    source = source_dir / "main.txt"
+    source.write_bytes(b"original default stream")
+    with open(str(source) + ":peare_test", "wb") as stream:
+        stream.write(b"preserved named stream")
+    removed = source_dir / "remove.txt"
+    removed.write_bytes(b"remove this file")
+    with open(str(removed) + ":peare_test", "wb") as stream:
+        stream.write(b"remove this named stream")
+
+    archive = tmp_path / "named-streams.wim"
+    captured = subprocess.run(
+        [wimlib, "capture", str(source_dir), str(archive), "Named Streams",
+         "--compress=xpress", "--no-acls"],
+        capture_output=True, text=True, timeout=120)
+    assert captured.returncode == 0, captured.stdout + captured.stderr
+
+    replacement = tmp_path / "replacement.txt"
+    replacement.write_bytes(b"replacement default stream")
+    addition = tmp_path / "addition.txt"
+    addition.write_bytes(b"added file")
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"main.txt", b"renamed.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"renamed.txt") == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(addition).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"remove.txt", 0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    verified = subprocess.run([wimlib, "verify", str(archive)], capture_output=True,
+                              text=True, timeout=120)
+    assert verified.returncode == 0, verified.stdout + verified.stderr
+    listing = subprocess.run(
+        [wimlib, "dir", str(archive), "1", "--path=renamed.txt", "--detailed"],
+        capture_output=True, text=True, timeout=60)
+    assert listing.returncode == 0, listing.stdout + listing.stderr
+    assert 'Named data stream "peare_test"' in listing.stdout
+    extracted_dir = tmp_path / "ads-extracted"
+    extracted = subprocess.run(
+        [wimlib, "extract", str(archive), "1", "renamed.txt",
+         f"--dest-dir={extracted_dir}"],
+        capture_output=True, text=True, timeout=120)
+    assert extracted.returncode == 0, extracted.stdout + extracted.stderr
+    extracted_file = extracted_dir / "renamed.txt"
+    assert extracted_file.read_bytes() == replacement.read_bytes()
+    with open(str(extracted_file) + ":peare_test", "rb") as stream:
+        assert stream.read() == b"preserved named stream"
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_wim_gui_all_variants_complete_cud_persistent(
+        writer_lib, peare_gui_path, tmp_path, view):
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required for independent WIM validation")
+    source = ROOT / "src" / "writer" / "api" / "Api.cpp"
+    replacement = ROOT / "docs" / "ABI" / "API_WRITER.md"
+    image = tmp_path / "gui-wim-base.wim"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"wim", b"store", str(image).encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(ROOT / "README.md").encode(), b"README.md") == 0
+        assert writer_lib.peare_writer_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    variants = []
+    for index in range(writer_lib.peare_writer_create_variant_count(b"wim")):
+        variant = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"wim", index, C.byref(variant)) == 0
+        variants.append(variant.id.decode())
+    assert variants == ["store", "xpress", "lzx"]
+
+    operations = []
+    outputs = []
+    for variant in variants:
+        destination = tmp_path / f"gui-wim-{variant}.wim"
+        outputs.append(destination)
+        operations.append({
+            "type": "create_container", "test_id": f"create-{variant}",
+            "format": "wim", "variant": variant,
+            "destination": str(destination), "sources": [str(source)],
+        })
+        operations.extend([
+            {"type": "create_file", "test_id": f"empty-{variant}",
+             "name": "empty.txt", "expect_present": "empty.txt"},
+            {"type": "create_directory", "test_id": f"directory-{variant}",
+             "name": "nested", "expect_present": "nested"},
+            {"type": "add_files", "test_id": f"add-{variant}",
+             "sources": [str(replacement)], "destination": "",
+             "expect_present": replacement.name},
+            {"type": "replace", "test_id": f"replace-{variant}",
+             "path": source.name, "source": str(replacement),
+             "expect_present": source.name},
+            {"type": "rename", "test_id": f"rename-{variant}",
+             "path": replacement.name, "name": "renamed.txt",
+             "expect_present": "renamed.txt",
+             "expect_absent": replacement.name},
+            {"type": "delete", "test_id": f"delete-empty-{variant}",
+             "path": "empty.txt", "expect_absent": "empty.txt"},
+            {"type": "delete", "test_id": f"delete-directory-{variant}",
+             "path": "nested", "expect_absent": "nested"},
+            {"type": "delete", "test_id": f"delete-renamed-{variant}",
+             "path": "renamed.txt", "expect_absent": "renamed.txt"},
+        ])
+
+    scenario = tmp_path / "wim-all-variants-cud.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / "wim-all-variants-cud-output"
+    try:
+        result = subprocess.run([
+            sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+            "--exe", str(peare_gui_path), "--image", str(image),
+            "--scenario", str(scenario), "--output-dir", str(output_dir),
+            "--timeout", "180",
+        ], capture_output=True, text=True, timeout=210)
+        assert result.returncode == 0, result.stdout + result.stderr
+        report = json.loads((output_dir / "writer-test-report.json").read_text(
+            encoding="utf-8"))
+        assert report["stage"] == "complete"
+        assert len(report["operations"]) == len(operations)
+        assert all(item["passed"] for item in report["operations"])
+        memory = json.loads((output_dir / "writer-test-memory.json").read_text(
+            encoding="utf-8"))
+        assert len(memory["samples"]) >= 2
+        assert memory["peak"]
+        for archive in outputs:
+            checked = subprocess.run([seven_zip, "t", str(archive)],
+                                     capture_output=True, text=True, timeout=60)
+            assert checked.returncode == 0, checked.stdout + checked.stderr
+            extracted = subprocess.run(
+                [seven_zip, "x", "-so", str(archive), source.name],
+                capture_output=True, timeout=60)
+            assert extracted.returncode == 0
+            assert extracted.stdout == replacement.read_bytes()
+    finally:
+        for archive in outputs:
+            if archive.exists():
+                archive.unlink()
+
 @pytest.fixture(scope="session")
 def writer_lib():
     path = _writer_path()
@@ -10451,7 +10835,7 @@ def test_rar_create_variants_gui_persistent(
 
 
 def test_rar_create_query_and_add_files_to_abi(writer_lib, peare_lib, tmp_path):
-    assert writer_lib.peare_writer_create_format_count() == 32
+    assert writer_lib.peare_writer_create_format_count() == 33
     assert writer_lib.peare_writer_create_variant_count(b"rar") == 18
     found_rar = False
     for index in range(writer_lib.peare_writer_create_format_count()):

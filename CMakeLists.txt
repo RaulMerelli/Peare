@@ -822,6 +822,10 @@ add_library(PeareWriter SHARED
     src/writer/formats/RarArchiveWriter.cpp
     src/writer/formats/SevenZipArchiveWriter.h
     src/writer/formats/SevenZipArchiveWriter.cpp
+    src/writer/formats/WimImageWriter.h
+    src/writer/formats/WimImageWriter.cpp
+    src/opener/fs/XpressDecoder.cpp
+    src/opener/compression/peare/LzxDecoder.cpp
     src/common/rar/Rar5Crypto.h
     src/common/rar/Rar5Crypto.cpp
     src/opener/compression/third_party/lzma/Aes.h

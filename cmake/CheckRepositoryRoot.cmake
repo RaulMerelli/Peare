@@ -16,18 +16,32 @@ if(NOT git_result EQUAL 0)
     message(FATAL_ERROR "Cannot validate repository root: ${git_error}")
 endif()
 
-string(REPLACE "\n" ";" tracked_paths "${tracked_paths}")
-set(approved_root_entries ".git")
-foreach(tracked_path IN LISTS tracked_paths)
-    if(tracked_path STREQUAL "")
-        continue()
-    endif()
-    string(REGEX MATCH "^[^/]+" root_entry "${tracked_path}")
-    if(NOT root_entry STREQUAL "")
-        list(APPEND approved_root_entries "${root_entry}")
-    endif()
-endforeach()
-list(REMOVE_DUPLICATES approved_root_entries)
+set(approved_root_entries
+    ".agents"
+    ".git"
+    ".githooks"
+    ".github"
+    ".clang-format"
+    ".gitattributes"
+    ".gitignore"
+    "AGENTS.md"
+    "build"
+    "build-android"
+    "build-windows"
+    "cmake"
+    "CMakeLists.txt"
+    "COPYRIGHT.md"
+    "docs"
+    "LICENSE"
+    "README.md"
+    "resources"
+    "Settings.ini"
+    "src"
+    "tests"
+    "THIRDPARTY.md"
+    "tmp"
+    "tools"
+)
 
 file(GLOB root_entries LIST_DIRECTORIES TRUE
     "${repository_root}/*"
@@ -41,13 +55,6 @@ foreach(root_path IN LISTS root_entries)
     endif()
     list(FIND approved_root_entries "${root_entry}" approved_index)
     if(NOT approved_index EQUAL -1)
-        continue()
-    endif()
-
-    if(IS_DIRECTORY "${root_path}" AND
-       (root_entry MATCHES "^build(-[A-Za-z0-9._]+)?$" OR
-        root_entry STREQUAL "tmp" OR
-        root_entry STREQUAL "dist"))
         continue()
     endif()
 

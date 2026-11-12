@@ -71,6 +71,14 @@ creation support FAT12, FAT16, FAT32, exFAT, and NTFS. NTFS volumes use the
 bundled NTFS-3G formatter on the staged image. Peare checks each volume before
 it publishes the new disk. Floppy images use FAT12.
 
+## WIM
+
+WIM creation supports Store, XPRESS, and LZX compression. WIM updates support
+single-part images with those methods. The Writer supports all six CUD actions
+for files and directories. It preserves other images in a multi-image WIM,
+retains named streams on existing entries, and verifies and rebuilds an existing
+SHA-1 integrity table during updates.
+
 Debian package creation writes version 2.0 `.deb` files with generated package
 metadata and one control TAR plus one data TAR. The ABI offers 24 combinations
 of raw, GZIP, XZ, or Zstandard control TAR and raw, GZIP, XZ, Zstandard, BZIP2,

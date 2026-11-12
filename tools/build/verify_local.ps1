@@ -28,7 +28,8 @@ function Get-TempBytes {
 
 function Get-TestOutputBytes {
     if (-not (Test-Path $testOutput)) { return 0L }
-    $measure = Get-ChildItem -LiteralPath $testOutput -File -Recurse -Force |
+    $measure = Get-ChildItem -LiteralPath $testOutput -File -Recurse -Force `
+        -ErrorAction SilentlyContinue |
         Measure-Object -Property Length -Sum
     if ($null -eq $measure.Sum) { return 0L }
     return [long]$measure.Sum
@@ -45,7 +46,26 @@ function Invoke-LoggedTestRun {
     param([string]$Python, [string[]]$Arguments, [string]$LogName)
     $stdout = Join-Path $tmpRoot "$LogName.stdout.log"
     $stderr = Join-Path $tmpRoot "$LogName.stderr.log"
-    $process = Start-Process -FilePath $Python -ArgumentList $Arguments `
+    $runner = Join-Path $tmpRoot "local-gate-runner.ps1"
+    $configPath = Join-Path $tmpRoot "$LogName.config.json"
+    $resultPath = Join-Path $tmpRoot "$LogName.exit-code.txt"
+    $runnerSource = @'
+param([string]$ConfigPath)
+$ErrorActionPreference = "Stop"
+$config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+& $config.python @($config.arguments)
+$code = $LASTEXITCODE
+[IO.File]::WriteAllText($config.result, [string]$code, [Text.Encoding]::ASCII)
+exit $code
+'@
+    Set-Content -LiteralPath $runner -Value $runnerSource -Encoding ascii
+    [ordered]@{ python = $Python; arguments = $Arguments; result = $resultPath } |
+        ConvertTo-Json -Compress | Set-Content -LiteralPath $configPath -Encoding ascii
+    Remove-Item -LiteralPath $resultPath -Force -ErrorAction SilentlyContinue
+    $powershell = Join-Path $PSHOME "powershell.exe"
+    $process = Start-Process -FilePath $powershell `
+        -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+            "`"$runner`"", "`"$configPath`"") `
         -WorkingDirectory $root -NoNewWindow -PassThru `
         -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     while (-not $process.HasExited) {
@@ -53,17 +73,20 @@ function Invoke-LoggedTestRun {
         $process.Refresh()
         $used = Get-TempBytes
         $testUsed = Get-TestOutputBytes
-        if ($used -ge $limitBytes -or $testUsed -ge $limitBytes) {
+        if (($used + $testUsed) -ge $limitBytes) {
             & taskkill.exe /PID $process.Id /T /F | Out-Null
             throw "Test output reached the 10 GB limit; stopped the test process."
         }
     }
     $process.WaitForExit()
     $process.Refresh()
-    $exitCode = $process.ExitCode
     Get-Content -LiteralPath $stdout
     Get-Content -LiteralPath $stderr
-    if ($null -eq $exitCode -or $exitCode -ne 0) {
+    if (-not (Test-Path -LiteralPath $resultPath)) {
+        throw "Test command did not write an exit-code result."
+    }
+    $exitCode = [int](Get-Content -LiteralPath $resultPath -Raw).Trim()
+    if ($exitCode -ne 0) {
         throw "Test command failed with exit code $exitCode."
     }
 }
@@ -212,8 +235,7 @@ Invoke-LoggedTestRun -Python $pythonExe `
     -Arguments @("tests/run_tests.py", "-q", "tests/test_android_package.py") `
     -LogName "local-gate-android-package"
 
-if ((Get-TempBytes) -ge $limitBytes -or
-    (Get-TestOutputBytes) -ge $limitBytes) {
+if ((Get-TempBytes) + (Get-TestOutputBytes) -ge $limitBytes) {
     throw "Local gate output exceeded its 10 GB limit."
 }
 $tree = Invoke-Git @("write-tree")

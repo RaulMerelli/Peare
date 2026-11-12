@@ -4,6 +4,7 @@
 #include "formats/IsoImageWriter.h"
 #include "formats/RarArchiveWriter.h"
 #include "formats/SevenZipArchiveWriter.h"
+#include "formats/WimImageWriter.h"
 #include "formats/WinZipJpegEncoder.h"
 #include "../third_party/miniz/miniz.h"
 #include "../third_party/bzip2/bzlib.h"
@@ -301,6 +302,7 @@ struct peare_writer_handle_s {
     std::unique_ptr<QTemporaryDir> uueStage;
     std::unique_ptr<peare::writer::RarArchiveWriter> rarArchive;
     std::unique_ptr<peare::writer::SevenZipArchiveWriter> sevenZipArchive;
+    std::unique_ptr<peare::writer::WimImageWriter> wimImage;
     QString password;
     std::vector<Entry> entries;
     std::vector<TarEntry> tarEntries;
@@ -369,7 +371,7 @@ struct peare_writer_handle_s {
                       TarBzip2Create, TarZstdCreate, TarUnixCompressCreate,
                       TarXzCreate, TarLzmaCreate,
                       FatCreate, DiskUpdate, RarCreate, RarUpdate,
-                      SevenZipCreate, SevenZipUpdate } mode = Mode::None;
+                      SevenZipCreate, SevenZipUpdate, WimCreate, WimUpdate } mode = Mode::None;
 };
 
 namespace {
@@ -7314,7 +7316,7 @@ peare_writer_status peare_writer_set_password(peare_writer_handle writer,
     return PEARE_WRITER_OK;
 }
 
-size_t peare_writer_create_format_count(void) { return 32; }
+size_t peare_writer_create_format_count(void) { return 33; }
 
 peare_writer_status peare_writer_get_create_format(size_t index,
                                                     peare_writer_format* outFormat) {
@@ -7351,7 +7353,8 @@ peare_writer_status peare_writer_get_create_format(size_t index,
         {"xar", "XAR archive", "xar"},
         {"iso", "ISO 9660 image", "iso"},
         {"rar", "RAR archive", "rar"},
-        {"7z", "7-Zip archive", "7z"}
+        {"7z", "7-Zip archive", "7z"},
+        {"wim", "Windows Imaging Format", "wim"}
     };
     if (index >= sizeof(formats) / sizeof(formats[0]))
         return PEARE_WRITER_INVALID_ARGUMENT;
@@ -7364,6 +7367,7 @@ size_t peare_writer_create_variant_count(const char* formatIdUtf8) {
     if (std::strcmp(formatIdUtf8, "zip") == 0) return 18;
     if (std::strcmp(formatIdUtf8, "rar") == 0) return 18;
     if (std::strcmp(formatIdUtf8, "7z") == 0) return 201;
+    if (std::strcmp(formatIdUtf8, "wim") == 0) return 3;
     if (std::strcmp(formatIdUtf8, "gzip") == 0) return 1;
     if (std::strcmp(formatIdUtf8, "bzip2") == 0) return 9;
     if (std::strcmp(formatIdUtf8, "zstd") == 0) return 27;
@@ -7666,6 +7670,15 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
             return PEARE_WRITER_OK;
         }
     }
+    if (std::strcmp(formatIdUtf8, "wim") == 0 && index < 3) {
+        static const peare_writer_variant wimVariants[] = {
+            {"store", "Uncompressed"},
+            {"xpress", "XPRESS"},
+            {"lzx", "LZX"}
+        };
+        *outVariant = wimVariants[index];
+        return PEARE_WRITER_OK;
+    }
     if (std::strcmp(formatIdUtf8, "gzip") == 0 && index == 0) {
         *outVariant = gzipVariants[0];
         return PEARE_WRITER_OK;
@@ -7830,6 +7843,31 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("A format and output path are required."), false);
     const char* variant = variantIdUtf8 && *variantIdUtf8 ? variantIdUtf8 : nullptr;
+    if (std::strcmp(formatIdUtf8, "wim") == 0) {
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (writer->active)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("A writer operation is already active."), false);
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            writer->wimImage.reset(new (std::nothrow) peare::writer::WimImageWriter);
+            if (!writer->wimImage)
+                return fail(writer, PEARE_WRITER_ALLOCATION_FAILED,
+                            QStringLiteral("Could not allocate the WIM writer."), false);
+            QString error;
+            if (!writer->wimImage->beginCreate(QString::fromUtf8(outputPathUtf8),
+                                               variant ? QByteArray(variant) : QByteArray("store"),
+                                               &error)) {
+                writer->wimImage.reset();
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT, error, false);
+            }
+            writer->active = true;
+            writer->updateMode = false;
+            writer->archiveDirty = true;
+            writer->mode = peare_writer_handle_s::Mode::WimCreate;
+            return PEARE_WRITER_OK;
+        });
+    }
     if (std::strcmp(formatIdUtf8, "7z") == 0) {
         return cBoundary(writer, [&]() -> peare_writer_status {
             if (writer->active)
@@ -8733,6 +8771,8 @@ int peare_writer_can_add_files(const char* containerPathUtf8) {
     try {
         if (peare::writer::SevenZipArchiveWriter::canUpdate(
                 QString::fromUtf8(containerPathUtf8))) return 1;
+        if (peare::writer::WimImageWriter::canUpdate(
+                QString::fromUtf8(containerPathUtf8))) return 1;
         if (peare::writer::RarArchiveWriter::canUpdate(
                 QString::fromUtf8(containerPathUtf8))) return 1;
         if (isRpmPackageFile(QString::fromUtf8(containerPathUtf8))) return 1;
@@ -8833,6 +8873,12 @@ peare_writer_status peare_writer_get_update_target_name(const char* containerPat
         return peare_writer_get_add_target_name(containerPathUtf8, targetIndex,
                                                  nameBuffer, nameBufferSize);
     static const char archiveName[] = "Archive";
+    if (peare::writer::WimImageWriter::canUpdate(QString::fromUtf8(containerPathUtf8))) {
+        static const char imageName[] = "Image 1";
+        if (sizeof(imageName) > nameBufferSize) return PEARE_WRITER_UNSUPPORTED_LIMIT;
+        std::memcpy(nameBuffer, imageName, sizeof(imageName));
+        return PEARE_WRITER_OK;
+    }
     if (sizeof(archiveName) > nameBufferSize) return PEARE_WRITER_UNSUPPORTED_LIMIT;
     std::memcpy(nameBuffer, archiveName, sizeof(archiveName));
     return PEARE_WRITER_OK;
@@ -8859,6 +8905,11 @@ peare_writer_status peare_writer_get_update_capabilities(
                                 PEARE_WRITER_CAP_DELETE_ENTRY;
         };
         if (peare::writer::SevenZipArchiveWriter::canUpdate(
+                QString::fromUtf8(containerPathUtf8))) {
+            setArchiveCapabilities();
+            return PEARE_WRITER_OK;
+        }
+        if (peare::writer::WimImageWriter::canUpdate(
                 QString::fromUtf8(containerPathUtf8))) {
             setArchiveCapabilities();
             return PEARE_WRITER_OK;
@@ -9038,6 +9089,24 @@ peare_writer_status peare_writer_add_files_begin(peare_writer_handle writer,
             writer->archiveDirty = false;
             writer->updatePath = QString::fromUtf8(containerPathUtf8);
             writer->mode = peare_writer_handle_s::Mode::SevenZipUpdate;
+            return PEARE_WRITER_OK;
+        }
+        if (peare::writer::WimImageWriter::canUpdate(
+                QString::fromUtf8(containerPathUtf8))) {
+            writer->wimImage.reset(new (std::nothrow) peare::writer::WimImageWriter);
+            if (!writer->wimImage)
+                return fail(writer, PEARE_WRITER_ALLOCATION_FAILED,
+                            QStringLiteral("Could not allocate the WIM update backend."), false);
+            QString error;
+            if (!writer->wimImage->beginUpdate(QString::fromUtf8(containerPathUtf8), &error)) {
+                writer->wimImage.reset();
+                return fail(writer, PEARE_WRITER_UNSUPPORTED_OPERATION, error, false);
+            }
+            writer->active = true;
+            writer->updateMode = true;
+            writer->archiveDirty = true;
+            writer->updatePath = QString::fromUtf8(containerPathUtf8);
+            writer->mode = peare_writer_handle_s::Mode::WimUpdate;
             return PEARE_WRITER_OK;
         }
         const size_t diskTargetCount = peare_writer_add_target_count(containerPathUtf8);
@@ -9478,6 +9547,19 @@ peare_writer_status peare_writer_add_file(peare_writer_handle writer,
     if (!writer->active)
         return fail(writer, PEARE_WRITER_NOT_ACTIVE,
                     QStringLiteral("No container write is active."), false);
+    if (writer->mode == peare_writer_handle_s::Mode::WimCreate ||
+        writer->mode == peare_writer_handle_s::Mode::WimUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("A source file and WIM path are required."));
+            QString error;
+            if (!writer->wimImage->addFile(QString::fromUtf8(sourcePathUtf8),
+                                           QByteArray(entryNameUtf8), &error))
+                return fail(writer, error.contains(QStringLiteral("already exists"))
+                    ? PEARE_WRITER_DUPLICATE_ENTRY : PEARE_WRITER_IO_ERROR, error);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::SevenZipCreate ||
         writer->mode == peare_writer_handle_s::Mode::SevenZipUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
@@ -9817,6 +9899,15 @@ peare_writer_status peare_writer_create_empty_file(peare_writer_handle writer,
     if (!entryNameUtf8 || !*entryNameUtf8)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("An entry name is required."));
+    if (writer->mode == peare_writer_handle_s::Mode::WimCreate ||
+        writer->mode == peare_writer_handle_s::Mode::WimUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QString error;
+            if (!writer->wimImage->addEmptyFile(QByteArray(entryNameUtf8), &error))
+                return fail(writer, PEARE_WRITER_DUPLICATE_ENTRY,
+                            error.isEmpty() ? QStringLiteral("The WIM entry name is invalid.") : error);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::SevenZipCreate ||
         writer->mode == peare_writer_handle_s::Mode::SevenZipUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
@@ -9861,6 +9952,15 @@ peare_writer_status peare_writer_create_directory(peare_writer_handle writer,
     if (!entryNameUtf8 || !*entryNameUtf8)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("An entry name is required."));
+    if (writer->mode == peare_writer_handle_s::Mode::WimCreate ||
+        writer->mode == peare_writer_handle_s::Mode::WimUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QString error;
+            if (!writer->wimImage->addDirectory(QByteArray(entryNameUtf8), &error))
+                return fail(writer, PEARE_WRITER_DUPLICATE_ENTRY,
+                            error.isEmpty() ? QStringLiteral("The WIM entry name is invalid.") : error);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::SevenZipCreate ||
         writer->mode == peare_writer_handle_s::Mode::SevenZipUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
@@ -9977,6 +10077,15 @@ peare_writer_status peare_writer_replace_file(peare_writer_handle writer,
     if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("A source path and entry name are required."));
+    if (writer->mode == peare_writer_handle_s::Mode::WimCreate ||
+        writer->mode == peare_writer_handle_s::Mode::WimUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QString error;
+            if (!writer->wimImage->replaceFile(QString::fromUtf8(sourcePathUtf8),
+                                               QByteArray(entryNameUtf8), &error))
+                return fail(writer, PEARE_WRITER_ENTRY_NOT_FOUND, error);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::SevenZipUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             QByteArray name;
@@ -10315,6 +10424,16 @@ peare_writer_status peare_writer_rename_entry(peare_writer_handle writer,
     if (!entryNameUtf8 || !*entryNameUtf8 || !newEntryNameUtf8 || !*newEntryNameUtf8)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("Source and destination entry names are required."));
+    if (writer->mode == peare_writer_handle_s::Mode::WimCreate ||
+        writer->mode == peare_writer_handle_s::Mode::WimUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QString error;
+            if (!writer->wimImage->renameEntry(QByteArray(entryNameUtf8),
+                                               QByteArray(newEntryNameUtf8), &error))
+                return fail(writer, error.contains(QStringLiteral("not found"))
+                    ? PEARE_WRITER_ENTRY_NOT_FOUND : PEARE_WRITER_INVALID_ARGUMENT, error);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::SevenZipUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
             QByteArray oldName;
@@ -10782,6 +10901,15 @@ peare_writer_status peare_writer_delete_entry(peare_writer_handle writer,
     if (!entryNameUtf8 || !*entryNameUtf8 || (recursive != 0 && recursive != 1))
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("A valid entry name and recursive flag are required."));
+    if (writer->mode == peare_writer_handle_s::Mode::WimCreate ||
+        writer->mode == peare_writer_handle_s::Mode::WimUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QString error;
+            if (!writer->wimImage->deleteEntry(QByteArray(entryNameUtf8), recursive != 0, &error))
+                return fail(writer, error.contains(QStringLiteral("not found"))
+                    ? PEARE_WRITER_ENTRY_NOT_FOUND : PEARE_WRITER_INVALID_ARGUMENT, error);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::SevenZipCreate ||
         writer->mode == peare_writer_handle_s::Mode::SevenZipUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
@@ -11088,6 +11216,7 @@ peare_writer_status peare_writer_update_finish(peare_writer_handle writer) {
         writer->mode != peare_writer_handle_s::Mode::XarUpdate &&
         writer->mode != peare_writer_handle_s::Mode::IsoUpdate &&
         writer->mode != peare_writer_handle_s::Mode::SevenZipUpdate &&
+        writer->mode != peare_writer_handle_s::Mode::WimUpdate &&
         writer->mode != peare_writer_handle_s::Mode::DiskUpdate)
         return fail(writer, PEARE_WRITER_NOT_ACTIVE,
                     QStringLiteral("No container update is active."), false);
@@ -11122,6 +11251,20 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
             if (!writer->sevenZipArchive || !writer->sevenZipArchive->finish(&error))
                 return fail(writer, PEARE_WRITER_IO_ERROR, error);
             writer->sevenZipArchive.reset();
+            writer->active = false;
+            writer->updateMode = false;
+            writer->mode = peare_writer_handle_s::Mode::None;
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            return PEARE_WRITER_OK;
+        });
+    if (writer->mode == peare_writer_handle_s::Mode::WimCreate ||
+        writer->mode == peare_writer_handle_s::Mode::WimUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QString error;
+            if (!writer->wimImage || !writer->wimImage->finish(&error))
+                return fail(writer, PEARE_WRITER_IO_ERROR, error);
+            writer->wimImage.reset();
             writer->active = false;
             writer->updateMode = false;
             writer->mode = peare_writer_handle_s::Mode::None;
@@ -12054,6 +12197,10 @@ peare_writer_status peare_writer_zip_finish(peare_writer_handle writer) {
 
 void peare_writer_abort(peare_writer_handle writer) {
     if (!writer || !writer->active) return;
+    if (writer->wimImage) {
+        writer->wimImage->abort();
+        writer->wimImage.reset();
+    }
     if (writer->output) {
         writer->output->cancelWriting();
         writer->output.reset();

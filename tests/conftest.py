@@ -11,6 +11,7 @@ a build should not report red.
 """
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -85,3 +86,19 @@ def peare_gui_path() -> Path:
             if path.is_file():
                 return path
     pytest.skip("Official Peare GUI executable not found; set PEARE_GUI_EXE")
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    setattr(item, "rep_" + report.when, report)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_teardown(item, nextitem):
+    yield
+    report = getattr(item, "rep_call", None)
+    tmp_path = item.funcargs.get("tmp_path")
+    if report is not None and report.passed and tmp_path is not None:
+        shutil.rmtree(str(tmp_path), ignore_errors=True)
