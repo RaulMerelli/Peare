@@ -157,6 +157,7 @@ def main():
     memory_samples = []
     peak_memory = {}
     completed_count = -1
+    last_memory_sample = 0.0
     timed_out = False
     while process.poll() is None:
         if time.monotonic() - started > args.timeout:
@@ -167,25 +168,33 @@ def main():
         if memory:
             for key, value in memory.items():
                 peak_memory[key] = max(peak_memory.get(key, 0), value)
+            progress = {}
             if report.is_file():
                 try:
                     progress = json.loads(report.read_text(encoding="utf-8"))
-                    operations = progress.get("operations", [])
-                    if len(operations) != completed_count:
-                        completed_count = len(operations)
-                        memory_samples.append({
-                            "completed_operations": completed_count,
-                            "last_test_id": operations[-1].get("test_id")
-                                if operations else "startup",
-                            **memory,
-                        })
                 except (OSError, json.JSONDecodeError):
                     pass
+            operations = progress.get("operations", [])
+            now = time.monotonic()
+            if (len(operations) != completed_count or
+                    now - last_memory_sample >= 5.0):
+                completed_count = len(operations)
+                memory_samples.append({
+                    "elapsed_seconds": round(now - started, 3),
+                    "completed_operations": completed_count,
+                    "last_test_id": operations[-1].get("test_id")
+                        if operations else progress.get("active_operation", "running"),
+                    **memory,
+                })
+                last_memory_sample = now
         time.sleep(0.1)
     stdout, stderr = process.communicate()
     result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
     if timed_out:
         print(f"GUI writer scenario exceeded {args.timeout} seconds.", file=sys.stderr)
+        diagnostics = (stdout + stderr).strip()
+        if diagnostics:
+            print(diagnostics[-4000:], file=sys.stderr)
         if report.is_file():
             progress = json.loads(report.read_text(encoding="utf-8"))
             completed = len(progress.get("operations", []))

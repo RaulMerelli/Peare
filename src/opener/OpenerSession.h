@@ -48,6 +48,7 @@ struct OpenedResource {
     // Layer-backed content is read only when peare_resource_get_payload requests it.
     peare::fs::ByteStorePtr contentStore;
     ResourceContext context;
+    QString archivePath;
     QString error;
     // Directory-level container: contentStore holds the whole filesystem image and
     // subPath the directory within it. Navigating reopens the image at subPath

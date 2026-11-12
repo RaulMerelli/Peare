@@ -2,8 +2,8 @@
 #include "Compat.h"
 #include "DeflateDecoder.h"
 #include "../compression/Crc32.h"
-#include "../compression/Bcj2Decoder.h"
-#include "../compression/SevenZipAesDecoder.h"
+#include "../../common/compression/SevenZipBcj2Decoder.h"
+#include "../../common/compression/SevenZipAesDecoder.h"
 #include "../compression/peare/Bzip2Decoder.h"
 #include "../compression/LzmaDecoder.h"
 #include "../compression/third_party/lzma/Bra.h"
@@ -883,7 +883,7 @@ bool decodeFolder(const Folder& folder, const std::vector<PackedStream>& packed,
                     branches[i] = inputData[i];
                     branchSizes[i] = inputSizes[i];
                 }
-                if (!compression::decodeBcj2(branches, branchSizes,
+                if (!compression::decodeSevenZipBcj2(branches, branchSizes,
                     std::size_t(expectedSize), &decoded)) return false;
             } else if (coder.method == QByteArray::fromHex("06f10701") &&
                        coder.inputCount == 1 && coder.outputCount == 1) {

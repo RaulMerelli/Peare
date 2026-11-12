@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
+include(cmake/CheckRepositoryRoot.cmake)
+
 project(Peare VERSION 1.0.0 LANGUAGES C CXX)
 
 
@@ -243,10 +245,10 @@ add_library(PeareOpener SHARED
     src/common/rar/Rar4Crypto.cpp
     src/common/rar/Rar4Vm.h
     src/common/rar/Rar4Vm.cpp
-    src/opener/compression/Bcj2Decoder.h
-    src/opener/compression/Bcj2Decoder.cpp
-    src/opener/compression/SevenZipAesDecoder.h
-    src/opener/compression/SevenZipAesDecoder.cpp
+    src/common/compression/SevenZipBcj2Decoder.h
+    src/common/compression/SevenZipBcj2Decoder.cpp
+    src/common/compression/SevenZipAesDecoder.h
+    src/common/compression/SevenZipAesDecoder.cpp
     src/opener/compression/LzmaDecoder.h
     src/opener/compression/LzmaDecoder.cpp
     src/opener/compression/third_party/blast/blast.h
@@ -413,8 +415,8 @@ add_library(PeareOpener SHARED
     src/opener/modules/wince/WinceRomModule.cpp
     src/opener/modules/wince/WinceCompression.h
     src/opener/modules/wince/WinceCompression.cpp
-    src/opener/modules/DeflateDecoder.h
-    src/opener/modules/DeflateDecoder.cpp
+    src/common/compression/DeflateDecoder.h
+    src/common/compression/DeflateDecoder.cpp
     src/opener/modules/SiemensImgParser.h
     src/opener/modules/SiemensFwfParser.h
     src/opener/modules/stfs/STFSCommon.h
@@ -800,6 +802,10 @@ set_target_properties(PeareDecoder PROPERTIES
 add_library(PeareWriter SHARED
     src/common/compression/UnixCompress.h
     src/common/compression/UnixCompress.cpp
+    src/common/compression/SevenZipAesDecoder.h
+    src/common/compression/SevenZipAesDecoder.cpp
+    src/common/compression/SevenZipBcj2Decoder.h
+    src/common/compression/SevenZipBcj2Decoder.cpp
     src/writer/api/peare/peare_writer.h
     src/writer/api/Api.cpp
     src/writer/formats/WinZipJpegEncoder.h
@@ -814,6 +820,8 @@ add_library(PeareWriter SHARED
     src/writer/formats/IsoImageWriter.cpp
     src/writer/formats/RarArchiveWriter.h
     src/writer/formats/RarArchiveWriter.cpp
+    src/writer/formats/SevenZipArchiveWriter.h
+    src/writer/formats/SevenZipArchiveWriter.cpp
     src/common/rar/Rar5Crypto.h
     src/common/rar/Rar5Crypto.cpp
     src/opener/compression/third_party/lzma/Aes.h
@@ -828,7 +836,9 @@ add_library(PeareWriter SHARED
     src/common/rar/Rar4PpmdDecoder.cpp
     src/opener/compression/third_party/lzma/Ppmd7.h
     src/opener/compression/third_party/lzma/Ppmd7.c
+    src/opener/compression/third_party/lzma/Ppmd8Dec.c
     src/opener/compression/third_party/lzma/Ppmd7Dec.c
+    src/opener/compression/third_party/lzma/Bcj2.c
     src/writer/formats/ExtVolumeUpdate.h
     src/writer/formats/ExtVolumeUpdate.cpp
     src/writer/formats/NtfsVolumeUpdate.h
@@ -913,6 +923,8 @@ add_library(PeareWriter SHARED
     src/writer/third_party/lzma/Ppmd8.h
     src/writer/third_party/lzma/Ppmd.h
     src/writer/third_party/lzma/Ppmd.h
+    src/opener/compression/third_party/lzma/Ppmd7.h
+    src/opener/compression/third_party/lzma/Ppmd7.c
     src/writer/third_party/lzma/Ppmd8.c
     src/writer/third_party/lzma/Ppmd8Enc.c
     src/writer/third_party/zstd/zstd.h
@@ -983,8 +995,12 @@ add_library(PeareWriter SHARED
     src/opener/compression/third_party/wavpack/src/wavpack_local.h
     src/opener/compression/third_party/wavpack/src/wavpack_version.h
     src/opener/compression/third_party/wavpack/LICENSE.txt
-    src/opener/modules/DeflateDecoder.cpp
-    src/opener/modules/DeflateDecoder.h
+    src/common/compression/DeflateDecoder.cpp
+    src/common/compression/DeflateDecoder.h
+    src/opener/compression/LzmaDecoder.cpp
+    src/opener/compression/LzmaDecoder.h
+    src/opener/compression/peare/Bzip2Decoder.cpp
+    src/opener/compression/peare/Bzip2Decoder.h
 )
 target_compile_definitions(PeareWriter PRIVATE PEARE_WRITER_BUILD ZSTD_DISABLE_ASM)
 if(ANDROID AND CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
@@ -1008,7 +1024,9 @@ target_include_directories(PeareWriter
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/writer
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/compression
         ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/modules
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/writer/third_party/bzip2
         ${CMAKE_CURRENT_SOURCE_DIR}/src/writer/third_party/zstd
         ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/compression/third_party/packmp3
         ${CMAKE_CURRENT_SOURCE_DIR}/src/opener/compression/third_party/wavpack/include

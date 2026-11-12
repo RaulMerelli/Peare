@@ -62,6 +62,8 @@ PEARE_OPENER_API peare_status peare_resource_read(peare_resource_handle resource
                                                   size_t *out_read);
 PEARE_OPENER_API peare_status peare_resource_get_context(peare_resource_handle resource,
                                                   peare_resource_context *out_context);
+PEARE_OPENER_API peare_status peare_resource_get_archive_path(
+    peare_resource_handle resource, peare_blob *out_path_utf8);
 PEARE_OPENER_API peare_status peare_resource_get_converted_extensions(
     peare_resource_handle resource, peare_blob_array *out_extensions_utf8);
 PEARE_OPENER_API peare_status peare_resource_convert(

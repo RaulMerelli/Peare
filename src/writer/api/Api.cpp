@@ -3,6 +3,7 @@
 #include "formats/DiskImageWriter.h"
 #include "formats/IsoImageWriter.h"
 #include "formats/RarArchiveWriter.h"
+#include "formats/SevenZipArchiveWriter.h"
 #include "formats/WinZipJpegEncoder.h"
 #include "../third_party/miniz/miniz.h"
 #include "../third_party/bzip2/bzlib.h"
@@ -45,6 +46,7 @@
 #include <map>
 #include <mutex>
 #include <new>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -298,6 +300,7 @@ struct peare_writer_handle_s {
     std::unique_ptr<QTemporaryDir> isoStage;
     std::unique_ptr<QTemporaryDir> uueStage;
     std::unique_ptr<peare::writer::RarArchiveWriter> rarArchive;
+    std::unique_ptr<peare::writer::SevenZipArchiveWriter> sevenZipArchive;
     QString password;
     std::vector<Entry> entries;
     std::vector<TarEntry> tarEntries;
@@ -365,7 +368,8 @@ struct peare_writer_handle_s {
                       CpioUpdate, ArCreate, ArUpdate, WadCreate, WadUpdate, UuencodeCreate, UuencodeUpdate, IhexCreate, DebCreate, RpmCreate, XarCreate, XarUpdate, IsoCreate, IsoUpdate, TarGzipCreate,
                       TarBzip2Create, TarZstdCreate, TarUnixCompressCreate,
                       TarXzCreate, TarLzmaCreate,
-                      FatCreate, DiskUpdate, RarCreate, RarUpdate } mode = Mode::None;
+                      FatCreate, DiskUpdate, RarCreate, RarUpdate,
+                      SevenZipCreate, SevenZipUpdate } mode = Mode::None;
 };
 
 namespace {
@@ -415,6 +419,8 @@ peare_writer_status fail(peare_writer_handle_s* writer, peare_writer_status stat
             writer->uueStage.reset();
             if (writer->rarArchive) writer->rarArchive->abort();
             writer->rarArchive.reset();
+            if (writer->sevenZipArchive) writer->sevenZipArchive->abort();
+            writer->sevenZipArchive.reset();
             if (writer->diskUpdate) {
                 writer->diskUpdate->abort();
                 writer->diskUpdate.reset();
@@ -7308,7 +7314,7 @@ peare_writer_status peare_writer_set_password(peare_writer_handle writer,
     return PEARE_WRITER_OK;
 }
 
-size_t peare_writer_create_format_count(void) { return 31; }
+size_t peare_writer_create_format_count(void) { return 32; }
 
 peare_writer_status peare_writer_get_create_format(size_t index,
                                                     peare_writer_format* outFormat) {
@@ -7344,7 +7350,8 @@ peare_writer_status peare_writer_get_create_format(size_t index,
         {"rpm", "RPM package", "rpm"},
         {"xar", "XAR archive", "xar"},
         {"iso", "ISO 9660 image", "iso"},
-        {"rar", "RAR archive", "rar"}
+        {"rar", "RAR archive", "rar"},
+        {"7z", "7-Zip archive", "7z"}
     };
     if (index >= sizeof(formats) / sizeof(formats[0]))
         return PEARE_WRITER_INVALID_ARGUMENT;
@@ -7356,6 +7363,7 @@ size_t peare_writer_create_variant_count(const char* formatIdUtf8) {
     if (!formatIdUtf8) return 0;
     if (std::strcmp(formatIdUtf8, "zip") == 0) return 18;
     if (std::strcmp(formatIdUtf8, "rar") == 0) return 18;
+    if (std::strcmp(formatIdUtf8, "7z") == 0) return 201;
     if (std::strcmp(formatIdUtf8, "gzip") == 0) return 1;
     if (std::strcmp(formatIdUtf8, "bzip2") == 0) return 9;
     if (std::strcmp(formatIdUtf8, "zstd") == 0) return 27;
@@ -7422,6 +7430,63 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
         {"rar7-m4", "RAR 7: Good"},
         {"rar7-m5", "RAR 7: Best"}
     };
+    static const peare_writer_variant sevenZipVariants[] = {
+        {"store", "Store"}, {"ppmd", "PPMd"},
+        {"lzma-0", "LZMA, level 0"}, {"lzma-1", "LZMA, level 1"},
+        {"lzma-2", "LZMA, level 2"}, {"lzma-3", "LZMA, level 3"},
+        {"lzma-4", "LZMA, level 4"}, {"lzma-5", "LZMA, level 5"},
+        {"lzma-6", "LZMA, level 6"}, {"lzma-7", "LZMA, level 7"},
+        {"lzma-8", "LZMA, level 8"}, {"lzma-9", "LZMA, level 9"},
+        {"lzma2-0", "LZMA2, level 0"}, {"lzma2-1", "LZMA2, level 1"},
+        {"lzma2-2", "LZMA2, level 2"}, {"lzma2-3", "LZMA2, level 3"},
+        {"lzma2-4", "LZMA2, level 4"}, {"lzma2-5", "LZMA2, level 5"},
+        {"lzma2-6", "LZMA2, level 6"}, {"lzma2-7", "LZMA2, level 7"},
+        {"lzma2-8", "LZMA2, level 8"}, {"lzma2-9", "LZMA2, level 9"},
+        {"deflate-0", "Deflate, level 0"}, {"deflate-1", "Deflate, level 1"},
+        {"deflate-2", "Deflate, level 2"}, {"deflate-3", "Deflate, level 3"},
+        {"deflate-4", "Deflate, level 4"}, {"deflate-5", "Deflate, level 5"},
+        {"deflate-6", "Deflate, level 6"}, {"deflate-7", "Deflate, level 7"},
+        {"deflate-8", "Deflate, level 8"}, {"deflate-9", "Deflate, level 9"},
+        {"bzip2-1", "BZip2, level 1"}, {"bzip2-2", "BZip2, level 2"},
+        {"bzip2-3", "BZip2, level 3"}, {"bzip2-4", "BZip2, level 4"},
+        {"bzip2-5", "BZip2, level 5"}, {"bzip2-6", "BZip2, level 6"},
+        {"bzip2-7", "BZip2, level 7"}, {"bzip2-8", "BZip2, level 8"},
+        {"bzip2-9", "BZip2, level 9"},
+        {"deflate64-0", "Deflate64, level 0"},
+        {"deflate64-1", "Deflate64, level 1"},
+        {"deflate64-2", "Deflate64, level 2"},
+        {"deflate64-3", "Deflate64, level 3"},
+        {"deflate64-4", "Deflate64, level 4"},
+        {"deflate64-5", "Deflate64, level 5"},
+        {"deflate64-6", "Deflate64, level 6"},
+        {"deflate64-7", "Deflate64, level 7"},
+        {"deflate64-8", "Deflate64, level 8"},
+        {"deflate64-9", "Deflate64, level 9"}
+    };
+    static const std::vector<std::string> sevenZipSolidIds = []() {
+        static const char* sizes[] = {"1m", "16m", "2g"};
+        std::vector<std::string> values;
+        values.reserve(150);
+        for (size_t variant = 1; variant < 51; ++variant) {
+            for (const char* size : sizes) {
+                values.push_back(std::string(sevenZipVariants[variant].id) +
+                                 "-solid-" + size);
+            }
+        }
+        return values;
+    }();
+    static const std::vector<std::string> sevenZipSolidNames = []() {
+        static const char* sizes[] = {"1 MiB", "16 MiB", "2 GiB"};
+        std::vector<std::string> values;
+        values.reserve(150);
+        for (size_t variant = 1; variant < 51; ++variant) {
+            for (const char* size : sizes) {
+                values.push_back(std::string(sevenZipVariants[variant].display_name) +
+                                 ", solid block " + size);
+            }
+        }
+        return values;
+    }();
     static const peare_writer_variant xarVariants[] = {
         {"store", "Store"}, {"gzip", "Zlib/Deflate"}, {"bzip2", "BZip2"}
     };
@@ -7589,6 +7654,18 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
         *outVariant = rarVariants[index];
         return PEARE_WRITER_OK;
     }
+    if (std::strcmp(formatIdUtf8, "7z") == 0) {
+        if (index < 51) {
+            *outVariant = sevenZipVariants[index];
+            return PEARE_WRITER_OK;
+        }
+        index -= 51;
+        if (index < sevenZipSolidIds.size()) {
+            *outVariant = {sevenZipSolidIds[index].c_str(),
+                           sevenZipSolidNames[index].c_str()};
+            return PEARE_WRITER_OK;
+        }
+    }
     if (std::strcmp(formatIdUtf8, "gzip") == 0 && index == 0) {
         *outVariant = gzipVariants[0];
         return PEARE_WRITER_OK;
@@ -7753,6 +7830,32 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("A format and output path are required."), false);
     const char* variant = variantIdUtf8 && *variantIdUtf8 ? variantIdUtf8 : nullptr;
+    if (std::strcmp(formatIdUtf8, "7z") == 0) {
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            if (writer->active)
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("A writer operation is already active."), false);
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            writer->sevenZipArchive.reset(
+                new (std::nothrow) peare::writer::SevenZipArchiveWriter);
+            if (!writer->sevenZipArchive)
+                return fail(writer, PEARE_WRITER_ALLOCATION_FAILED,
+                            QStringLiteral("Could not allocate the 7z writer."), false);
+            QString error;
+            if (!writer->sevenZipArchive->beginCreate(
+                    QString::fromUtf8(outputPathUtf8),
+                    variant ? QByteArray(variant) : QByteArray("store"),
+                    writer->password, &error)) {
+                writer->sevenZipArchive.reset();
+                return fail(writer, PEARE_WRITER_IO_ERROR, error, false);
+            }
+            writer->active = true;
+            writer->updateMode = false;
+            writer->mode = peare_writer_handle_s::Mode::SevenZipCreate;
+            return PEARE_WRITER_OK;
+        });
+    }
     if (std::strcmp(formatIdUtf8, "rar") == 0) {
         if (!variant)
             return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
@@ -8628,6 +8731,8 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer);
 int peare_writer_can_add_files(const char* containerPathUtf8) {
     if (!containerPathUtf8 || !*containerPathUtf8) return 0;
     try {
+        if (peare::writer::SevenZipArchiveWriter::canUpdate(
+                QString::fromUtf8(containerPathUtf8))) return 1;
         if (peare::writer::RarArchiveWriter::canUpdate(
                 QString::fromUtf8(containerPathUtf8))) return 1;
         if (isRpmPackageFile(QString::fromUtf8(containerPathUtf8))) return 1;
@@ -8753,6 +8858,11 @@ peare_writer_status peare_writer_get_update_capabilities(
                                 PEARE_WRITER_CAP_RENAME_ENTRY |
                                 PEARE_WRITER_CAP_DELETE_ENTRY;
         };
+        if (peare::writer::SevenZipArchiveWriter::canUpdate(
+                QString::fromUtf8(containerPathUtf8))) {
+            setArchiveCapabilities();
+            return PEARE_WRITER_OK;
+        }
         if (peare::writer::RarArchiveWriter::canUpdate(
                 QString::fromUtf8(containerPathUtf8))) {
             setArchiveCapabilities();
@@ -8910,6 +9020,26 @@ peare_writer_status peare_writer_add_files_begin(peare_writer_handle writer,
         writer->names.clear();
         writer->error.clear();
         writer->errorUtf8.clear();
+        if (peare::writer::SevenZipArchiveWriter::canUpdate(
+                QString::fromUtf8(containerPathUtf8))) {
+            writer->sevenZipArchive.reset(
+                new (std::nothrow) peare::writer::SevenZipArchiveWriter);
+            if (!writer->sevenZipArchive)
+                return fail(writer, PEARE_WRITER_ALLOCATION_FAILED,
+                            QStringLiteral("Could not allocate the 7z update backend."), false);
+            QString error;
+            if (!writer->sevenZipArchive->beginUpdate(
+                    QString::fromUtf8(containerPathUtf8), writer->password, &error)) {
+                writer->sevenZipArchive.reset();
+                return fail(writer, PEARE_WRITER_IO_ERROR, error, false);
+            }
+            writer->active = true;
+            writer->updateMode = true;
+            writer->archiveDirty = false;
+            writer->updatePath = QString::fromUtf8(containerPathUtf8);
+            writer->mode = peare_writer_handle_s::Mode::SevenZipUpdate;
+            return PEARE_WRITER_OK;
+        }
         const size_t diskTargetCount = peare_writer_add_target_count(containerPathUtf8);
         if (diskTargetCount) {
             const bool targetSpecified = writer->fatTargetSpecified;
@@ -9348,6 +9478,21 @@ peare_writer_status peare_writer_add_file(peare_writer_handle writer,
     if (!writer->active)
         return fail(writer, PEARE_WRITER_NOT_ACTIVE,
                     QStringLiteral("No container write is active."), false);
+    if (writer->mode == peare_writer_handle_s::Mode::SevenZipCreate ||
+        writer->mode == peare_writer_handle_s::Mode::SevenZipUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray name;
+            if (!sourcePathUtf8 || !*sourcePathUtf8 ||
+                !normalizedEntryName(entryNameUtf8, false, &name))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The 7z source path or entry name is invalid."));
+            QString error;
+            if (!writer->sevenZipArchive->addFile(
+                    QString::fromUtf8(sourcePathUtf8), name, &error))
+                return fail(writer, error.contains(QStringLiteral("already exists"))
+                    ? PEARE_WRITER_DUPLICATE_ENTRY : PEARE_WRITER_IO_ERROR, error);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::RarCreate ||
         writer->mode == peare_writer_handle_s::Mode::RarUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
@@ -9672,6 +9817,18 @@ peare_writer_status peare_writer_create_empty_file(peare_writer_handle writer,
     if (!entryNameUtf8 || !*entryNameUtf8)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("An entry name is required."));
+    if (writer->mode == peare_writer_handle_s::Mode::SevenZipCreate ||
+        writer->mode == peare_writer_handle_s::Mode::SevenZipUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray name;
+            if (!normalizedEntryName(entryNameUtf8, false, &name))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The empty 7z file path is invalid."));
+            QString error;
+            if (!writer->sevenZipArchive->addEmptyFile(name, &error))
+                return fail(writer, PEARE_WRITER_DUPLICATE_ENTRY, error);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::RarCreate ||
         writer->mode == peare_writer_handle_s::Mode::RarUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
@@ -9704,6 +9861,18 @@ peare_writer_status peare_writer_create_directory(peare_writer_handle writer,
     if (!entryNameUtf8 || !*entryNameUtf8)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("An entry name is required."));
+    if (writer->mode == peare_writer_handle_s::Mode::SevenZipCreate ||
+        writer->mode == peare_writer_handle_s::Mode::SevenZipUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray name;
+            if (!normalizedEntryName(entryNameUtf8, true, &name))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The 7z directory path is invalid."));
+            QString error;
+            if (!writer->sevenZipArchive->addDirectory(name, &error))
+                return fail(writer, PEARE_WRITER_DUPLICATE_ENTRY, error);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::RarCreate ||
         writer->mode == peare_writer_handle_s::Mode::RarUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
@@ -9808,6 +9977,19 @@ peare_writer_status peare_writer_replace_file(peare_writer_handle writer,
     if (!sourcePathUtf8 || !*sourcePathUtf8 || !entryNameUtf8 || !*entryNameUtf8)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("A source path and entry name are required."));
+    if (writer->mode == peare_writer_handle_s::Mode::SevenZipUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray name;
+            if (!normalizedEntryName(entryNameUtf8, false, &name))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The 7z path to replace is invalid."));
+            QString error;
+            if (!writer->sevenZipArchive->replaceFile(
+                    QString::fromUtf8(sourcePathUtf8), name, &error))
+                return fail(writer, error.contains(QStringLiteral("does not exist"))
+                    ? PEARE_WRITER_ENTRY_NOT_FOUND : PEARE_WRITER_IO_ERROR, error);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::RarCreate ||
         writer->mode == peare_writer_handle_s::Mode::RarUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
@@ -10133,6 +10315,21 @@ peare_writer_status peare_writer_rename_entry(peare_writer_handle writer,
     if (!entryNameUtf8 || !*entryNameUtf8 || !newEntryNameUtf8 || !*newEntryNameUtf8)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("Source and destination entry names are required."));
+    if (writer->mode == peare_writer_handle_s::Mode::SevenZipUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray oldName;
+            QByteArray newName;
+            if (!normalizedEntryName(entryNameUtf8, false, &oldName) ||
+                !normalizedEntryName(newEntryNameUtf8, false, &newName))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The 7z source or destination path is invalid."));
+            while (oldName.endsWith('/')) oldName.chop(1);
+            QString error;
+            if (!writer->sevenZipArchive->renameEntry(oldName, newName, &error))
+                return fail(writer, error.contains(QStringLiteral("does not exist"))
+                    ? PEARE_WRITER_ENTRY_NOT_FOUND : PEARE_WRITER_IO_ERROR, error);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::RarCreate ||
         writer->mode == peare_writer_handle_s::Mode::RarUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
@@ -10585,6 +10782,20 @@ peare_writer_status peare_writer_delete_entry(peare_writer_handle writer,
     if (!entryNameUtf8 || !*entryNameUtf8 || (recursive != 0 && recursive != 1))
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("A valid entry name and recursive flag are required."));
+    if (writer->mode == peare_writer_handle_s::Mode::SevenZipCreate ||
+        writer->mode == peare_writer_handle_s::Mode::SevenZipUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QByteArray name;
+            if (!normalizedEntryName(entryNameUtf8, true, &name))
+                return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
+                            QStringLiteral("The 7z path to delete is invalid."));
+            while (name.endsWith('/')) name.chop(1);
+            QString error;
+            if (!writer->sevenZipArchive->deleteEntry(name, recursive != 0, &error))
+                return fail(writer, error.contains(QStringLiteral("does not exist"))
+                    ? PEARE_WRITER_ENTRY_NOT_FOUND : PEARE_WRITER_INVALID_ARGUMENT, error);
+            return PEARE_WRITER_OK;
+        });
     if (writer->mode == peare_writer_handle_s::Mode::RarCreate ||
         writer->mode == peare_writer_handle_s::Mode::RarUpdate)
         return cBoundary(writer, [&]() -> peare_writer_status {
@@ -10876,6 +11087,7 @@ peare_writer_status peare_writer_update_finish(peare_writer_handle writer) {
         writer->mode != peare_writer_handle_s::Mode::UuencodeUpdate &&
         writer->mode != peare_writer_handle_s::Mode::XarUpdate &&
         writer->mode != peare_writer_handle_s::Mode::IsoUpdate &&
+        writer->mode != peare_writer_handle_s::Mode::SevenZipUpdate &&
         writer->mode != peare_writer_handle_s::Mode::DiskUpdate)
         return fail(writer, PEARE_WRITER_NOT_ACTIVE,
                     QStringLiteral("No container update is active."), false);
@@ -10898,6 +11110,20 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
                 return fail(writer, PEARE_WRITER_IO_ERROR, error);
             writer->rarArchive.reset();
             writer->active = false;
+            writer->mode = peare_writer_handle_s::Mode::None;
+            writer->error.clear();
+            writer->errorUtf8.clear();
+            return PEARE_WRITER_OK;
+        });
+    if (writer->mode == peare_writer_handle_s::Mode::SevenZipCreate ||
+        writer->mode == peare_writer_handle_s::Mode::SevenZipUpdate)
+        return cBoundary(writer, [&]() -> peare_writer_status {
+            QString error;
+            if (!writer->sevenZipArchive || !writer->sevenZipArchive->finish(&error))
+                return fail(writer, PEARE_WRITER_IO_ERROR, error);
+            writer->sevenZipArchive.reset();
+            writer->active = false;
+            writer->updateMode = false;
             writer->mode = peare_writer_handle_s::Mode::None;
             writer->error.clear();
             writer->errorUtf8.clear();

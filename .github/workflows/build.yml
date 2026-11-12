@@ -28,6 +28,11 @@ jobs:
           target: desktop
           arch: gcc_64
 
+      - name: Move Qt install log out of repository root
+        run: |
+          mkdir -p tmp
+          if [ -f aqtinstall.log ]; then mv aqtinstall.log tmp/aqtinstall-linux.log; fi
+
       - name: Configure
         run: >
           cmake -S . -B build
@@ -84,6 +89,12 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2019_64
+
+      - name: Move Qt install log out of repository root
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path tmp -Force | Out-Null
+          if (Test-Path aqtinstall.log) { Move-Item aqtinstall.log tmp/aqtinstall-windows.log -Force }
 
       - name: Configure
         shell: cmd
@@ -178,6 +189,11 @@ jobs:
           target: android
           arch: android_arm64_v8a
           modules: qt5compat
+
+      - name: Move Qt install log out of repository root
+        run: |
+          mkdir -p tmp
+          if [ -f aqtinstall.log ]; then mv aqtinstall.log tmp/aqtinstall-android.log; fi
 
       - name: Configure Android build
         run: >

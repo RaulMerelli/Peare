@@ -259,6 +259,13 @@ OpenedResource OpenerSession::openResource(int resourceIndex) const
     resource.isDirectory = entry->isDirectory;
     resource.subPath = entry->containerSubPath;
     resource.context = contextFor(*entry, info_, resourceIndex);
+    if (entry->format == ModuleFormat::SEVEN_ZIP) {
+        QStringList path = entry->hierarchyPath;
+        path.push_back(entry->name);
+        resource.archivePath = path.join(QLatin1Char('/'));
+        if (entry->isDirectory && !resource.archivePath.endsWith(QLatin1Char('/')))
+            resource.archivePath.append(QLatin1Char('/'));
+    }
     return resource;
 }
 

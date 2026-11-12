@@ -181,6 +181,9 @@ for %%I in ("%~dp0..\..") do set "ROOT_DIR=%%~fI"
 pushd "%ROOT_DIR%" || goto fail
 set "PEARE_PUSHD=1"
 
+cmake -DPEARE_SOURCE_ROOT="%ROOT_DIR%" -P cmake\CheckRepositoryRoot.cmake
+if errorlevel 1 goto fail
+
 git config --local core.hooksPath .githooks
 if errorlevel 1 (
     echo ERROR: Could not enable the repository commit and push gates.

@@ -9,7 +9,7 @@
 #include <cstring>
 #include <limits>
 
-#include "DeflateDecoder.h"
+#include "../../common/compression/DeflateDecoder.h"
 #include "VmdkImageWriter.h"
 #include "../third_party/miniz/miniz.h"
 

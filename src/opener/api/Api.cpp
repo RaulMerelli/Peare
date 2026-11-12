@@ -183,6 +183,8 @@ void freeSnapshotItem(peare_resource_snapshot_item* item)
     std::free(item->context.type_utf8.bytes);
     std::free(item->context.identifier_utf8.bytes);
     std::free(item->context.language_utf8.bytes);
+    std::free(item->archive_path_utf8.bytes);
+    item->archive_path_utf8 = {};
     delete static_cast<peare::fs::ByteStorePtr*>(item->lazy_content);
     item->lazy_content = nullptr;
     std::free(item->sub_path);
@@ -225,6 +227,8 @@ peare_status fillSnapshotItem(const peare::OpenedResource& opened,
     if (status == PEARE_STATUS_OK) status = copyUtf8(source.type, &item->context.type_utf8);
     if (status == PEARE_STATUS_OK) status = copyUtf8(source.identifier, &item->context.identifier_utf8);
     if (status == PEARE_STATUS_OK) status = copyUtf8(source.language, &item->context.language_utf8);
+    if (status == PEARE_STATUS_OK)
+        status = copyUtf8(opened.archivePath, &item->archive_path_utf8);
     if (status != PEARE_STATUS_OK) freeSnapshotItem(item);
     return status;
 }
@@ -676,6 +680,19 @@ peare_status peare_resource_get_context(peare_resource_handle resource,
     if (status == PEARE_STATUS_OK) status = copyBytes(reinterpret_cast<const char*>(source.language_utf8.bytes), source.language_utf8.length, &out_context->language_utf8);
     if (status != PEARE_STATUS_OK) peare_resource_context_free(out_context);
     return status;
+}
+
+peare_status peare_resource_get_archive_path(peare_resource_handle resource,
+                                             peare_blob* out_path_utf8)
+{
+    if (!out_path_utf8) return PEARE_STATUS_INVALID_ARGUMENT;
+    out_path_utf8->bytes = nullptr;
+    out_path_utf8->length = 0;
+    if (!peare_resource_snapshot_valid(resource)) return PEARE_STATUS_INVALID_HANDLE;
+    const peare_blob& path = resource->primary.archive_path_utf8;
+    if (!path.length) return PEARE_STATUS_NOT_APPLICABLE;
+    return copyBytes(reinterpret_cast<const char*>(path.bytes), path.length,
+                     out_path_utf8);
 }
 
 void peare_blob_free(peare_blob* blob)

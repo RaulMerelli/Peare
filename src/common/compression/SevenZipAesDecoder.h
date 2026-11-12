@@ -13,6 +13,10 @@ namespace compression {
 bool decryptSevenZipAes(const QByteArray& properties, const QString& password,
                         const std::uint8_t* input, std::size_t inputSize,
                         std::size_t outputSize, std::vector<std::uint8_t>* output);
+bool createSevenZipAesProperties(QByteArray* properties);
+bool encryptSevenZipAes(const QByteArray& properties, const QString& password,
+                        const std::uint8_t* input, std::size_t inputSize,
+                        std::vector<std::uint8_t>* output);
 
 }  // namespace compression
 }  // namespace peare

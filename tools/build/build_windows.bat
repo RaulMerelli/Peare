@@ -27,6 +27,9 @@ if not exist "CMakeLists.txt" (
     goto :fail
 )
 
+cmake -DPEARE_SOURCE_ROOT="%ROOT_DIR%" -P cmake\CheckRepositoryRoot.cmake
+if errorlevel 1 goto :fail
+
 if not exist "%QT_ROOT%\bin\qmake.exe" (
     echo ERROR: Qt 5.15.2 not found in:
     echo %QT_ROOT%

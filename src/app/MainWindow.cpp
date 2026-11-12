@@ -3194,9 +3194,10 @@ void MainWindow::deleteWriterEntry(QTreeWidgetItem* item) {
         refreshWriterView(viewState);
         return;
     }
-    if (status == PEARE_WRITER_OK)
+    if (status == PEARE_WRITER_OK) {
         status = peare_writer_delete_entry_by_id(
             writer, pathUtf8.constData(), 1, entryId);
+    }
     if (status == PEARE_WRITER_OK)
         reportOffscreenWriterStage(QStringLiteral("entry-deleted"));
     if (status == PEARE_WRITER_OK) status = peare_writer_update_finish(writer);

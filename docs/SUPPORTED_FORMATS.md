@@ -101,7 +101,7 @@ package-specific limits on ZIP-based files.
 |---|---|---:|---:|
 | ZIP | Store, Shrink, Implode, Deflate, Deflate64, BZip2, LZMA, DCL Implode, ZIPX methods, and ZIP64; Writer methods are tracked in ZIP Writer Methods; `.zapXX` files use the same ZIP reader | Yes | Yes |
 | ZIPX | WinZip extensions: XZ, Zstandard, PPMd, WavPack, MP3, and JPEG compression; Writer method coverage is tracked in ZIP Writer Methods | Yes | Yes |
-| 7-Zip (7z) | 7z archives | Yes | No |
+| 7-Zip (7z) | 7z archives | Yes | Yes |
 | NSIS | Nullsoft Scriptable Install System installers | Yes | No |
 | RAR4 | RAR 4.x archives | Yes | Yes |
 | RAR5 | RAR 5 archives, algorithm version 0 | Yes | Yes |

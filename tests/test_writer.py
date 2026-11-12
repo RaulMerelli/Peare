@@ -4708,7 +4708,7 @@ def test_tar_bzip2_create_and_cud_roundtrip_with_7zip(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 31
+    assert writer_lib.peare_writer_create_format_count() == 32
     assert writer_lib.peare_writer_create_variant_count(b"tar-bzip2") == 9
     for level in range(1, 10):
         archive = tmp_path / f"created-level-{level}.tbz2"
@@ -4845,7 +4845,7 @@ def test_tar_zstd_create_and_cud_roundtrip_with_independent_decoder(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
-    assert writer_lib.peare_writer_create_format_count() == 31
+    assert writer_lib.peare_writer_create_format_count() == 32
     assert writer_lib.peare_writer_create_variant_count(b"tar-zstd") == 27
     variants = [f"fast-{level}" for level in range(5, 0, -1)] + [
         f"level-{level}" for level in range(1, 23)]
@@ -5086,7 +5086,7 @@ def test_tar_xz_create_all_checks_and_7zip(writer_lib, peare_lib, tmp_path):
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     checks = ("none", "crc32", "crc64", "sha256")
-    assert writer_lib.peare_writer_create_format_count() == 31
+    assert writer_lib.peare_writer_create_format_count() == 32
     assert writer_lib.peare_writer_create_variant_count(b"tar-xz") == len(checks)
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for check in checks:
@@ -5217,7 +5217,7 @@ def test_tar_lzma_create_all_levels_and_7zip(writer_lib, peare_lib, tmp_path):
         pytest.skip("7-Zip is required for independent TAR.LZMA validation")
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    assert writer_lib.peare_writer_create_format_count() == 31
+    assert writer_lib.peare_writer_create_format_count() == 32
     assert writer_lib.peare_writer_create_variant_count(b"tar-lzma") == 9
     item = _WriterInputFile(str(source).encode(), source.name.encode())
     for level in range(1, 10):
@@ -5334,7 +5334,7 @@ def test_lzip_writer_all_levels_and_winrar(
     source = ROOT / "README.md"
     expected = source.read_bytes()
     expected_hash = hashlib.sha256(expected).hexdigest()
-    assert writer_lib.peare_writer_create_format_count() == 31
+    assert writer_lib.peare_writer_create_format_count() == 32
     assert writer_lib.peare_writer_create_variant_count(b"lzip") == 10
     variants = []
     for index in range(10):
@@ -5451,7 +5451,7 @@ def test_lzip_writer_concatenates_selected_inputs(writer_lib, peare_lib, tmp_pat
     "classic", "classic-encoded-name", "base64", "base64-encoded-name"])
 def test_uuencode_writer_roundtrip_all_headers(
         writer_lib, peare_lib, peare_gui_path, tmp_path, variant):
-    assert writer_lib.peare_writer_create_format_count() == 31
+    assert writer_lib.peare_writer_create_format_count() == 32
     formats = (_WriterFormat * 30)()
     assert all(writer_lib.peare_writer_get_create_format(
         index, C.byref(formats[index])) == 0 for index in range(len(formats)))
@@ -7874,6 +7874,7 @@ def test_writer_create_format_through_gui_dialog(
     assert sample.is_file()
     format_sources = [
         ("zip", "README.md"), ("rar", "README.md"),
+        ("7z", "README.md"),
         ("gzip", "README.md"),
         ("bzip2", "README.md"), ("zstd", "README.md"),
         ("xz", "README.md"), ("lzma", "README.md"),
@@ -7945,7 +7946,7 @@ def test_writer_create_format_through_gui_dialog(
                     relative_sample = (
                         Path("method96") / "peare-logo-444.jpg"
                         if variant_id == "jpeg" else
-                        Path("Abbrevia_WavPack") / "source" / "default.wav")
+                    Path("Abbrevia_WavPack") / "source" / "16bit.wav")
                     operation_source = sample_root / relative_sample
                     if not operation_source.is_file():
                         pytest.skip(f"Missing real ZIPX {variant_id} source sample")
@@ -7977,6 +7978,12 @@ def test_writer_create_format_through_gui_dialog(
     assert report["stage"] == "complete"
     assert len(report["operations"]) == len(operations)
     assert all(item["passed"] for item in report["operations"])
+    if sys.platform == "win32" or sys.platform.startswith("linux"):
+        memory_path = output_dir / "writer-test-memory.json"
+        assert memory_path.is_file()
+        memory_report = json.loads(memory_path.read_text(encoding="utf-8"))
+        assert len(memory_report["samples"]) >= 2
+        assert memory_report["peak"]
     assert Path(report["image"]) == list(expected)[-1].resolve()
     for destination in list(expected)[:-1]:
         assert not destination.exists(), destination
@@ -9390,6 +9397,730 @@ def _writer_path():
                 return candidate
     return None
 
+
+_SEVEN_ZIP_BASE_VARIANTS = [
+    "ppmd",
+    *(f"lzma-{level}" for level in range(10)),
+    *(f"lzma2-{level}" for level in range(10)),
+    *(f"deflate-{level}" for level in range(10)),
+    *(f"bzip2-{level}" for level in range(1, 10)),
+    *(f"deflate64-{level}" for level in range(10)),
+]
+_SEVEN_ZIP_WRITER_VARIANTS = ["store", *_SEVEN_ZIP_BASE_VARIANTS]
+_SEVEN_ZIP_WRITER_VARIANTS.extend(
+    f"{variant}-solid-{block_size}"
+    for variant in _SEVEN_ZIP_BASE_VARIANTS
+    for block_size in ("1m", "16m", "2g"))
+
+
+@pytest.mark.parametrize("variant", _SEVEN_ZIP_WRITER_VARIANTS)
+def test_7z_writer_complete_cud_with_7zip(writer_lib, peare_lib, tmp_path, variant):
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required for the independent 7z writer check")
+
+    variants = []
+    for index in range(writer_lib.peare_writer_create_variant_count(b"7z")):
+        item = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"7z", index, C.byref(item)) == 0
+        variants.append(item.id.decode())
+    assert len(variants) == 201
+    assert variant in variants
+
+    source = ROOT / "README.md"
+    replacement = ROOT / "COPYRIGHT.md"
+    assert source.is_file() and replacement.is_file()
+    archive = tmp_path / "writer-cud.7z"
+    handle = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(handle)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            handle, b"7z", variant.encode(), str(archive).encode()) == 0
+        assert writer_lib.peare_writer_create_directory(handle, b"docs") == 0
+        assert writer_lib.peare_writer_create_file(
+            handle, str(source).encode(), b"docs/readme.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(handle, b"empty") == 0
+        assert writer_lib.peare_writer_create_directory(handle, b"tree") == 0
+        assert writer_lib.peare_writer_create_file(
+            handle, str(source).encode(), b"tree/leaf.txt") == 0
+        assert writer_lib.peare_writer_create_directory(handle, b"emptydir") == 0
+        assert writer_lib.peare_writer_finish(handle) == 0
+
+        opened = peare_lib.open_file(str(archive))
+        assert opened is not None, peare_lib.status_message(
+            peare_lib.last_open_status)
+        try:
+            rows = {row["path"]: row["sha256"]
+                    for row in opened.normalized_tree()}
+            source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+            assert rows["docs/readme.txt"] == source_hash
+            assert rows["tree/leaf.txt"] == source_hash
+        finally:
+            opened.close()
+
+        check = subprocess.run([seven_zip, "t", str(archive)],
+                               capture_output=True, text=True, timeout=60)
+        assert check.returncode == 0, check.stdout + check.stderr
+        initial_listing = subprocess.run(
+            [seven_zip, "l", "-slt", str(archive)], capture_output=True,
+            text=True, timeout=60)
+        assert initial_listing.returncode == 0, \
+            initial_listing.stdout + initial_listing.stderr
+        initial_records = [dict(line.split(" = ", 1)
+                                for line in record.splitlines()
+                                if " = " in line)
+                           for record in initial_listing.stdout.split("\n\n")]
+        initial_files = [record for record in initial_records
+                         if record.get("Path", "").endswith(".txt")]
+        expected_method = {
+            "store": "Copy", "ppmd": "PPMD", "lzma": "LZMA",
+            "lzma2": "LZMA2", "deflate": "Deflate", "bzip2": "BZip2",
+            "deflate64": "Deflate64",
+        }[variant.split("-", 1)[0]]
+        assert initial_files
+        assert all(record.get("Method", "").startswith(expected_method)
+                   for record in initial_files)
+        expected_solid = "-solid-" in variant
+        initial_solid = [record for record in initial_records
+                         if "Solid" in record]
+        assert initial_solid
+        assert initial_solid[0]["Solid"] == ("+" if expected_solid else "-")
+        extracted = subprocess.run(
+            [seven_zip, "x", "-so", str(archive), "docs/readme.txt"],
+            capture_output=True, timeout=60)
+        assert extracted.returncode == 0, extracted.stderr.decode(errors="replace")
+        assert extracted.stdout == source.read_bytes()
+
+        if "-solid-" in variant:
+            listing = subprocess.run([seven_zip, "l", "-slt", str(archive)],
+                                     capture_output=True, text=True, timeout=60)
+            assert listing.returncode == 0, listing.stdout + listing.stderr
+            records = [dict(line.split(" = ", 1) for line in record.splitlines()
+                            if " = " in line)
+                       for record in listing.stdout.split("\n\n")]
+            file_records = {record.get("Path"): record for record in records}
+            assert file_records["docs\\readme.txt"].get("Block") == "0"
+            assert file_records["tree\\leaf.txt"].get("Block") == "0"
+
+        assert writer_lib.peare_writer_update_begin(handle, str(archive).encode()) == 0
+        assert writer_lib.peare_writer_rename_entry(
+            handle, b"docs/readme.txt", b"docs/renamed.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            handle, str(replacement).encode(), b"docs/renamed.txt") == 0
+        assert writer_lib.peare_writer_create_file(
+            handle, str(source).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(handle, b"empty", 0) == 0
+        assert writer_lib.peare_writer_delete_entry(handle, b"emptydir", 0) == 0
+        assert writer_lib.peare_writer_rename_entry(
+            handle, b"tree", b"moved") == 0
+        assert writer_lib.peare_writer_delete_entry(handle, b"moved", 1) == 0
+        assert writer_lib.peare_writer_update_finish(handle) == 0
+
+        check = subprocess.run([seven_zip, "t", str(archive)],
+                               capture_output=True, text=True, timeout=60)
+        assert check.returncode == 0, check.stdout + check.stderr
+        extracted = subprocess.run(
+            [seven_zip, "x", "-so", str(archive), "docs/renamed.txt"],
+            capture_output=True, timeout=60)
+        assert extracted.returncode == 0, extracted.stderr.decode(errors="replace")
+        assert extracted.stdout == replacement.read_bytes()
+        listing = subprocess.run([seven_zip, "l", "-slt", str(archive)],
+                                 capture_output=True, text=True, timeout=60)
+        assert listing.returncode == 0, listing.stdout + listing.stderr
+        updated_records = [dict(line.split(" = ", 1)
+                                for line in record.splitlines()
+                                if " = " in line)
+                           for record in listing.stdout.split("\n\n")]
+        updated_files = [record for record in updated_records
+                         if record.get("Path", "").endswith((".txt", ".md"))]
+        assert all(record.get("Method", "").startswith(expected_method)
+                   for record in updated_files)
+        updated_solid = [record for record in updated_records
+                         if "Solid" in record]
+        assert updated_solid
+        assert updated_solid[0]["Solid"] == ("+" if expected_solid else "-")
+        assert "docs\\renamed.txt" in listing.stdout
+        assert "added.txt" in listing.stdout
+        assert "docs\\readme.txt" not in listing.stdout
+        assert "Path = empty" not in listing.stdout
+        assert "Path = emptydir\\" not in listing.stdout
+        assert "Path = moved\\" not in listing.stdout
+        assert "Path = moved\\leaf.txt" not in listing.stdout
+    finally:
+        writer_lib.peare_writer_abort(handle)
+        writer_lib.peare_writer_destroy(handle)
+
+
+def test_7z_empty_archive_created_from_zero(writer_lib, peare_lib, tmp_path):
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required for the independent 7z writer check")
+
+    archive = tmp_path / "empty.7z"
+    handle = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(handle)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            handle, b"7z", b"store", str(archive).encode()) == 0
+        assert writer_lib.peare_writer_finish(handle) == 0
+        check = subprocess.run([seven_zip, "t", str(archive)],
+                               capture_output=True, text=True, timeout=60)
+        assert check.returncode == 0, check.stdout + check.stderr
+        opened = peare_lib.open_file(str(archive))
+        assert opened is not None, peare_lib.status_message(
+            peare_lib.last_open_status)
+        try:
+            assert opened.normalized_tree() == []
+        finally:
+            opened.close()
+    finally:
+        writer_lib.peare_writer_abort(handle)
+        writer_lib.peare_writer_destroy(handle)
+
+
+@pytest.mark.parametrize("sample_name", (
+    "lzma2-mx5.7z", "bzip2-mx5.7z", "ppmd-mx5.7z",
+    "lzma-mx0.7z", "lzma-dict64k-word16.7z",
+    "lzma-dict4m-word273.7z", "lzma2-dict64k-word16.7z",
+    "lzma2-dict4m-word273.7z", "ppmd-mem1m-order2.7z",
+    "ppmd-mem32m-order16.7z", "bzip2-mx0.7z", "bzip2-mx9.7z",
+    "tool-created-method-samples/7z-26.05/deflate64.7z"))
+def test_7z_update_preserves_external_tool_method(
+        writer_lib, peare_lib, tmp_path, sample_name):
+    sample_directory = os.environ.get("PEARE_7Z_SAMPLE_DIR")
+    if not sample_directory:
+        pytest.skip("Set PEARE_7Z_SAMPLE_DIR to the independent 7z sample set")
+    sample_root = Path(sample_directory)
+    sample = (sample_root.parent / sample_name
+              if sample_name.startswith("tool-created-method-samples/")
+              else sample_root / sample_name)
+    if not sample.is_file():
+        pytest.skip(f"Independent 7z sample is not available: {sample_name}")
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required to verify the independent 7z sample")
+
+    archive = tmp_path / Path(sample_name).name
+    shutil.copyfile(sample, archive)
+    capabilities = C.c_uint32()
+    assert writer_lib.peare_writer_get_update_capabilities(
+        str(archive).encode(), 0, C.byref(capabilities)) == 0
+    assert capabilities.value == 0x3F
+    before = subprocess.run([seven_zip, "l", "-slt", str(archive)],
+                            capture_output=True, text=True, timeout=60)
+    assert before.returncode == 0, before.stdout + before.stderr
+    before_records = [dict(line.split(" = ", 1)
+                           for line in record.splitlines()
+                           if " = " in line)
+                      for record in before.stdout.split("\n\n")]
+    source_records = [record for record in before_records
+                      if "Size" in record and "Method" in record]
+    assert source_records
+    source_name = source_records[0]["Path"].replace("\\", "/")
+    method_prefix = source_records[0]["Method"].split(":", 1)[0]
+    solid_records = [record for record in before_records if "Solid" in record]
+    assert solid_records
+    solid_before = solid_records[0]["Solid"]
+    original = subprocess.run(
+        [seven_zip, "x", "-so", str(archive), source_records[0]["Path"]],
+        capture_output=True, timeout=60)
+    assert original.returncode == 0, original.stderr.decode(errors="replace")
+    opened_before = peare_lib.open_file(str(archive))
+    assert opened_before is not None, peare_lib.status_message(
+        peare_lib.last_open_status)
+    try:
+        source_rows = {row["path"]: row
+                       for row in opened_before.normalized_tree()}
+        assert source_name in source_rows
+        assert source_rows[source_name]["size"] == len(original.stdout)
+        assert opened_before.read_member_bytes(source_name) == original.stdout
+    finally:
+        opened_before.close()
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(
+            writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_rename_entry(
+            writer, source_name.encode(), b"PEARE-RENAMED.bin") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(ROOT / "COPYRIGHT.md").encode(),
+            b"PEARE-RENAMED.bin") == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(ROOT / "COPYRIGHT.md").encode(), b"added.txt") == 0
+        if len(source_records) > 1:
+            assert writer_lib.peare_writer_delete_entry(
+                writer, source_records[1]["Path"].replace("\\", "/").encode(),
+                0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    after = subprocess.run([seven_zip, "l", "-slt", str(archive)],
+                           capture_output=True, text=True, timeout=60)
+    assert after.returncode == 0, after.stdout + after.stderr
+    after_records = [dict(line.split(" = ", 1)
+                          for line in record.splitlines()
+                          if " = " in line)
+                     for record in after.stdout.split("\n\n")]
+    methods_after = [record["Method"] for record in after_records
+                     if "Size" in record and "Method" in record]
+    assert methods_after
+    assert all(method.startswith(method_prefix) for method in methods_after)
+    updated_solid = [record for record in after_records if "Solid" in record]
+    assert updated_solid
+    assert updated_solid[0]["Solid"] == solid_before
+    assert "PEARE-RENAMED.bin" in after.stdout
+    assert "added.txt" in after.stdout
+    opened = peare_lib.open_file(str(archive))
+    assert opened is not None, peare_lib.status_message(peare_lib.last_open_status)
+    try:
+        rows = {row["path"]: row["sha256"] for row in opened.normalized_tree()}
+        assert rows["PEARE-RENAMED.bin"] == hashlib.sha256(
+            (ROOT / "COPYRIGHT.md").read_bytes()).hexdigest()
+        assert rows["added.txt"] == hashlib.sha256(
+            (ROOT / "COPYRIGHT.md").read_bytes()).hexdigest()
+    finally:
+        opened.close()
+
+
+@pytest.mark.parametrize("sample_name", (
+    "filters/lzma2-bcj.7z", "filters/lzma2-delta.7z",
+    "filters/lzma2-arm.7z", "filters/lzma2-armt.7z",
+    "filters/lzma2-ia64.7z", "filters/lzma2-ppc.7z",
+    "filters/lzma2-sparc.7z", "bcj-lzma2.7z",
+    "bcj2/lzma2-bcj2.7z"))
+def test_7z_update_rewrites_filtered_folder(
+        writer_lib, peare_lib, tmp_path, sample_name):
+    sample_directory = os.environ.get("PEARE_7Z_SAMPLE_DIR")
+    if not sample_directory:
+        pytest.skip("Set PEARE_7Z_SAMPLE_DIR to the independent 7z sample set")
+    sample = Path(sample_directory).parent / "tool-created-method-samples" / sample_name
+    if not sample.is_file():
+        pytest.skip(f"Independent 7z filter sample is not available: {sample_name}")
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required to verify the independent 7z sample")
+
+    archive = tmp_path / Path(sample_name).name
+    shutil.copyfile(sample, archive)
+    listing = subprocess.run([seven_zip, "l", "-slt", str(archive)],
+                             capture_output=True, text=True, timeout=60)
+    assert listing.returncode == 0, listing.stdout + listing.stderr
+    records = [dict(line.split(" = ", 1) for line in record.splitlines()
+                    if " = " in line)
+               for record in listing.stdout.split("\n\n")]
+    file_record = next(record for record in records
+                       if "Size" in record and "Method" in record)
+    original_name = file_record["Path"]
+    original = subprocess.run(
+        [seven_zip, "x", "-so", str(archive), original_name],
+        capture_output=True, timeout=60)
+    assert original.returncode == 0, original.stderr.decode(errors="replace")
+    opened = peare_lib.open_file(str(archive))
+    assert opened is not None, peare_lib.status_message(peare_lib.last_open_status)
+    try:
+        assert opened.read_member_bytes(original_name) == original.stdout
+    finally:
+        opened.close()
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(
+            writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_rename_entry(
+            writer, original_name.encode(), b"PEARE-RENAMED.bin") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(ROOT / "COPYRIGHT.md").encode(),
+            b"PEARE-RENAMED.bin") == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(ROOT / "README.md").encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            writer, b"empty.txt") == 0
+        assert writer_lib.peare_writer_create_directory(writer, b"doomed") == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(ROOT / "README.md").encode(), b"doomed/leaf.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"empty.txt", 0) == 0
+        assert writer_lib.peare_writer_delete_entry(writer, b"doomed", 1) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    check = subprocess.run([seven_zip, "t", str(archive)],
+                           capture_output=True, text=True, timeout=60)
+    assert check.returncode == 0, check.stdout + check.stderr
+    extracted = subprocess.run(
+        [seven_zip, "x", "-so", str(archive), "PEARE-RENAMED.bin"],
+        capture_output=True, timeout=60)
+    assert extracted.returncode == 0
+    assert extracted.stdout == (ROOT / "COPYRIGHT.md").read_bytes()
+    after = subprocess.run([seven_zip, "l", "-slt", str(archive)],
+                           capture_output=True, text=True, timeout=60)
+    assert after.returncode == 0, after.stdout + after.stderr
+    assert "added.txt" in after.stdout
+    assert "empty.txt" not in after.stdout
+    assert "doomed" not in after.stdout
+    assert original_name not in after.stdout
+
+
+@pytest.mark.parametrize("data_codec", ("lzma2", "lzma"))
+@pytest.mark.parametrize("view", ("tree", "details"))
+def test_7z_update_preserves_compressed_header(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, data_codec, view):
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required to create the independent 7z sample")
+
+    source = ROOT / "README.md"
+    archive_source = ROOT / "docs"
+    replacement = ROOT / "COPYRIGHT.md"
+    archive = tmp_path / f"compressed-header-data-{data_codec}.7z"
+    create = subprocess.run(
+        [seven_zip, "a", "-t7z", "-mhc=on", f"-m0={data_codec}",
+         "-mx=5", "-ms=64k", str(archive), str(archive_source)],
+        capture_output=True, text=True, timeout=120)
+    assert create.returncode == 0, create.stdout + create.stderr
+    before = subprocess.run([seven_zip, "l", "-slt", str(archive)],
+                            capture_output=True, text=True, timeout=60)
+    assert before.returncode == 0, before.stdout + before.stderr
+    before_records = [dict(line.split(" = ", 1)
+                           for line in record.splitlines()
+                           if " = " in line)
+                      for record in before.stdout.split("\n\n")]
+    before_blocks = {
+        record["Path"].replace("\\", "/"): record["Block"]
+        for record in before_records
+        if "Block" in record and "D" not in record.get("Attributes", "")
+    }
+    assert len(set(before_blocks.values())) > 1
+    original_bytes = archive.read_bytes()
+    original_next = struct.unpack_from("<Q", original_bytes, 12)[0]
+    assert original_bytes[32 + original_next] == 0x17
+
+    gui_archive = tmp_path / f"compressed-header-gui-data-{data_codec}.7z"
+    gui_create = subprocess.run(
+        [seven_zip, "a", "-t7z", "-mhc=on", f"-m0={data_codec}",
+         "-mx=5", str(gui_archive), str(archive_source)],
+        capture_output=True, text=True, timeout=120)
+    assert gui_create.returncode == 0, gui_create.stdout + gui_create.stderr
+    gui_bytes = gui_archive.read_bytes()
+    gui_next = struct.unpack_from("<Q", gui_bytes, 12)[0]
+    assert gui_bytes[32 + gui_next] == 0x17
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      str(gui_archive), view, "", timeout_seconds=240)
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(
+            writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"docs/SUPPORTED_FORMATS.md", b"renamed.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"renamed.txt") == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(source).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"added.txt", 0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    check = subprocess.run([seven_zip, "t", str(archive)],
+                           capture_output=True, text=True, timeout=60)
+    assert check.returncode == 0, check.stdout + check.stderr
+    updated_bytes = archive.read_bytes()
+    updated_next = struct.unpack_from("<Q", updated_bytes, 12)[0]
+    assert updated_bytes[32 + updated_next] == 0x17
+    after = subprocess.run([seven_zip, "l", "-slt", str(archive)],
+                           capture_output=True, text=True, timeout=60)
+    assert after.returncode == 0, after.stdout + after.stderr
+    assert "renamed.txt" in after.stdout
+    assert "SUPPORTED_FORMATS.md" not in after.stdout
+    after_records = [dict(line.split(" = ", 1)
+                          for line in record.splitlines()
+                          if " = " in line)
+                     for record in after.stdout.split("\n\n")]
+    after_blocks = {
+        record["Path"].replace("\\", "/"): record["Block"]
+        for record in after_records
+        if "Block" in record and "D" not in record.get("Attributes", "")
+    }
+    assert after_blocks["renamed.txt"] == before_blocks[
+        "docs/SUPPORTED_FORMATS.md"]
+    for path, block in before_blocks.items():
+        if path != "docs/SUPPORTED_FORMATS.md":
+            assert after_blocks[path] == block
+    extracted = subprocess.run(
+        [seven_zip, "x", "-so", str(archive), "renamed.txt"],
+        capture_output=True, timeout=60)
+    assert extracted.returncode == 0
+    assert extracted.stdout == replacement.read_bytes()
+    opened = peare_lib.open_file(str(archive))
+    assert opened is not None, peare_lib.status_message(peare_lib.last_open_status)
+    try:
+        rows = {row["path"]: row["sha256"] for row in opened.normalized_tree()}
+        assert rows["renamed.txt"] == hashlib.sha256(
+            replacement.read_bytes()).hexdigest()
+    finally:
+        opened.close()
+
+
+@pytest.mark.parametrize("encrypted_header", [False, True])
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_7z_encrypted_archive_complete_cud(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, encrypted_header, view):
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required to create the independent encrypted archive")
+    password = b"PeareCudTest-2026"
+    password_text = password.decode("ascii")
+    source = tmp_path / "source.txt"
+    source.write_bytes(b"7z AES archive source payload\n")
+    replacement = tmp_path / "replacement.txt"
+    replacement.write_bytes(b"replacement payload from Peare\n")
+    archive = tmp_path / ("header-encrypted.7z" if encrypted_header
+                          else "data-encrypted.7z")
+    command = [seven_zip, "a", "-t7z", "-m0=lzma2", "-mx=1",
+               f"-p{password_text}", f"-mhe={'on' if encrypted_header else 'off'}",
+               str(archive), str(source)]
+    created = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    assert created.returncode == 0, created.stdout + created.stderr
+    original_bytes = archive.read_bytes()
+    gui_archive = tmp_path / ("gui-header-encrypted.7z" if encrypted_header
+                              else "gui-data-encrypted.7z")
+    gui_archive.write_bytes(original_bytes)
+
+    capabilities = C.c_uint32()
+    assert writer_lib.peare_writer_get_update_capabilities(
+        str(archive).encode(), 0, C.byref(capabilities)) == 0
+    assert capabilities.value == 0x3F
+
+    wrong = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(wrong)) == 0
+    try:
+        assert writer_lib.peare_writer_set_password(wrong, b"wrong-password") == 0
+        assert writer_lib.peare_writer_update_begin(
+            wrong, str(archive).encode()) != 0
+    finally:
+        writer_lib.peare_writer_destroy(wrong)
+    assert archive.read_bytes() == original_bytes
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_set_password(writer, password) == 0
+        assert writer_lib.peare_writer_update_begin(
+            writer, str(archive).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"source.txt", b"renamed.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"renamed.txt") == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(source).encode(), b"added.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            writer, b"empty.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(writer, b"empty.txt", 0) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    checked = subprocess.run(
+        [seven_zip, "t", str(archive), f"-p{password_text}"],
+        capture_output=True, text=True, timeout=60)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    listing = subprocess.run(
+        [seven_zip, "l", "-slt", str(archive), f"-p{password_text}"],
+        capture_output=True, text=True, timeout=60)
+    assert listing.returncode == 0, listing.stdout + listing.stderr
+    assert "renamed.txt" in listing.stdout and "added.txt" in listing.stdout
+    assert "source.txt" not in listing.stdout
+    entries = [record for record in listing.stdout.split("\n\n")
+               if "Path = renamed.txt" in record or "Path = added.txt" in record]
+    assert entries and all("Encrypted = +" in record for record in entries)
+    extracted = subprocess.run(
+        [seven_zip, "x", "-so", str(archive), "renamed.txt",
+         f"-p{password_text}"], capture_output=True, timeout=60)
+    assert extracted.returncode == 0, extracted.stderr.decode(errors="replace")
+    assert extracted.stdout == replacement.read_bytes()
+    opened = peare_lib.open_file(str(archive), password=password_text)
+    assert opened is not None, peare_lib.status_message(peare_lib.last_open_status)
+    try:
+        rows = {row["path"]: row["sha256"] for row in opened.normalized_tree()}
+        assert rows["renamed.txt"] == hashlib.sha256(
+            replacement.read_bytes()).hexdigest()
+        assert rows["added.txt"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    finally:
+        opened.close()
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      str(gui_archive), view, "", open_password=password_text)
+    gui_check = subprocess.run(
+        [seven_zip, "t", str(gui_archive), f"-p{password_text}"],
+        capture_output=True, text=True, timeout=60)
+    assert gui_check.returncode == 0, gui_check.stdout + gui_check.stderr
+
+
+def test_7z_password_creates_encrypted_archive_from_zero(
+        writer_lib, peare_lib, tmp_path):
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required for independent encrypted archive checks")
+    password = b"PeareCudTest-2026"
+    source = tmp_path / "new.txt"
+    source.write_bytes(b"new encrypted 7z archive\n")
+    archive = tmp_path / "created-encrypted.7z"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_set_password(writer, password) == 0
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"7z", b"lzma2-1", str(archive).encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(source).encode(), b"new.txt") == 0
+        assert writer_lib.peare_writer_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+    checked = subprocess.run(
+        [seven_zip, "t", str(archive), f"-p{password.decode('ascii')}"],
+        capture_output=True, text=True, timeout=60)
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    opened = peare_lib.open_file(str(archive), password=password.decode("ascii"))
+    assert opened is not None, peare_lib.status_message(peare_lib.last_open_status)
+    try:
+        rows = {row["path"]: row["sha256"] for row in opened.normalized_tree()}
+        assert rows["new.txt"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    finally:
+        opened.close()
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_7z_gui_all_variants_complete_cud_persistent(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    sample_directory = os.environ.get("PEARE_7Z_SAMPLE_DIR")
+    if not sample_directory:
+        pytest.skip("Set PEARE_7Z_SAMPLE_DIR to the independent 7z sample set")
+    image = Path(sample_directory) / "lzma2-mx5.7z"
+    if not image.is_file():
+        pytest.skip("The independent 7z GUI sample is unavailable.")
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required for independent GUI output checks")
+
+    source = ROOT / "README.md"
+    replacement = ROOT / "COPYRIGHT.md"
+    assert source.is_file() and replacement.is_file()
+    variants = []
+    for index in range(writer_lib.peare_writer_create_variant_count(b"7z")):
+        variant = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"7z", index, C.byref(variant)) == 0
+        variants.append(variant.id.decode())
+    assert len(variants) == 201
+
+    operations = []
+    outputs = []
+    for index, variant in enumerate(variants):
+        destination = tmp_path / f"gui-7z-{index:03d}.7z"
+        outputs.append(destination)
+        operations.append({
+            "type": "create_container", "test_id": f"create-{variant}",
+            "format": "7z", "variant": variant,
+            "destination": str(destination), "sources": [str(source)],
+        })
+        operations.extend([
+            {"type": "create_file", "test_id": f"empty-{variant}",
+             "name": "empty.txt", "expect_present": "empty.txt"},
+            {"type": "create_directory", "test_id": f"directory-{variant}",
+             "name": "nested", "expect_present": "nested"},
+            {"type": "add_files", "test_id": f"add-{variant}",
+             "sources": [str(replacement)], "destination": "",
+             "expect_present": replacement.name},
+            {"type": "replace", "test_id": f"replace-{variant}",
+             "path": source.name, "source": str(replacement),
+             "expect_present": source.name},
+            {"type": "rename", "test_id": f"rename-{variant}",
+             "path": replacement.name, "name": "renamed.txt",
+             "expect_present": "renamed.txt",
+             "expect_absent": replacement.name},
+            {"type": "delete", "test_id": f"delete-empty-{variant}",
+             "path": "empty.txt", "expect_absent": "empty.txt"},
+            {"type": "delete", "test_id": f"delete-directory-{variant}",
+             "path": "nested", "expect_absent": "nested"},
+            {"type": "delete", "test_id": f"delete-renamed-{variant}",
+             "path": "renamed.txt", "expect_absent": "renamed.txt"},
+        ])
+
+    scenario = tmp_path / "7z-all-variants-cud.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / "7z-all-variants-cud-output"
+    try:
+        result = subprocess.run([
+            sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+            "--exe", str(peare_gui_path), "--image", str(image),
+            "--scenario", str(scenario), "--output-dir", str(output_dir),
+            "--timeout", "1800",
+        ], capture_output=True, text=True, timeout=1830)
+        assert result.returncode == 0, result.stdout + result.stderr
+        report = json.loads((output_dir / "writer-test-report.json").read_text(
+            encoding="utf-8"))
+        assert report["stage"] == "complete"
+        assert len(report["operations"]) == len(operations)
+        assert all(item["passed"] for item in report["operations"])
+        memory = json.loads((output_dir / "writer-test-memory.json").read_text(
+            encoding="utf-8"))
+        assert len(memory["samples"]) >= 2
+        assert memory["peak"]
+        for archive in outputs:
+            check = subprocess.run([seven_zip, "t", str(archive)],
+                                   capture_output=True, text=True, timeout=60)
+            assert check.returncode == 0, check.stdout + check.stderr
+            extracted = subprocess.run(
+                [seven_zip, "x", "-so", str(archive), source.name],
+                capture_output=True, timeout=60)
+            assert extracted.returncode == 0
+            assert extracted.stdout == replacement.read_bytes()
+    finally:
+        for archive in outputs:
+            if archive.exists():
+                archive.unlink()
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_7z_gui_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
+                              tmp_path, view):
+    archive = tmp_path / "gui-cud-source.7z"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"7z", b"lzma2-5-solid-16m",
+            str(archive).encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(ROOT / "README.md").encode(), b"README.md") == 0
+        assert writer_lib.peare_writer_create_file(
+            writer, str(ROOT / "AGENTS.md").encode(), b"AGENTS.md") == 0
+        assert writer_lib.peare_writer_finish(writer) == 0
+    finally:
+        writer_lib.peare_writer_abort(writer)
+        writer_lib.peare_writer_destroy(writer)
+
+    _run_gui_cud_case(writer_lib, peare_lib, peare_gui_path, tmp_path,
+                      str(archive), view, "")
+
 @pytest.fixture(scope="session")
 def writer_lib():
     path = _writer_path()
@@ -9720,7 +10451,7 @@ def test_rar_create_variants_gui_persistent(
 
 
 def test_rar_create_query_and_add_files_to_abi(writer_lib, peare_lib, tmp_path):
-    assert writer_lib.peare_writer_create_format_count() == 31
+    assert writer_lib.peare_writer_create_format_count() == 32
     assert writer_lib.peare_writer_create_variant_count(b"rar") == 18
     found_rar = False
     for index in range(writer_lib.peare_writer_create_format_count()):

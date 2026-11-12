@@ -213,6 +213,46 @@ class Opener:
         self._L.peare_opener_get_resource_count(self._h, folder, C.byref(n))
         return n.value
 
+    def read_member_bytes(self, name: str, max_size: int = 64 * 1024 * 1024) -> bytes:
+        for folder in range(self.folder_count()):
+            for index in range(self.resource_count(folder)):
+                resource = _HANDLE()
+                status = self._L.peare_opener_open_resource_at(
+                    self._h, folder, index, C.byref(resource)
+                )
+                if status != 0:
+                    raise RuntimeError(self._lib.status_message(status))
+                try:
+                    context = _Context()
+                    status = self._L.peare_resource_get_context(
+                        resource, C.byref(context)
+                    )
+                    if status != 0:
+                        raise RuntimeError(self._lib.status_message(status))
+                    identifier = context.identifier_utf8.to_bytes().decode(
+                        "utf-8", "replace"
+                    )
+                    size = int(context.data_size)
+                    self._L.peare_resource_context_free(C.byref(context))
+                    if identifier != name:
+                        continue
+                    if size > max_size:
+                        raise ValueError(f"Member exceeds read limit: {name}")
+                    chunks = []
+                    offset = 0
+                    while offset < size:
+                        chunk = self._lib.read_resource(
+                            resource, offset, min(1024 * 1024, size - offset)
+                        )
+                        if not chunk:
+                            raise RuntimeError(f"Short read from member: {name}")
+                        chunks.append(chunk)
+                        offset += len(chunk)
+                    return b"".join(chunks)
+                finally:
+                    self._L.peare_resource_destroy(resource)
+        raise KeyError(name)
+
     def normalized_tree(
         self, prefix: str = "", depth: int = 0, max_depth: int = 8,
         recurse_containers: bool | set[str] = True,

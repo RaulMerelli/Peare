@@ -209,6 +209,12 @@ Use the scripts unless another build system must integrate Peare.
 The scripts check prerequisites and select or create the required Qt installation.
 They also configure cross-compilation and deploy the application for each platform.
 
+## Project root
+
+CMake stops before compiler setup when it finds an unapproved file or directory in the project root.
+Tracked root entries are approved. Build output directories named `build` or `build-*`, `tmp`, and `dist` are also approved.
+Put samples in their documented fixture directories. Put generated files in an approved output directory.
+
 ## Installed targets
 
 A desktop build produces the Peare application and three shared libraries:

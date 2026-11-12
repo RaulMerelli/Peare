@@ -10,6 +10,7 @@
 struct peare_resource_snapshot_item {
     peare_blob payload;
     peare_resource_context context;
+    peare_blob archive_path_utf8;
 /* Owns a deferred content store. The payload is read on request and released
  * by freeSnapshotItem; ABI callers do not access the store. */
     void *lazy_content;

@@ -5,6 +5,7 @@
 
 #include <limits>
 #include <QtEndian>
+#include <QRandomGenerator>
 
 #include <algorithm>
 #include <array>
@@ -115,6 +116,74 @@ bool decryptSevenZipAes(const QByteArray& properties, const QString& password,
     std::fill(passwordBytes.begin(), passwordBytes.end(), char(0));
     std::memset(ivAndSchedule, 0, sizeof(ivAndSchedule));
     output->swap(decrypted);
+    return true;
+}
+
+bool createSevenZipAesProperties(QByteArray* properties)
+{
+    if (!properties) return false;
+    QByteArray result;
+    result.reserve(26);
+    result.append(char(0x53));
+    result.append(char(0x8f));
+    QRandomGenerator* random = QRandomGenerator::system();
+    for (int i = 0; i < 6; ++i) {
+        const quint32 value = random->generate();
+        for (unsigned byte = 0; byte < 4; ++byte)
+            result.append(char(value >> (byte * 8)));
+    }
+    result.truncate(26);
+    *properties = result;
+    return true;
+}
+
+bool encryptSevenZipAes(const QByteArray& properties, const QString& password,
+                        const std::uint8_t* input, std::size_t inputSize,
+                        std::vector<std::uint8_t>* output)
+{
+    if (!output || (!input && inputSize) || properties.size() > 34) return false;
+    const auto* props = reinterpret_cast<const std::uint8_t*>(properties.constData());
+    const std::size_t propsSize = std::size_t(properties.size());
+    const unsigned b0 = propsSize ? props[0] : 0;
+    const unsigned cyclesPower = b0 & 0x3f;
+    std::size_t saltSize = 0;
+    std::size_t ivSize = 0;
+    std::size_t offset = 0;
+    if (b0 & 0xc0) {
+        if (propsSize < 2) return false;
+        const unsigned b1 = props[1];
+        saltSize = ((b0 >> 7) & 1) + (b1 >> 4);
+        ivSize = ((b0 >> 6) & 1) + (b1 & 0x0f);
+        if (saltSize > 16 || ivSize > AES_BLOCK_SIZE ||
+            propsSize != 2 + saltSize + ivSize) return false;
+        offset = 2;
+    } else if (propsSize != 1) {
+        return false;
+    }
+    if (cyclesPower > 24 && cyclesPower != 0x3f) return false;
+    const std::size_t paddedSize = inputSize == 0 ? AES_BLOCK_SIZE
+        : (inputSize + AES_BLOCK_SIZE - 1) & ~(std::size_t(AES_BLOCK_SIZE) - 1);
+    if (paddedSize < inputSize || paddedSize > output->max_size()) return false;
+    QByteArray passwordBytes = utf16LittleEndian(password);
+    std::array<std::uint8_t, 32> key = {};
+    const std::uint8_t* salt = saltSize ? props + offset : nullptr;
+    if (!deriveKey(salt, saltSize, passwordBytes, cyclesPower, &key)) return false;
+    std::array<std::uint8_t, AES_BLOCK_SIZE> iv = {};
+    if (ivSize) std::memcpy(iv.data(), props + offset + saltSize, ivSize);
+    static std::once_flag aesTablesOnce;
+    std::call_once(aesTablesOnce, AesGenTables);
+    alignas(16) UInt32 ivAndSchedule[AES_NUM_IVMRK_WORDS] = {};
+    Aes_SetKey_Enc(ivAndSchedule + 4, key.data(), unsigned(key.size()));
+    AesCbc_Init(ivAndSchedule, iv.data());
+    std::vector<std::uint8_t> encrypted(paddedSize, 0);
+    if (inputSize) std::memcpy(encrypted.data(), input, inputSize);
+    if (paddedSize && (!g_AesCbc_Encode || !encrypted.data())) return false;
+    if (paddedSize)
+        g_AesCbc_Encode(ivAndSchedule, encrypted.data(), paddedSize / AES_BLOCK_SIZE);
+    std::fill(key.begin(), key.end(), 0);
+    std::fill(passwordBytes.begin(), passwordBytes.end(), char(0));
+    std::memset(ivAndSchedule, 0, sizeof(ivAndSchedule));
+    output->swap(encrypted);
     return true;
 }
 
