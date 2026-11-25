@@ -3,16 +3,24 @@
 #include <QApplication>
 #include <QAction>
 #include <QByteArray>
+#include <QDialogButtonBox>
 #include <QDialog>
 #include <QDir>
+#include <QFile>
+#include <QFileDialog>
+#include <QFileSystemModel>
 #include <QEventLoop>
+#include <QEvent>
 #include <QFont>
 #include <QFileInfo>
 #include <QIcon>
 #include <QLabel>
+#include <QLineEdit>
+#include <QInputDialog>
 #include <QMenu>
 #include <QMenuBar>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPixmap>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -22,6 +30,7 @@
 #include <QToolButton>
 #include <QToolBar>
 #include <QListWidget>
+#include <QPushButton>
 #include <QTimer>
 
 #include <cstdio>
@@ -55,6 +64,249 @@ static bool isFileAssociationTestRequested(int argc, char* argv[])
 {
     return argc >= 2 && QString::fromLocal8Bit(argv[1]) ==
         QStringLiteral("--file-associations-test");
+}
+
+static bool isCredentialTestRequested(int argc, char* argv[])
+{
+    return argc >= 2 && QString::fromLocal8Bit(argv[1]) ==
+        QStringLiteral("--gui-credential-test");
+}
+
+class CredentialDialogObserver final : public QObject {
+public:
+    int choicesShown = 0;
+    int warningsShown = 0;
+    int keyDialogsShown = 0;
+    int passwordDialogsShown = 0;
+    int passphraseDialogsShown = 0;
+
+    bool eventFilter(QObject* object, QEvent* event) override {
+        if (event->type() != QEvent::Show) return false;
+        if (object->objectName() == QStringLiteral("credentialChoiceDialog")) ++choicesShown;
+        else if (object->objectName() == QStringLiteral("credentialWarningDialog")) ++warningsShown;
+        else if (qobject_cast<QFileDialog*>(object)) ++keyDialogsShown;
+        else if (object->objectName() == QStringLiteral("credentialKeyPassphraseDialog")) ++passphraseDialogsShown;
+        else if (qobject_cast<QInputDialog*>(object)) ++passwordDialogsShown;
+        return false;
+    }
+};
+
+static int runCredentialTest(MainWindow& window, QApplication& app, const QString& mode)
+{
+    QFile input;
+    if (!input.open(stdin, QIODevice::ReadOnly)) return 2;
+    const QJsonDocument document = QJsonDocument::fromJson(input.read(16384));
+    const QJsonObject options = document.object();
+    const QString archive = options.value(QStringLiteral("archive")).toString();
+    const QString keyPath = options.value(QStringLiteral("key_file")).toString();
+    const QString wrongKeyPath = options.value(QStringLiteral("wrong_key_file")).toString();
+    const QString resourcePath = options.value(QStringLiteral("resource_path"))
+        .toString(QStringLiteral("C:/PeareInput/sample.txt"));
+    const QByteArray expectedHash = options.value(QStringLiteral("expected_sha256"))
+        .toString(QStringLiteral("931b99a0455cb56c50642cada2e5048efda927f8bb4e861a1ed9c0d2b67ce6ff")).toLatin1();
+    QString password = options.value(QStringLiteral("password")).toString();
+    QString passphrase = options.value(QStringLiteral("passphrase")).toString();
+    const bool encryptedKey = mode == QStringLiteral("encrypted-key") ||
+        mode == QStringLiteral("encrypted-key-retry") || mode == QStringLiteral("encrypted-key-kdf-limit");
+    if (archive.isEmpty() || keyPath.isEmpty() || password.isEmpty() ||
+        (mode != QStringLiteral("key") && mode != QStringLiteral("password") &&
+         mode != QStringLiteral("key-only") && mode != QStringLiteral("password-only") &&
+         mode != QStringLiteral("cancel-retry") && mode != QStringLiteral("wrong-key-retry") &&
+         mode != QStringLiteral("key-to-password") && mode != QStringLiteral("password-to-key") &&
+         !encryptedKey) || (encryptedKey && passphrase.isEmpty()) ||
+        ((mode == QStringLiteral("wrong-key-retry") || mode == QStringLiteral("key-to-password")) &&
+         wrongKeyPath.isEmpty())) return 2;
+
+    if (mode == QStringLiteral("key-only") || mode == QStringLiteral("password-only")) {
+        peare_opener_handle opener = nullptr;
+        if (peare_opener_create(&opener) != PEARE_STATUS_OK || !opener) return 3;
+        const QByteArray path = archive.toUtf8();
+        const peare_status status = peare_opener_open_file(opener, path.constData());
+        peare_opener_destroy(opener);
+        const peare_status expected = mode == QStringLiteral("key-only")
+            ? PEARE_STATUS_PRIVATE_KEY_REQUIRED : PEARE_STATUS_PASSWORD_REQUIRED;
+        if (status != expected) {
+            std::fprintf(stderr, "Unexpected single-method credential status.\n");
+            return 3;
+        }
+    }
+
+    int choices = 0, keyDialogs = 0, passwordDialogs = 0, passphraseDialogs = 0, warnings = 0, cancellations = 0;
+    bool unexpected = false;
+    QPointer<QFileDialog> currentFileDialog;
+    QString selectedKeyPath;
+    CredentialDialogObserver observer;
+    app.installEventFilter(&observer);
+    QTimer driver;
+    driver.setInterval(20);
+    QObject::connect(&driver, &QTimer::timeout, &window, [&] {
+        QWidget* active = QApplication::activeModalWidget();
+        if (!active) return;
+        if (unexpected) {
+            if (QDialog* dialog = qobject_cast<QDialog*>(active)) dialog->reject();
+            return;
+        }
+        if (QFileDialog* file = qobject_cast<QFileDialog*>(active)) {
+            if (currentFileDialog != file) {
+                currentFileDialog = file;
+                ++keyDialogs;
+                if (keyDialogs > 8) { unexpected = true; file->reject(); return; }
+                if (mode == QStringLiteral("cancel-retry") && cancellations == 0) {
+                    ++cancellations;
+                    QDialogButtonBox* buttons = file->findChild<QDialogButtonBox*>();
+                    QPushButton* cancel = buttons ? buttons->button(QDialogButtonBox::Cancel) : nullptr;
+                    if (!cancel) { unexpected = true; file->reject(); return; }
+                    cancel->click();
+                    return;
+                }
+                selectedKeyPath = (mode == QStringLiteral("wrong-key-retry") ||
+                                   mode == QStringLiteral("key-to-password")) && keyDialogs == 1
+                    ? wrongKeyPath : keyPath;
+                file->setDirectory(QFileInfo(selectedKeyPath).absolutePath());
+            }
+            QFileSystemModel* model = file->findChild<QFileSystemModel*>(QStringLiteral("qt_filesystem_model"));
+            QLineEdit* name = file->findChild<QLineEdit*>(QStringLiteral("fileNameEdit"));
+            QDialogButtonBox* buttons = file->findChild<QDialogButtonBox*>();
+            QPushButton* open = buttons ? buttons->button(QDialogButtonBox::Open) : nullptr;
+            if (!model || !name || !open) { unexpected = true; file->reject(); return; }
+            if (!model->index(QFileInfo(selectedKeyPath).absoluteFilePath()).isValid()) return;
+            file->selectFile(QFileInfo(selectedKeyPath).fileName());
+            name->setText(QFileInfo(selectedKeyPath).fileName());
+            const QStringList selected = file->selectedFiles();
+            if (open->isEnabled() && selected.size() == 1 &&
+                QFileInfo(selected.first()).absoluteFilePath() == QFileInfo(selectedKeyPath).absoluteFilePath())
+                open->click();
+            return;
+        }
+        if (QInputDialog* dialog = qobject_cast<QInputDialog*>(active)) {
+            if (dialog->objectName() == QStringLiteral("credentialKeyPassphraseDialog")) {
+                ++passphraseDialogs;
+                const bool invalid = dialog->labelText().contains(QStringLiteral("incorrect"), Qt::CaseInsensitive);
+                if (!encryptedKey || passphraseDialogs > 2 ||
+                    dialog->textEchoMode() != QLineEdit::Password ||
+                    invalid != (passphraseDialogs == 2) ||
+                    (passphraseDialogs == 2 && mode != QStringLiteral("encrypted-key-retry"))) {
+                    unexpected = true; dialog->reject(); return;
+                }
+                dialog->setTextValue(mode == QStringLiteral("encrypted-key-retry") && passphraseDialogs == 1
+                                     ? QStringLiteral("incorrect-test-passphrase") : passphrase);
+                dialog->accept();
+                return;
+            }
+            ++passwordDialogs;
+            if (passwordDialogs > 8) { unexpected = true; dialog->reject(); return; }
+            if (mode != QStringLiteral("password") && mode != QStringLiteral("password-only") &&
+                mode != QStringLiteral("key-to-password") &&
+                mode != QStringLiteral("password-to-key")) { unexpected = true; dialog->reject(); return; }
+            dialog->setTextValue(mode == QStringLiteral("password-to-key")
+                                 ? QStringLiteral("incorrect-test-password") : password);
+            dialog->accept();
+            return;
+        }
+        if (QDialog* dialog = qobject_cast<QDialog*>(active)) {
+            if (dialog->objectName() == QStringLiteral("credentialChoiceDialog")) {
+                const bool choosePassword = mode == QStringLiteral("password") ||
+                    (mode == QStringLiteral("password-to-key") && choices == 0) ||
+                    (mode == QStringLiteral("key-to-password") && choices == 1);
+                const QString wanted = choosePassword
+                    ? QStringLiteral("credentialPasswordButton") : QStringLiteral("credentialPrivateKeyButton");
+                QPushButton* button = dialog->findChild<QPushButton*>(wanted);
+                ++choices;
+                if (!button || choices > 8) { unexpected = true; dialog->reject(); return; }
+                button->click();
+                return;
+            }
+            QLabel* label = dialog->findChild<QLabel*>(QStringLiteral("credentialWarningText"));
+            const bool keyWarning = (mode == QStringLiteral("wrong-key-retry") ||
+                                     mode == QStringLiteral("key-to-password")) &&
+                label && label->text().contains(QStringLiteral("private key is invalid"), Qt::CaseInsensitive);
+            const bool passwordWarning = mode == QStringLiteral("password-to-key") &&
+                label && label->text().contains(QStringLiteral("password is incorrect"), Qt::CaseInsensitive);
+            const bool kdfWarning = mode == QStringLiteral("encrypted-key-kdf-limit") &&
+                label && label->text() == QStringLiteral("The private key derivation work limit was exceeded.");
+            if (dialog->objectName() == QStringLiteral("credentialWarningDialog") &&
+                (keyWarning || passwordWarning || kdfWarning)) {
+                ++warnings;
+                QDialogButtonBox* box = dialog->findChild<QDialogButtonBox*>(QStringLiteral("credentialWarningButtons"));
+                QPushButton* ok = box ? box->button(QDialogButtonBox::Ok) : nullptr;
+                if (!ok || warnings > 8) { unexpected = true; dialog->reject(); return; }
+                ok->click();
+                return;
+            }
+            unexpected = true;
+            dialog->reject();
+            return;
+        }
+        unexpected = true;
+        if (QDialog* dialog = qobject_cast<QDialog*>(active)) dialog->reject();
+    });
+    window.resize(1280, 800);
+    window.show();
+    driver.start();
+    window.openFilePath(archive);
+    app.processEvents();
+    if (mode == QStringLiteral("encrypted-key-kdf-limit")) {
+        const bool selected = window.navigateToResource(resourcePath);
+        app.processEvents();
+        driver.stop();
+        password.fill(QChar(0));
+        passphrase.fill(QChar(0));
+        if (selected || unexpected || choices != 0 || keyDialogs != 1 || passwordDialogs != 0 ||
+            passphraseDialogs != 1 || warnings != 1 || observer.choicesShown != choices ||
+            observer.keyDialogsShown != keyDialogs || observer.passwordDialogsShown != passwordDialogs ||
+            observer.passphraseDialogsShown != passphraseDialogs || observer.warningsShown != warnings) {
+            std::fprintf(stderr, "KDF limit dialog sequence did not match: choices=%d keys=%d passwords=%d passphrases=%d warnings=%d unexpected=%d.\n",
+                         choices, keyDialogs, passwordDialogs, passphraseDialogs, warnings, unexpected ? 1 : 0);
+            return 3;
+        }
+        std::printf("GUI credential scenario passed: %s.\n", mode.toUtf8().constData());
+        return 0;
+    }
+    if (mode == QStringLiteral("cancel-retry")) {
+        if (cancellations != 1 || window.navigateToResource(resourcePath)) {
+            std::fprintf(stderr, "Credential cancellation was not respected.\n");
+            return 3;
+        }
+        window.openFilePath(archive);
+        app.processEvents();
+    }
+    const int dialogsBeforeNavigation = choices + keyDialogs + passwordDialogs + passphraseDialogs + warnings;
+    const bool selected = window.navigateToResource(resourcePath);
+    app.processEvents();
+    const int dialogsAfterNavigation = choices + keyDialogs + passwordDialogs + passphraseDialogs + warnings;
+    driver.stop();
+    password.fill(QChar(0));
+    passphrase.fill(QChar(0));
+    OffscreenPreviewDiagnostics diagnostics;
+    if (!selected || !window.inspectOffscreenPreview(&diagnostics) || !diagnostics.leaf ||
+        diagnostics.payloadSha256 != expectedHash ||
+        !diagnostics.duplicatePaths.isEmpty() || unexpected || dialogsBeforeNavigation != dialogsAfterNavigation) {
+        std::fprintf(stderr, "Credential navigation or payload verification failed: choices=%d keys=%d passwords=%d warnings=%d unexpected=%d.\n",
+                     choices, keyDialogs, passwordDialogs, warnings, unexpected ? 1 : 0);
+        return 3;
+    }
+    const bool valid = encryptedKey
+        ? choices == 0 && keyDialogs == 1 && passwordDialogs == 0 && warnings == 0 &&
+          passphraseDialogs == (mode == QStringLiteral("encrypted-key-retry") ? 2 : 1)
+        : mode == QStringLiteral("key-only")
+        ? choices == 0 && keyDialogs == 1 && passwordDialogs == 0
+        : mode == QStringLiteral("password-only")
+        ? choices == 0 && passwordDialogs == 1 && keyDialogs == 0
+        : mode == QStringLiteral("password")
+        ? choices == 1 && passwordDialogs == 1 && keyDialogs == 0
+        : mode == QStringLiteral("key") ? choices == 1 && keyDialogs == 1 && passwordDialogs == 0
+        : mode == QStringLiteral("cancel-retry") ? choices == 2 && keyDialogs == 2 && cancellations == 1
+        : mode == QStringLiteral("wrong-key-retry") ? choices == 2 && keyDialogs == 2 && warnings == 1
+        : choices == 2 && keyDialogs == 1 && passwordDialogs == 1 && warnings == 1;
+    if (!valid || observer.choicesShown != choices || observer.keyDialogsShown != keyDialogs ||
+        observer.passwordDialogsShown != passwordDialogs || observer.passphraseDialogsShown != passphraseDialogs ||
+        observer.warningsShown != warnings) {
+        std::fprintf(stderr, "Credential dialog sequence did not match: choices=%d keys=%d passwords=%d warnings=%d cancellations=%d.\n",
+                     choices, keyDialogs, passwordDialogs, warnings, cancellations);
+        return 3;
+    }
+    std::printf("GUI credential scenario passed: %s.\n", mode.toUtf8().constData());
+    return 0;
 }
 
 static int runFileAssociationTest(MainWindow& window, QApplication& app,
@@ -243,6 +495,7 @@ int main(int argc, char* argv[])
     const bool startupIconTestMode = isStartupIconTestRequested(argc, argv);
     const bool folderOpenTestMode = isFolderOpenTestRequested(argc, argv);
     const bool fileAssociationTestMode = isFileAssociationTestRequested(argc, argv);
+    const bool credentialTestMode = isCredentialTestRequested(argc, argv);
     if (previewMode && argc != 5) {
         std::fprintf(stderr,
                      "Usage: Peare.exe --preview-resource <source> <tree-path-or-empty> <preview.png>\n"
@@ -259,7 +512,7 @@ int main(int argc, char* argv[])
         return 2;
     }
     if (previewMode || writerTestMode || startupIconTestMode || folderOpenTestMode ||
-        fileAssociationTestMode) {
+        fileAssociationTestMode || credentialTestMode) {
         qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
 #ifdef Q_OS_WIN
         if (qEnvironmentVariableIsEmpty("QT_QPA_FONTDIR")) {
@@ -278,11 +531,15 @@ int main(int argc, char* argv[])
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/peare/icon.ico")));
 #ifdef Q_OS_WIN
     if (previewMode || writerTestMode || startupIconTestMode || folderOpenTestMode ||
-        fileAssociationTestMode)
+        fileAssociationTestMode || credentialTestMode)
         app.setFont(QFont(QStringLiteral("Segoe UI"), 9));
 #endif
 
     MainWindow window;
+    if (credentialTestMode) {
+        if (argc != 3) return 2;
+        return runCredentialTest(window, app, app.arguments().at(2));
+    }
     if (fileAssociationTestMode) {
         if (argc != 3) {
             std::fprintf(stderr,

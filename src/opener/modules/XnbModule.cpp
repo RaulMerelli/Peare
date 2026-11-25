@@ -1,6 +1,7 @@
 #include "XnbModule.h"
 
 #include "Compat.h"
+#include "../compression/Lz4Block.h"
 #include "../compression/peare/lzx_frontends.h"
 #include "../fs/DiscStore.h"
 
@@ -131,54 +132,6 @@ bool readVarInt(const std::vector<std::uint8_t>& data, std::size_t* position,
         }
     }
     return false;
-}
-
-bool decompressLz4(const std::uint8_t* input, std::size_t inputSize,
-                   std::vector<std::uint8_t>* output, std::size_t outputSize)
-{
-    if (!output || (inputSize && !input)) return false;
-    output->clear();
-    output->reserve(outputSize);
-    std::size_t in = 0;
-    while (in < inputSize) {
-        const std::uint8_t token = input[in++];
-        std::size_t literalLength = token >> 4;
-        if (literalLength == 15) {
-            std::uint8_t extension = 255;
-            while (extension == 255) {
-                if (in >= inputSize) return false;
-                extension = input[in++];
-                if (literalLength > outputSize || extension > outputSize - literalLength)
-                    return false;
-                literalLength += extension;
-            }
-        }
-        if (literalLength > inputSize - in || literalLength > outputSize - output->size())
-            return false;
-        output->insert(output->end(), input + in, input + in + literalLength);
-        in += literalLength;
-        if (in == inputSize) break;
-        if (inputSize - in < 2) return false;
-        const std::size_t distance = std::size_t(input[in]) |
-                                     (std::size_t(input[in + 1]) << 8);
-        in += 2;
-        if (!distance || distance > output->size()) return false;
-        std::size_t matchLength = (token & 0x0fu) + 4u;
-        if ((token & 0x0fu) == 15u) {
-            std::uint8_t extension = 255;
-            while (extension == 255) {
-                if (in >= inputSize) return false;
-                extension = input[in++];
-                if (matchLength > outputSize || extension > outputSize - matchLength)
-                    return false;
-                matchLength += extension;
-            }
-        }
-        if (matchLength > outputSize - output->size()) return false;
-        for (std::size_t i = 0; i < matchLength; ++i)
-            output->push_back((*output)[output->size() - distance]);
-    }
-    return output->size() == outputSize;
 }
 
 bool decompressLzx(const std::uint8_t* input, std::size_t inputSize,
@@ -312,7 +265,7 @@ ModulePtr XnbModule::open(const fs::ByteStorePtr& source, const QString& sourceN
             const std::size_t compressedSize = file.size() - 14;
             const bool ok = lzx
                 ? decompressLzx(file.data() + 14, compressedSize, &body, expandedSize)
-                : decompressLz4(file.data() + 14, compressedSize, &body, expandedSize);
+                : decompressLz4Block(file.data() + 14, compressedSize, &body, expandedSize);
             if (!ok) {
                 module->info_.error = QStringLiteral("XNB compressed content is invalid or unsupported");
                 return ModulePtr(std::move(module));

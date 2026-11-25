@@ -126,6 +126,8 @@ class PeareLib:
             _HANDLE, C.c_uint64, C.c_void_p, C.c_size_t, C.POINTER(C.c_size_t)
         ]
         L.peare_resource_read.restype = C.c_int
+        L.peare_resource_read_original.argtypes = L.peare_resource_read.argtypes
+        L.peare_resource_read_original.restype = C.c_int
         L.peare_resource_get_context.argtypes = [_HANDLE, C.POINTER(_Context)]
         L.peare_resource_get_context.restype = C.c_int
         L.peare_resource_context_free.argtypes = [C.POINTER(_Context)]
@@ -147,6 +149,16 @@ class PeareLib:
             raise RuntimeError(self.status_message(status))
         return C.string_at(buffer, count.value)
 
+    def read_resource_original(self, resource: _HANDLE, offset: int, capacity: int) -> bytes:
+        buffer = (C.c_uint8 * capacity)()
+        count = C.c_size_t()
+        status = self._lib.peare_resource_read_original(
+            resource, offset, buffer, capacity, C.byref(count)
+        )
+        if status != 0:
+            raise RuntimeError(self.status_message(status))
+        return C.string_at(buffer, count.value)
+
     def open_file(self, path: str, password: str | None = None) -> "Opener | None":
         h = _HANDLE()
         if self._lib.peare_opener_create(C.byref(h)) != 0:
@@ -160,23 +172,28 @@ class PeareLib:
         if self.last_open_status != 0:
             self._lib.peare_opener_destroy(h)
             return None
-        return Opener(self, h)
+        return Opener(self, h, password)
 
-    def _open_source(self, source: _HANDLE) -> "Opener | None":
+    def _open_source(self, source: _HANDLE, password: str | None = None) -> "Opener | None":
         h = _HANDLE()
         if self._lib.peare_opener_create(C.byref(h)) != 0:
             return None
+        if password is not None:
+            if self._lib.peare_opener_set_password(h, password.encode("utf-8")) != 0:
+                self._lib.peare_opener_destroy(h)
+                return None
         if self._lib.peare_opener_open(h, source) != 0:
             self._lib.peare_opener_destroy(h)
             return None
-        return Opener(self, h)
+        return Opener(self, h, password)
 
 
 class Opener:
-    def __init__(self, lib: PeareLib, handle: _HANDLE):
+    def __init__(self, lib: PeareLib, handle: _HANDLE, password: str | None = None):
         self._lib = lib
         self._L = lib._lib
         self._h = handle
+        self._password = password
 
     def close(self):
         if self._h:
@@ -320,7 +337,7 @@ class Opener:
                     if should_recurse and depth < max_depth:
                         src = _HANDLE()
                         if self._L.peare_resource_get_source(res, C.byref(src)) == 0 and src:
-                            child = self._lib._open_source(src)
+                            child = self._lib._open_source(src, self._password)
                             if child:
                                 rows.extend(child.normalized_tree(
                                     path, depth + 1, max_depth, recurse_containers,

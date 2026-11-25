@@ -455,9 +455,10 @@ QString resolveRelativeFile(const QString& cuePath, QString declared, QString* e
     }
 
     const QFileInfo target(resolved);
+    // Qt returns canonical paths with '/' separators; compare on the same convention.
     const QString canonical = target.canonicalFilePath();
-    const QString prefix = base.endsWith(QDir::separator()) ? base : base + QDir::separator();
-    if (canonical.isEmpty() || (!canonical.startsWith(prefix) && canonical != base)) {
+    const QString prefix = base.endsWith(QLatin1Char('/')) ? base : base + QLatin1Char('/');
+    if (canonical.isEmpty() || (!canonical.startsWith(prefix, Qt::CaseInsensitive) && canonical.compare(base, Qt::CaseInsensitive) != 0)) {
         if (error) *error = QStringLiteral("Referenced file escapes the CUE directory: %1").arg(declared);
         return {};
     }

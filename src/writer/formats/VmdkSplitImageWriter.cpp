@@ -467,6 +467,13 @@ bool VmdkSplitImageWriter::parse(QString* error) {
     return true;
 }
 
+std::vector<QString> VmdkSplitImageWriter::extentPaths() const {
+    std::vector<QString> paths;
+    for (const Extent& extent : extents_)
+        paths.push_back(extent.sourcePath);
+    return paths;
+}
+
 bool VmdkSplitImageWriter::hasExternalLock(QString* error) const {
     if (!writable_) return false;
     if (QFileInfo(descriptorPath_ + QStringLiteral(".lck")).exists()) {

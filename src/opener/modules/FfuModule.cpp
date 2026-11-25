@@ -1,5 +1,6 @@
 #include "FfuModule.h"
 #include "Compat.h"
+#include "../fs/PartitionTable.h"
 
 #include <QFile>
 
@@ -544,6 +545,8 @@ bool appendGptPartitions(const fs::ByteStorePtr& disk, const Store& store,
     }
 
     int visibleIndex = 0;
+    const int resourceStart = resources->size();
+    std::vector<fs::PartitionInfo> partitionInfo;
     for (std::uint32_t i = 0; i < count; ++i) {
         const std::uint8_t* entry = table.data() + std::size_t(i) * entrySize;
         if (!nonZeroGuid(entry)) continue;
@@ -573,6 +576,10 @@ bool appendGptPartitions(const fs::ByteStorePtr& disk, const Store& store,
         resource.format = ModuleFormat::FFU;
         resource.isEmbeddedFile = true;
         resource.content = std::make_shared<fs::SubStore>(disk, offset, length);
+        fs::PartitionInfo info;
+        info.offset = offset;
+        info.length = length;
+        partitionInfo.push_back(info);
         if (multipleStores) {
             QString storeName = QStringLiteral("Store %1").arg(store.index);
             if (!store.devicePath.isEmpty()) storeName += QStringLiteral(" (%1)").arg(store.devicePath);
@@ -584,6 +591,9 @@ bool appendGptPartitions(const fs::ByteStorePtr& disk, const Store& store,
         *error = QStringLiteral("FFU GPT contains no partitions");
         return false;
     }
+    const auto contextStores = fs::makePartitionContextStores(disk, partitionInfo);
+    for (std::size_t i = 0; i < contextStores.size(); ++i)
+        if (contextStores[i]) (*resources)[resourceStart + static_cast<int>(i)].content = contextStores[i];
     return true;
 }
 

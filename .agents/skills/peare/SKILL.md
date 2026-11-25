@@ -1,6 +1,6 @@
 ---
 name: peare
-description: Use Peare to inspect, extract, decode, create, or update supported files through its public APIs.
+description: Browse, search, read, extract, decode, create, and update local archives, disk images, executable resources, fonts, and images with Peare. Covers formats such as ZIP, 7z, RAR, WIM, SWM, VMDK, VHD, and VHDX.
 ---
 
 # Use Peare
@@ -8,7 +8,21 @@ description: Use Peare to inspect, extract, decode, create, or update supported 
 Use this skill when a task needs inspection or transformation of a file with
 Peare. Do not use Peare as a substitute for a forensic or recovery tool.
 
-## Start
+## Peare MCP
+
+When the server is connected, use its tools for direct access to Peare.
+`peare_browse` lists one folder. Pass an entry reference to enter a folder or
+container. If you know the path, pass it as `inside` to `peare_read` or
+`peare_extract`. If you only know the name, use `peare_find`.
+
+`peare_capabilities` lists available Writer targets and operations for an
+existing file. In `peare_update`, an entry reference selects the file and
+its disk partition. The update returns a verified copy. If there is more than
+one plausible entry, identify the correct one before you change it.
+
+See the [installation guide](../../../docs/agents/AI_AGENT_USAGE.md).
+
+## JSON CLI
 
 Run commands from the Peare repository root. Build Peare first when the shared
 libraries are missing. On Windows, run `tools/build/build_windows.bat`.

@@ -14,13 +14,15 @@ namespace fs {
 
 class FatReader final : public IDiscFileSystem {
 public:
-    explicit FatReader(ByteStorePtr disc);
+    explicit FatReader(ByteStorePtr disc, ByteStorePtr clusterFilter = nullptr);
 
     std::string friendlyName() const override { return friendly_; }
     bool valid() const override { return valid_; }
     std::string error() const override { return error_; }
     std::vector<DiscEntry> list(const std::string& dirPath) const override;
     ByteStorePtr openFile(const std::string& path) const override;
+    bool listWithContent(const std::string& dirPath, std::vector<DiscEntry>* entries,
+                         std::vector<ByteStorePtr>* contents) const;
 
 private:
     enum class FatType { Fat12, Fat16, Fat32 };
@@ -38,13 +40,15 @@ private:
     std::vector<std::uint32_t> chain(std::uint32_t firstCluster) const;
     std::int64_t clusterPos(std::uint32_t cluster) const;
     ByteStorePtr clusterContent(std::uint32_t firstCluster, std::uint32_t size) const;
-    std::vector<std::uint8_t> readClusterChain(std::uint32_t firstCluster) const;
+    bool readClusterChain(std::uint32_t firstCluster, std::vector<std::uint8_t>* out) const;
     std::vector<DirEntry> parseDirectory(const std::vector<std::uint8_t>& buf) const;
     // Directory entries at a path ("" = root).
-    std::vector<DirEntry> directory(const std::string& dirPath) const;
-    const DirEntry* find(const std::string& path, DirEntry* store) const;
+    bool directory(const std::string& dirPath, std::vector<DirEntry>* entries) const;
+    bool find(const std::string& path, DirEntry* entry, bool* found) const;
 
     ByteStorePtr disc_;
+    ByteStorePtr clusterFilter_;
+    std::vector<std::uint8_t> filter_;
     bool valid_ = false;
     std::string error_;
     std::string friendly_ = "FAT";

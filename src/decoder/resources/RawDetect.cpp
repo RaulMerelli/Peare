@@ -1,4 +1,5 @@
 #include "RawDetect.h"
+#include "RT_ICON/RT_ICON.h"
 #include "RT_BITMAP/RT_BITMAP.h"
 #include "RT_CURSOR/RT_CURSOR.h"
 #include "RT_ICON/Win12MonochromeResource.h"
@@ -409,6 +410,15 @@ ResourcePreview RawDetect::Get(const ResourceEntry& entry)
     const QByteArray& resData = entry.data;
     if (resData.isEmpty())
         return preview;
+
+    if (resData.size() >= 4 && resData.left(4) == QByteArray::fromHex("00000100")) {
+        preview.images = RT_ICON::decodeIcoFile(resData);
+        if (preview.images.isEmpty()) {
+            preview.error = QStringLiteral("Invalid or unsupported ICO layer data.");
+            return preview;
+        }
+        return preview;
+    }
 
     if (RT_FONT::LooksLikeFont(resData)) {
         ResourceEntry font = entry;

@@ -1415,6 +1415,18 @@ bool RarArchiveWriter::beginUpdate(const QString& archivePath,
     return true;
 }
 
+bool RarArchiveWriter::updateFiles(const QString& archivePath, const QString& password,
+                                  std::vector<QString>* paths)
+{
+    RarArchiveWriter probe;
+    probe.updateSourcePath_ = archivePath;
+    probe.password_ = password;
+    QString error;
+    if (!probe.parseUpdateArchive(&error)) return false;
+    *paths = probe.sourceVolumePaths_;
+    return true;
+}
+
 bool RarArchiveWriter::parseUpdateArchive(QString* error)
 {
     QFile input(updateSourcePath_);

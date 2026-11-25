@@ -10346,6 +10346,130 @@ def test_wim_full_cud_update_of_wimlib_created_image(
     assert (second_output / "second.txt").read_bytes() == second_payload.read_bytes()
 
 
+def test_wim_update_preserves_acronis_boot_tree(
+        writer_lib, peare_lib, tmp_path, monkeypatch):
+    source = os.environ.get("PEARE_WIM_ACRONIS_SAMPLE")
+    if not source or not Path(source).is_file():
+        pytest.skip("Set PEARE_WIM_ACRONIS_SAMPLE to the external Acronis boot.wim")
+    startnet_path = os.environ.get("PEARE_WIM_ACRONIS_STARTNET")
+    output_path = os.environ.get("PEARE_WIM_ACRONIS_OUTPUT")
+    if not startnet_path or not Path(startnet_path).is_file() or not output_path:
+        pytest.skip("Set the Acronis startnet input and output paths for this regression")
+
+    monkeypatch.setattr(po, "_MAX_HASH_BYTES", 0)
+    source = Path(source)
+    output = Path(output_path)
+    shutil.copyfile(source, output)
+
+    seven_zip = _seven_zip_executable()
+    if not seven_zip:
+        pytest.skip("7-Zip is required for independent WIM tree comparison")
+
+    def archive_entries(path):
+        result = subprocess.run([seven_zip, "l", "-slt", str(path)],
+                                 capture_output=True, text=True, timeout=300)
+        assert result.returncode == 0, result.stdout + result.stderr
+        entries = {}
+        for block in result.stdout.split("\n\n"):
+            fields = dict(line.split(" = ", 1) for line in block.splitlines()
+                          if " = " in line)
+            entry_path = fields.get("Path")
+            if not entry_path or entry_path == str(path):
+                continue
+            key = entry_path.replace("\\", "/").casefold()
+            assert key not in entries, f"Duplicate WIM entry {entry_path} in {path}"
+            entries[key] = fields.get("Size")
+        return entries
+
+    before_entries = archive_entries(source)
+    system_hive = "windows/system32/config/system"
+    assert system_hive in before_entries
+
+    def open_named_directory(opener, name):
+        for folder in range(opener.folder_count()):
+            for index in range(opener.resource_count(folder)):
+                resource = po._HANDLE()
+                if opener._L.peare_opener_open_resource_at(
+                        opener._h, folder, index, C.byref(resource)) != 0:
+                    continue
+                try:
+                    context = po._Context()
+                    if opener._L.peare_resource_get_context(
+                            resource, C.byref(context)) != 0:
+                        continue
+                    identifier = context.identifier_utf8.to_bytes().decode(
+                        "utf-8", "replace")
+                    is_container = bool(context.is_container)
+                    opener._L.peare_resource_context_free(C.byref(context))
+                    if identifier.casefold() != name.casefold() or not is_container:
+                        continue
+                    source_handle = po._HANDLE()
+                    if opener._L.peare_resource_get_source(
+                            resource, C.byref(source_handle)) != 0:
+                        continue
+                    child = peare_lib._open_source(source_handle)
+                    opener._L.peare_source_destroy(source_handle)
+                    return child
+                finally:
+                    opener._L.peare_resource_destroy(resource)
+        return None
+
+    original = peare_lib.open_file(str(source))
+    assert original is not None
+    try:
+        current = original
+        for component in ("Windows", "System32", "config"):
+            child = open_named_directory(current, component)
+            assert child is not None, f"Peare cannot enumerate WIM directory {component}"
+            if current is not original:
+                current.close()
+            current = child
+        assert "SYSTEM" in {
+            row["path"] for row in current.normalized_tree(recurse_containers=False)
+        }
+        if current is not original:
+            current.close()
+    finally:
+        original.close()
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(writer, str(output).encode()) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(startnet_path).encode(),
+            b"Windows/System32/startnet.cmd") == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    after_entries = archive_entries(output)
+    assert after_entries.keys() == before_entries.keys()
+    changed_sizes = {path for path in before_entries
+                     if before_entries[path] != after_entries[path]}
+    assert changed_sizes == {"windows/system32/startnet.cmd"}
+    extracted = subprocess.run(
+        [seven_zip, "x", "-so", str(output), "Windows/System32/startnet.cmd"],
+        capture_output=True, timeout=60)
+    assert extracted.returncode == 0
+    assert extracted.stdout == Path(startnet_path).read_bytes()
+    for hive in ("SYSTEM", "SOFTWARE", "SAM", "SECURITY"):
+        member = f"Windows/System32/config/{hive}"
+        original_hive = subprocess.run(
+            [seven_zip, "x", "-so", str(source), member],
+            capture_output=True, timeout=120)
+        updated_hive = subprocess.run(
+            [seven_zip, "x", "-so", str(output), member],
+            capture_output=True, timeout=120)
+        assert original_hive.returncode == 0, original_hive.stderr.decode(
+            errors="replace")
+        assert updated_hive.returncode == 0, updated_hive.stderr.decode(
+            errors="replace")
+        assert updated_hive.stdout == original_hive.stdout, member
+
+
 def test_wim_cud_preserves_named_streams(writer_lib, tmp_path):
     wimlib = os.environ.get("PEARE_WIMLIB_IMAGE")
     if os.name != "nt" or not wimlib or not Path(wimlib).is_file():

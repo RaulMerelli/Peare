@@ -10,6 +10,15 @@
 namespace pearegui {
 namespace {
 
+peare_status setTibxKeyPassphrase(peare_opener_handle handle, const QString& passphrase) {
+    if (passphrase.contains(QChar(0))) return PEARE_STATUS_INVALID_ARGUMENT;
+    QByteArray utf8 = passphrase.toUtf8();
+    const peare_status status = peare_opener_set_tibx_key_passphrase(
+        handle, passphrase.isNull() ? nullptr : utf8.constData());
+    utf8.fill(0);
+    return status;
+}
+
 struct ResourceResolverContext {
     const Session* session = nullptr;
     std::map<QString, QByteArray> payloads;
@@ -70,6 +79,8 @@ QString containerName(peare_container_format format)
     case PEARE_CONTAINER_SIEMENS_FSF: return QStringLiteral("Siemens FSF");
     case PEARE_CONTAINER_ISO9660: return QStringLiteral("ISO 9660");
     case PEARE_CONTAINER_WIM: return QStringLiteral("WIM");
+    case PEARE_CONTAINER_TIBX: return QStringLiteral("TIBX");
+    case PEARE_CONTAINER_TIB: return QStringLiteral("TIB");
     case PEARE_CONTAINER_FAT: return QStringLiteral("FAT");
     case PEARE_CONTAINER_UDF: return QStringLiteral("UDF");
     case PEARE_CONTAINER_UFS: return QStringLiteral("UFS");
@@ -305,22 +316,47 @@ ResourceContext Resource::context() const
 
 std::unique_ptr<Session> Session::openNested(size_t folder, size_t resource) const
 {
+    return openNested(folder, resource, password_, tibxPrivateKey_, nullptr, tibxKeyPassphrase_);
+}
+
+std::unique_ptr<Session> Session::openNested(size_t folder, size_t resource,
+                                             const QString& password, const QByteArray& tibxPrivateKey,
+                                             peare_status* status, const QString& tibxKeyPassphrase) const
+{
+    if (status) *status = PEARE_STATUS_INVALID_HANDLE;
     if (!handle_) return nullptr;
     peare_resource_handle rh = nullptr;
-    if (peare_opener_open_resource_at(handle_, folder, resource, &rh) != PEARE_STATUS_OK || !rh)
+    peare_status result = peare_opener_open_resource_at(handle_, folder, resource, &rh);
+    if (result != PEARE_STATUS_OK || !rh) {
+        if (status) *status = result;
         return nullptr;
+    }
     peare_source_handle src = nullptr;
     std::unique_ptr<Session> child(new Session());
-    if (peare_resource_get_source(rh, &src) == PEARE_STATUS_OK && src) {
-        if (!password_.isNull()) {
-            const QByteArray passwordUtf8 = password_.toUtf8();
-            peare_opener_set_password(child->handle_, passwordUtf8.constData());
-            child->password_ = password_;
-        }
-        child->open_ = (peare_opener_open(child->handle_, src) == PEARE_STATUS_OK);
-        peare_source_destroy(src);
+    result = peare_resource_get_source(rh, &src);
+    if (result == PEARE_STATUS_OK && src && child->handle_) {
+        child->password_ = password;
+        child->tibxPrivateKey_ = QByteArray(tibxPrivateKey.constData(), tibxPrivateKey.size());
+        child->tibxKeyPassphrase_ = tibxKeyPassphrase;
+        QByteArray passwordUtf8 = password.toUtf8();
+        result = peare_opener_set_password(child->handle_, password.isNull() ? nullptr : passwordUtf8.constData());
+        passwordUtf8.fill(0);
+        if (result == PEARE_STATUS_OK)
+            result = peare_opener_set_tibx_private_key(child->handle_,
+                reinterpret_cast<const uint8_t*>(child->tibxPrivateKey_.constData()),
+                static_cast<size_t>(child->tibxPrivateKey_.size()));
+        if (result == PEARE_STATUS_OK)
+            result = setTibxKeyPassphrase(child->handle_, child->tibxKeyPassphrase_);
+        if (result == PEARE_STATUS_OK) result = peare_opener_open(child->handle_, src);
+        child->lastStatus_ = result;
+        child->open_ = result == PEARE_STATUS_OK;
+    } else if (result == PEARE_STATUS_OK) {
+        result = child->handle_ ? PEARE_STATUS_INTERNAL_ERROR : PEARE_STATUS_INVALID_HANDLE;
     }
+    if (src)
+        peare_source_destroy(src);
     peare_resource_destroy(rh);
+    if (status) *status = result;
     // Only surface it if it actually opened as something navigable.
     if (!child->open_ || child->folderCount() == 0)
         return nullptr;
@@ -328,20 +364,40 @@ std::unique_ptr<Session> Session::openNested(size_t folder, size_t resource) con
 }
 
 Session::Session() { peare_opener_create(&handle_); }
-Session::~Session() { if (handle_) peare_opener_destroy(handle_); }
-bool Session::openFile(const QString& path, QString* error, const QString& password)
+Session::~Session() {
+    if (handle_) peare_opener_destroy(handle_);
+    password_.fill(QChar(0));
+    tibxPrivateKey_.fill(0);
+    tibxKeyPassphrase_.fill(QChar(0));
+}
+bool Session::openFile(const QString& path, QString* error, const QString& password,
+                       const QByteArray& tibxPrivateKey, const QString& tibxKeyPassphrase)
 {
     if (!handle_ && peare_opener_create(&handle_) != PEARE_STATUS_OK) return false;
+    QByteArray nextKey(tibxPrivateKey.constData(), tibxPrivateKey.size());
+    const QString nextPassphrase = tibxKeyPassphrase;
+    open_ = false;
     password_.fill(QChar(0));
     password_ = password;
+    tibxPrivateKey_.fill(0);
+    tibxPrivateKey_.swap(nextKey);
+    tibxKeyPassphrase_.fill(QChar(0));
+    tibxKeyPassphrase_ = nextPassphrase;
     if (!password_.isNull()) {
-        const QByteArray passwordUtf8 = password_.toUtf8();
+        QByteArray passwordUtf8 = password_.toUtf8();
         lastStatus_ = peare_opener_set_password(handle_, passwordUtf8.constData());
+        passwordUtf8.fill(0);
         if (lastStatus_ != PEARE_STATUS_OK) return false;
     } else {
         lastStatus_ = peare_opener_set_password(handle_, nullptr);
         if (lastStatus_ != PEARE_STATUS_OK) return false;
     }
+    lastStatus_ = peare_opener_set_tibx_private_key(handle_,
+        reinterpret_cast<const uint8_t*>(tibxPrivateKey_.constData()),
+        static_cast<size_t>(tibxPrivateKey_.size()));
+    if (lastStatus_ != PEARE_STATUS_OK) return false;
+    lastStatus_ = setTibxKeyPassphrase(handle_, tibxKeyPassphrase_);
+    if (lastStatus_ != PEARE_STATUS_OK) return false;
     const QByteArray utf8 = path.toUtf8();
     lastStatus_ = peare_opener_open_file(handle_, utf8.constData());
     open_ = lastStatus_ == PEARE_STATUS_OK;
@@ -353,6 +409,10 @@ void Session::close()
     if (handle_) peare_opener_close(handle_);
     password_.fill(QChar(0));
     password_.clear();
+    tibxPrivateKey_.fill(0);
+    tibxPrivateKey_.clear();
+    tibxKeyPassphrase_.fill(QChar(0));
+    tibxKeyPassphrase_.clear();
     open_ = false;
     lastStatus_ = PEARE_STATUS_NOT_OPEN;
 }

@@ -260,6 +260,7 @@ ModulePtr XvaModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
         const DiskInfo& diskInfo = disks[di];
         fs::ByteStorePtr disk = std::make_shared<XvaDiskStore>(file, diskInfo.capacity, diskInfo.location, entries);
         const std::vector<fs::PartitionInfo> parts = fs::readPartitionTable(disk);
+        const auto contextStores = fs::makePartitionContextStores(disk, parts);
         auto addEntry = [&](const QString& name, std::int64_t off, std::int64_t len,
                             const fs::ByteStorePtr& content = fs::ByteStorePtr()) {
             ResourceEntry entry;
@@ -284,7 +285,7 @@ ModulePtr XvaModule::open(const fs::ByteStorePtr& file, const QString& sourceNam
                              .arg(diskName)
                              .arg(pi + 1)
                              .arg(QString::fromStdString(p.typeName)),
-                         p.offset, p.length, p.content);
+                         p.offset, p.length, p.content ? p.content : contextStores[pi]);
             }
         }
     }

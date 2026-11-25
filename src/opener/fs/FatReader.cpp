@@ -2,12 +2,31 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <set>
 #include <utility>
 
 namespace peare {
 namespace fs {
 namespace {
+
+bool readBytes(const IByteStore& source, std::int64_t offset, std::int64_t length,
+               std::vector<std::uint8_t>* out) {
+    if (offset < 0 || length < 0 || length > source.capacity() ||
+        offset > source.capacity() - length ||
+        static_cast<std::uint64_t>(length) > out->max_size()) return false;
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(length));
+    std::size_t done = 0;
+    while (done < bytes.size()) {
+        const int count = static_cast<int>(std::min<std::size_t>(
+            bytes.size() - done, static_cast<std::size_t>(std::numeric_limits<int>::max())));
+        if (!source.readExactlyChecked(offset + static_cast<std::int64_t>(done),
+                                       bytes.data() + done, count)) return false;
+        done += static_cast<std::size_t>(count);
+    }
+    out->swap(bytes);
+    return true;
+}
 
 std::uint16_t le16(const std::vector<std::uint8_t>& b, std::size_t o) {
     if (o + 2 > b.size()) return 0;
@@ -23,20 +42,22 @@ void appendUtf8(std::string& out, std::uint32_t c) {
     if (c == 0 || c == 0xFFFF) return;
     if (c < 0x80) out.push_back(char(c));
     else if (c < 0x800) { out.push_back(char(0xC0 | (c >> 6))); out.push_back(char(0x80 | (c & 0x3F))); }
-    else { out.push_back(char(0xE0 | (c >> 12))); out.push_back(char(0x80 | ((c >> 6) & 0x3F))); out.push_back(char(0x80 | (c & 0x3F))); }
+    else if (c < 0x10000) { out.push_back(char(0xE0 | (c >> 12))); out.push_back(char(0x80 | ((c >> 6) & 0x3F))); out.push_back(char(0x80 | (c & 0x3F))); }
+    else { out.push_back(char(0xF0 | (c >> 18))); out.push_back(char(0x80 | ((c >> 12) & 0x3F))); out.push_back(char(0x80 | ((c >> 6) & 0x3F))); out.push_back(char(0x80 | (c & 0x3F))); }
 }
 
 }  // namespace
 
-FatReader::FatReader(ByteStorePtr disc) : disc_(std::move(disc)) {
+FatReader::FatReader(ByteStorePtr disc, ByteStorePtr clusterFilter)
+    : disc_(std::move(disc)), clusterFilter_(std::move(clusterFilter)) {
     try { parse(); }
     catch (...) { valid_ = false; if (error_.empty()) error_ = "FAT parse error"; }
 }
 
 void FatReader::parse() {
     if (!disc_ || disc_->capacity() < 512) { error_ = "Truncated boot sector"; return; }
-    const std::vector<std::uint8_t> bpb = disc_->readRange(0, 512);
-    if (bpb.size() < 512) { error_ = "Truncated boot sector"; return; }
+    std::vector<std::uint8_t> bpb;
+    if (!readBytes(*disc_, 0, 512, &bpb)) { error_ = "Cannot read boot sector"; return; }
 
     bytesPerSec_ = le16(bpb, 11);
     secPerClus_ = bpb[13];
@@ -102,10 +123,29 @@ void FatReader::parse() {
         (static_cast<std::int64_t>(rsvdSec_) + static_cast<std::int64_t>(activeFat) * fatSz_) *
         bytesPerSec_;
     const std::int64_t fatBytes = static_cast<std::int64_t>(fatSz_) * bytesPerSec_;
-    fat_ = disc_->readRange(fatStart, fatBytes);
-    if (fat_.size() != static_cast<std::size_t>(fatBytes)) {
-        error_ = "Truncated FAT table";
+    if (!readBytes(*disc_, fatStart, fatBytes, &fat_)) {
+        error_ = "Cannot read FAT table";
         return;
+    }
+    if (clusterFilter_) {
+        const std::int64_t length = clusterFilter_->capacity();
+        const std::int64_t needed = (static_cast<std::int64_t>(clusterCount_) + 7) / 8;
+        if (length < 0 || !clusterFilter_->validate() ||
+            !readBytes(*clusterFilter_, 0, std::min(length, needed), &filter_) ||
+            !clusterFilter_->validate()) {
+            error_ = "Cannot read FAT cluster filter";
+            return;
+        }
+        std::uint8_t tail[4096];
+        for (std::int64_t offset = static_cast<std::int64_t>(filter_.size()); offset < length;) {
+            const int size = static_cast<int>(std::min<std::int64_t>(length - offset, sizeof(tail)));
+            if (!clusterFilter_->readExactlyChecked(offset, tail, size)) {
+                error_ = "Cannot read FAT cluster filter";
+                return;
+            }
+            offset += size;
+        }
+        if (!clusterFilter_->validate()) { error_ = "Cannot read FAT cluster filter"; return; }
     }
     valid_ = true;
 }
@@ -156,15 +196,18 @@ std::int64_t FatReader::clusterPos(std::uint32_t cluster) const {
     return (firstDataSector_ + std::int64_t(cluster - 2) * secPerClus_) * bytesPerSec_;
 }
 
-std::vector<std::uint8_t> FatReader::readClusterChain(std::uint32_t firstCluster) const {
+bool FatReader::readClusterChain(std::uint32_t firstCluster, std::vector<std::uint8_t>* output) const {
     std::vector<std::uint8_t> out;
     const std::int64_t clusterSize = std::int64_t(secPerClus_) * bytesPerSec_;
     for (std::uint32_t c : chain(firstCluster)) {
         const std::size_t base = out.size();
+        if (std::size_t(clusterSize) > out.max_size() - base) return false;
         out.resize(base + std::size_t(clusterSize));
-        disc_->readExactly(clusterPos(c), out.data() + base, int(clusterSize));
+        if (!disc_->readExactlyChecked(clusterPos(c), out.data() + base, int(clusterSize)))
+            return false;
     }
-    return out;
+    output->swap(out);
+    return true;
 }
 
 ByteStorePtr FatReader::clusterContent(std::uint32_t firstCluster, std::uint32_t size) const {
@@ -247,8 +290,13 @@ std::vector<FatReader::DirEntry> FatReader::parseDirectory(
         if (lfnActive && expectedSequence == 0 &&
             shortChecksum(buf.data() + off) == lfnChecksum) {
             for (std::size_t i = 0; i < lfn.size(); ++i) {
-                const std::uint16_t c = lfn[i];
+                std::uint32_t c = lfn[i];
                 if (c == 0 || c == 0xFFFF) break;
+                if (c >= 0xD800 && c <= 0xDBFF) {
+                    if (i + 1 < lfn.size() && lfn[i + 1] >= 0xDC00 && lfn[i + 1] <= 0xDFFF)
+                        c = 0x10000 + ((c - 0xD800) << 10) + (lfn[++i] - 0xDC00);
+                    else c = 0xFFFD;
+                } else if (c >= 0xDC00 && c <= 0xDFFF) c = 0xFFFD;
                 appendUtf8(e.name, c);
             }
         }
@@ -270,30 +318,46 @@ std::vector<FatReader::DirEntry> FatReader::parseDirectory(
         if (e.name == "." || e.name == "..") continue;
 
         e.isDirectory = (attr & 0x10) != 0;
-        e.firstCluster = (static_cast<std::uint32_t>(le16(buf, off + 20)) << 16) |
-                         le16(buf, off + 26);
+        e.firstCluster = le16(buf, off + 26);
+        if (type_ == FatType::Fat32)
+            e.firstCluster |= static_cast<std::uint32_t>(le16(buf, off + 20)) << 16;
         e.size = le32(buf, off + 28);
+        if (!filter_.empty() && (e.isDirectory || e.size) && e.firstCluster >= 2) {
+            const std::uint32_t index = e.firstCluster - 2;
+            if (index / 8 >= filter_.size() || !(filter_[index / 8] & (1U << (index % 8))))
+                continue;
+        }
         if (!e.name.empty()) out.push_back(std::move(e));
     }
     return out;
 }
 
-std::vector<FatReader::DirEntry> FatReader::directory(const std::string& dirPath) const {
+bool FatReader::directory(const std::string& dirPath, std::vector<DirEntry>* entries) const {
     // Resolve the directory's cluster (root is special for FAT12/16).
     if (dirPath.empty() || dirPath == "/" || dirPath == "\\") {
         if (type_ != FatType::Fat32) {
-            std::vector<std::uint8_t> buf = disc_->readRange(rootDirStart_, rootDirBytes_);
-            return parseDirectory(buf);
+            std::vector<std::uint8_t> buf;
+            if (!readBytes(*disc_, rootDirStart_, rootDirBytes_, &buf)) return false;
+            *entries = parseDirectory(buf);
+            return true;
         }
-        return parseDirectory(readClusterChain(rootClus_));
+        std::vector<std::uint8_t> buf;
+        if (!readClusterChain(rootClus_, &buf)) return false;
+        *entries = parseDirectory(buf);
+        return true;
     }
     DirEntry store;
-    const DirEntry* e = find(dirPath, &store);
-    if (!e || !e->isDirectory) return {};
-    return parseDirectory(readClusterChain(e->firstCluster));
+    bool found = false;
+    if (!find(dirPath, &store, &found)) return false;
+    if (!found || !store.isDirectory) { entries->clear(); return true; }
+    std::vector<std::uint8_t> buf;
+    if (!readClusterChain(store.firstCluster, &buf)) return false;
+    *entries = parseDirectory(buf);
+    return true;
 }
 
-const FatReader::DirEntry* FatReader::find(const std::string& path, DirEntry* store) const {
+bool FatReader::find(const std::string& path, DirEntry* store, bool* foundEntry) const {
+    *foundEntry = false;
     std::vector<std::string> parts;
     std::string cur;
     for (char c : path) {
@@ -301,9 +365,10 @@ const FatReader::DirEntry* FatReader::find(const std::string& path, DirEntry* st
         else cur.push_back(c);
     }
     if (!cur.empty()) parts.push_back(cur);
-    if (parts.empty()) return nullptr;
+    if (parts.empty()) return true;
 
-    std::vector<DirEntry> dir = directory(std::string());
+    std::vector<DirEntry> dir;
+    if (!directory(std::string(), &dir)) return false;
     for (std::size_t i = 0; i < parts.size(); ++i) {
         const DirEntry* found = nullptr;
         for (const DirEntry& d : dir) {
@@ -317,33 +382,49 @@ const FatReader::DirEntry* FatReader::find(const std::string& path, DirEntry* st
             }
             if (eq) { found = &d; break; }
         }
-        if (!found) return nullptr;
-        if (i + 1 == parts.size()) { *store = *found; return store; }
-        if (!found->isDirectory) return nullptr;
-        dir = parseDirectory(readClusterChain(found->firstCluster));
+        if (!found) return true;
+        if (i + 1 == parts.size()) { *store = *found; *foundEntry = true; return true; }
+        if (!found->isDirectory) return true;
+        std::vector<std::uint8_t> buf;
+        if (!readClusterChain(found->firstCluster, &buf)) return false;
+        dir = parseDirectory(buf);
     }
-    return nullptr;
+    return true;
 }
 
 std::vector<DiscEntry> FatReader::list(const std::string& dirPath) const {
     std::vector<DiscEntry> out;
-    if (!valid_) return out;
-    for (const DirEntry& e : directory(dirPath)) {
+    std::vector<ByteStorePtr> contents;
+    listWithContent(dirPath, &out, &contents);
+    return out;
+}
+
+bool FatReader::listWithContent(const std::string& dirPath, std::vector<DiscEntry>* entries,
+                                std::vector<ByteStorePtr>* contents) const {
+    if (!valid_ || !entries || !contents) return false;
+    std::vector<DirEntry> dir;
+    if (!directory(dirPath, &dir)) return false;
+    std::vector<DiscEntry> out;
+    std::vector<ByteStorePtr> stores;
+    for (const DirEntry& e : dir) {
         DiscEntry d;
         d.name = e.name;
         d.isDirectory = e.isDirectory;
         d.length = e.size;
         out.push_back(d);
+        stores.push_back(e.isDirectory ? ByteStorePtr() : clusterContent(e.firstCluster, e.size));
     }
-    return out;
+    entries->swap(out);
+    contents->swap(stores);
+    return true;
 }
 
 ByteStorePtr FatReader::openFile(const std::string& path) const {
     if (!valid_) return nullptr;
     DirEntry store;
-    const DirEntry* e = find(path, &store);
-    if (!e || e->isDirectory) return nullptr;
-    return clusterContent(e->firstCluster, e->size);
+    bool found = false;
+    if (!find(path, &store, &found) || !found || store.isDirectory) return nullptr;
+    return clusterContent(store.firstCluster, store.size);
 }
 
 }  // namespace fs

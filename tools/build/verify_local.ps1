@@ -28,11 +28,43 @@ function Get-TempBytes {
 
 function Get-TestOutputBytes {
     if (-not (Test-Path $testOutput)) { return 0L }
-    $measure = Get-ChildItem -LiteralPath $testOutput -File -Recurse -Force `
-        -ErrorAction SilentlyContinue |
-        Measure-Object -Property Length -Sum
-    if ($null -eq $measure.Sum) { return 0L }
-    return [long]$measure.Sum
+    [long]$total = 0
+    $pending = New-Object 'System.Collections.Generic.Stack[string]'
+    $pending.Push($testOutput)
+    while ($pending.Count -gt 0) {
+        $directory = $pending.Pop()
+        try {
+            $entries = [System.IO.Directory]::GetFileSystemEntries($directory)
+        } catch [System.IO.DirectoryNotFoundException] {
+            continue
+        } catch [System.IO.FileNotFoundException] {
+            continue
+        }
+        foreach ($entry in $entries) {
+            try {
+                $attributes = [System.IO.File]::GetAttributes($entry)
+            } catch [System.IO.DirectoryNotFoundException] {
+                continue
+            } catch [System.IO.FileNotFoundException] {
+                continue
+            }
+            if (($attributes -band [System.IO.FileAttributes]::Directory) -ne 0) {
+                if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0) {
+                    $pending.Push($entry)
+                }
+                continue
+            }
+            try {
+                $file = New-Object System.IO.FileInfo -ArgumentList $entry
+                $total += $file.Length
+            } catch [System.IO.DirectoryNotFoundException] {
+                continue
+            } catch [System.IO.FileNotFoundException] {
+                continue
+            }
+        }
+    }
+    return $total
 }
 
 function Assert-WorkingTreeMatchesIndex {

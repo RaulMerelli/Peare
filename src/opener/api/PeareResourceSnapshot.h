@@ -28,6 +28,7 @@ struct peare_resource_handle_s {
     peare_resource_snapshot_item primary;
     peare_resource_snapshot_item *related;
     size_t related_count;
+    void *source_guard; /* Internal shared ownership and validation of callback source. */
 };
 
 inline bool peare_resource_snapshot_valid(peare_resource_handle resource)

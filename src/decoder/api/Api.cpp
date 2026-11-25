@@ -1376,6 +1376,10 @@ peare_status peare_font_render_glyph_index_with_codepage(const uint8_t* payload,
     }
 }
 
+void peare_decoder_release_font_runtime(void) {
+    peare::resources::RT_FONT::ReleaseFontRuntime();
+}
+
 peare_status peare_font_render(const uint8_t* payload, size_t payload_length,
                                const char* platform_utf8, const char* resource_type_utf8,
                                const char* text_utf8, const peare_font_render_options* options,

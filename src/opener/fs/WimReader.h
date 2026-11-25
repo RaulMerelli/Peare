@@ -3,8 +3,10 @@
 // Read files from the first WIM image and decode LZX/XPRESS resources on demand.
 
 #include <cstdint>
+#include <array>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -12,6 +14,23 @@
 
 namespace peare {
 namespace fs {
+
+struct WofWimReference {
+    std::array<std::uint8_t, 16> guid;
+    std::array<std::uint8_t, 20> tableHash;
+    std::array<std::uint8_t, 20> contentHash;
+    std::uint64_t size;
+    std::uint64_t storedSize;
+    std::uint64_t offset;
+    std::uint32_t imageIndex;
+};
+
+class IWofResourceResolver {
+public:
+    virtual ~IWofResourceResolver() {}
+    virtual ByteStorePtr resolveExternalWofResource(const std::string& path,
+                                                     const WofWimReference& reference) const = 0;
+};
 
 class WimReader final : public IDiscFileSystem {
 public:
@@ -23,6 +42,8 @@ public:
     std::string error() const override { return error_; }
     std::vector<DiscEntry> list(const std::string& dirPath) const override;
     ByteStorePtr openFile(const std::string& path) const override;
+    static ByteStorePtr openWofResource(ByteStorePtr source, const WofWimReference& reference,
+                                        bool verifyContentAtOpen = false);
 
 private:
     // A pointer to a resource within the WIM (from a ShortResourceHeader).
@@ -67,6 +88,7 @@ private:
     // The image metadata stream, fully materialised for random access.
     std::vector<std::uint8_t> meta_;
     std::int64_t rootDirPos_ = 0;
+    mutable std::mutex dirMutex_;
     mutable std::map<std::int64_t, std::vector<DirEntry>> dirCache_;
 };
 

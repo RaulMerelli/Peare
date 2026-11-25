@@ -28,6 +28,8 @@ public:
     ~BitStream() {
         if (hasDirectData_ && directPositionTarget_)
             *directPositionTarget_ = directPosition_ - available_ / 8;
+        else if (available_ >= 8)
+            input_.rewind(available_ / 8);
     }
 
     unsigned readBits(unsigned count) {
@@ -374,6 +376,48 @@ private:
     std::size_t size_;
 };
 
+class StreamingOutput {
+public:
+    explicit StreamingOutput(const std::function<bool(std::uint8_t)>& sink)
+        : sink_(sink), size_(0), low_(1), high_(0) {}
+    void clear() { size_ = 0; low_ = 1; high_ = 0; }
+    void reserve(std::size_t) {}
+    std::size_t size() const { return size_; }
+    void push_back(std::uint8_t value) {
+        if (size_ == std::numeric_limits<std::size_t>::max())
+            throw DecodeFailure("Deflate output size overflow");
+        window_[size_ % sizeof(window_)] = value;
+        ++size_;
+        low_ = (low_ + value) % 65521U;
+        high_ = (high_ + low_) % 65521U;
+        if (!sink_(value)) throw DecodeFailure("Deflate output rejected");
+    }
+    std::uint8_t prior(unsigned distance) const {
+        return window_[(size_ - distance) % sizeof(window_)];
+    }
+    std::uint32_t checksum() const { return (high_ << 16) | low_; }
+private:
+    std::function<bool(std::uint8_t)> sink_;
+    std::uint8_t window_[32768];
+    std::size_t size_;
+    std::uint32_t low_, high_;
+};
+
+template <typename Output>
+void appendStored(BitStream& input, Output* output, std::size_t count) {
+    const std::size_t oldSize = output->size();
+    output->resize(oldSize + count);
+    if (count) input.readAlignedBytes(output->data() + oldSize, count);
+}
+
+void appendStored(BitStream& input, StreamingOutput* output, std::size_t count) {
+    while (count--) {
+        std::uint8_t value;
+        input.readAlignedBytes(&value, 1);
+        output->push_back(value);
+    }
+}
+
 template <typename Output>
 bool appendMatch(Output* output,
                  const std::uint8_t* dictionary, std::size_t dictionarySize,
@@ -419,6 +463,19 @@ bool appendMatch(Output* output,
     return copyLength == length;
 }
 
+bool appendMatch(StreamingOutput* output, const std::uint8_t*, std::size_t dictionarySize,
+                 unsigned distance, unsigned length, std::size_t outputLimit,
+                 std::size_t windowSize, CompletionPolicy policy) {
+    if (dictionarySize || !distance || distance > windowSize || distance > output->size())
+        throw DecodeFailure("invalid Deflate match distance");
+    const std::size_t available = outputLimit - output->size();
+    if (length > available && policy == CompletionPolicy::RequireEndOfStream)
+        throw DecodeFailure("Deflate output exceeds limit");
+    const std::size_t count = std::min<std::size_t>(length, available);
+    for (std::size_t i = 0; i < count; ++i) output->push_back(output->prior(distance));
+    return count == length;
+}
+
 template <typename Output>
 bool decodeRaw(InflateInput& source, std::size_t outputLimit,
                CompletionPolicy policy,
@@ -456,10 +513,7 @@ bool decodeRaw(InflateInput& source, std::size_t outputLimit,
             if (length > available && policy == CompletionPolicy::RequireEndOfStream)
                 throw DecodeFailure("Deflate output exceeds limit");
             const std::size_t copyLength = std::min<std::size_t>(length, available);
-            const std::size_t oldSize = output->size();
-            output->resize(oldSize + copyLength);
-            if (copyLength)
-                input.readAlignedBytes(output->data() + oldSize, copyLength);
+            appendStored(input, output, copyLength);
             if (copyLength != length) return true;
             continue;
         }
@@ -782,6 +836,104 @@ bool inflateZlibExact(const std::vector<std::uint8_t>& input,
                       std::string* error) {
     return inflateZlibExact(input.empty() ? nullptr : input.data(), input.size(),
                             expected, output, error);
+}
+
+bool inflateZlibStreamExact(InflateInput& input, std::size_t expected,
+                            std::vector<std::uint8_t>* output, std::string* error) {
+    if (error) error->clear();
+    if (!output) { setError(error, "null zlib output"); return false; }
+    output->clear();
+    std::uint8_t cmf = 0, flg = 0;
+    if (!input.readByte(&cmf) || !input.readByte(&flg) ||
+        (cmf & 0x0fU) != 8U || (cmf >> 4) > 7U ||
+        ((unsigned(cmf) << 8) + flg) % 31U || (flg & 0x20U)) {
+        setError(error, "invalid zlib header");
+        return false;
+    }
+    const std::size_t windowSize = std::size_t(1) << ((cmf >> 4) + 8);
+    if (!runRaw(input, expected, CompletionPolicy::RequireEndOfStream,
+                nullptr, 0, windowSize, false, false, output, error)) return false;
+    std::uint32_t expectedAdler = 0;
+    for (unsigned i = 0; i < 4; ++i) {
+        std::uint8_t value = 0;
+        if (!input.readByte(&value)) { output->clear(); setError(error, "truncated zlib trailer"); return false; }
+        expectedAdler = (expectedAdler << 8) | value;
+    }
+    if (output->size() != expected || computeAdler32(*output) != expectedAdler) {
+        output->clear();
+        setError(error, "invalid zlib output size or checksum");
+        return false;
+    }
+    return true;
+}
+
+bool inflateRawStreaming(InflateInput& input,
+                         const std::function<bool(std::uint8_t)>& sink,
+                         std::size_t* outputSize, std::size_t windowSize, std::string* error) {
+    if (error) error->clear();
+    if (outputSize) *outputSize = 0;
+    if (!sink || !outputSize || !windowSize || windowSize > 32768) {
+        setError(error, "invalid Deflate streaming destination");
+        return false;
+    }
+    try {
+        StreamingOutput output(sink);
+        decodeRaw(input, std::numeric_limits<std::size_t>::max(),
+                  CompletionPolicy::RequireEndOfStream, nullptr, 0,
+                  windowSize, false, false, &output);
+        *outputSize = output.size();
+        return true;
+    } catch (const DecodeFailure& failure) {
+        setError(error, failure.what());
+    } catch (const std::bad_alloc&) {
+        setError(error, "Deflate allocation failed");
+    } catch (const std::length_error&) {
+        setError(error, "Deflate output size overflow");
+    }
+    return false;
+}
+
+bool inflateZlibStreaming(InflateInput& input, std::size_t inputSize,
+                          const std::function<bool(std::uint8_t)>& sink,
+                          std::string* error) {
+    if (error) error->clear();
+    if (!sink || inputSize < 6 || input.consumed() > std::numeric_limits<std::size_t>::max() - inputSize) {
+        setError(error, "invalid zlib stream bounds");
+        return false;
+    }
+    const std::size_t end = input.consumed() + inputSize;
+    std::uint8_t cmf = 0, flg = 0;
+    if (!input.readByte(&cmf) || !input.readByte(&flg) ||
+        (cmf & 15U) != 8U || (cmf >> 4) > 7U ||
+        ((unsigned(cmf) << 8) | flg) % 31U || (flg & 32U)) {
+        setError(error, "invalid zlib header");
+        return false;
+    }
+    try {
+        StreamingOutput output(sink);
+        decodeRaw(input, std::numeric_limits<std::size_t>::max(),
+                  CompletionPolicy::RequireEndOfStream, nullptr, 0,
+                  std::size_t(1) << ((cmf >> 4) + 8), false, false, &output);
+        if (input.consumed() > end || end - input.consumed() != 4) {
+            setError(error, "invalid zlib stream length");
+            return false;
+        }
+        std::uint32_t expected = 0;
+        for (unsigned i = 0; i < 4; ++i) {
+            std::uint8_t byte = 0;
+            if (!input.readByte(&byte)) { setError(error, "truncated zlib trailer"); return false; }
+            expected = (expected << 8) | byte;
+        }
+        if (expected != output.checksum()) { setError(error, "zlib Adler-32 mismatch"); return false; }
+        return true;
+    } catch (const DecodeFailure& failure) {
+        setError(error, failure.what());
+    } catch (const std::bad_alloc&) {
+        setError(error, "Deflate allocation failed");
+    } catch (const std::length_error&) {
+        setError(error, "Deflate output size overflow");
+    }
+    return false;
 }
 
 }  // namespace compression

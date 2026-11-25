@@ -21,8 +21,10 @@ namespace peare {
 inline void buildFsLevel(const fs::IDiscFileSystem& fsys, const fs::ByteStorePtr& disc,
                          const std::string& subPath, ModuleFormat format,
                          const QString& fileType, const QString& dirType,
-                         QVector<ResourceEntry>& out) {
-    const std::vector<fs::DiscEntry> entries = fsys.list(subPath);
+                         QVector<ResourceEntry>& out,
+                         const std::function<fs::ByteStorePtr(const std::string&)>& deferredOpen = {},
+                         const std::vector<fs::DiscEntry>* checkedEntries = nullptr) {
+    const std::vector<fs::DiscEntry> entries = checkedEntries ? *checkedEntries : fsys.list(subPath);
     for (const fs::DiscEntry& e : entries) {
         const std::string full = subPath.empty() ? e.name : subPath + "/" + e.name;
         const QString name = QString::fromUtf8(e.name.c_str());
@@ -42,7 +44,12 @@ inline void buildFsLevel(const fs::IDiscFileSystem& fsys, const fs::ByteStorePtr
             entry.type = fileType;
             entry.isEmbeddedFile = true;  // a whole file: nested-open candidate
             entry.dataSize = quint64(e.length);
-            entry.content = fsys.openFile(full);  // lazy window over the image
+            if (deferredOpen) {
+                entry.deferredContent = std::make_shared<DeferredContent>(
+                    [deferredOpen, full] { return deferredOpen(full); });
+            } else {
+                entry.content = fsys.openFile(full);
+            }
         }
         out.push_back(std::move(entry));
     }

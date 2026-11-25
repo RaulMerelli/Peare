@@ -2,18 +2,23 @@
 #include "opener/OpenerSession.h"
 #include "opener/api/PeareResourceSnapshot.h"
 #include "opener/PeImageExport.h"
+#include "opener/fs/QFileByteStore.h"
+#include "opener/fs/AcronisRestoredStore.h"
 #include <QByteArray>
 #include <QString>
 #include <climits>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
 #include <new>
-struct SessionState { peare::OpenerSession session; };
+struct SessionState { peare::OpenerSession session; peare::fs::ByteStorePtr sourceGuard; };
 struct peare_opener_handle_s {
     std::shared_ptr<SessionState> state;
     QString password;
+    QByteArray tibxPrivateKey;
+    QString tibxKeyPassphrase;
 };
 
 // A source to be opened. Exactly one backing is used: a file path, a lazy
@@ -23,12 +28,72 @@ struct peare_source_handle_s {
     bool isFile = false;
     QString filePath;
     peare::fs::ByteStorePtr store;
+    peare::fs::ByteStorePtr sourceGuard;
     QByteArray bytes;
     QString name;
     QString subPath;  // non-empty: reopen `store` (a filesystem image) at this dir
 };
 
 namespace {
+class CallbackStore final : public peare::fs::IByteStore {
+public:
+    CallbackStore(std::int64_t length, void* context, peare_source_read_callback read,
+                  peare_source_release_callback release)
+        : length_(length), context_(context), read_(read), release_(release) {}
+    ~CallbackStore() override { if (owned_ && release_) release_(context_); }
+    void takeOwnership() { owned_ = true; }
+    std::int64_t capacity() const override { return length_; }
+    bool validate() const override { return !failed_.load(); }
+    int read(std::int64_t pos, std::uint8_t* dst, int count) const override {
+        if (!validate() || pos < 0 || count < 0 || (count && !dst)) return -1;
+        if (!count || pos >= length_) return 0;
+        const int amount = static_cast<int>(std::min<std::int64_t>(count, length_ - pos));
+        int done = 0;
+        while (done < amount) {
+            std::size_t got = 0;
+            peare_status status;
+            try {
+                status = read_(context_, static_cast<std::uint64_t>(pos + done), dst + done,
+                               static_cast<std::size_t>(amount - done), &got);
+            } catch (...) {
+                failed_.store(true);
+                return -1;
+            }
+            if (status != PEARE_STATUS_OK || !got || got > static_cast<std::size_t>(amount - done)) {
+                failed_.store(true);
+                return -1;
+            }
+            done += static_cast<int>(got);
+        }
+        return validate() ? done : -1;
+    }
+private:
+    std::int64_t length_;
+    void* context_;
+    peare_source_read_callback read_;
+    peare_source_release_callback release_;
+    bool owned_ = false;
+    mutable std::atomic<bool> failed_{false};
+};
+
+class SourceSetGuard final : public peare::fs::IByteStore {
+public:
+    explicit SourceSetGuard(std::vector<peare::fs::ByteStorePtr> stores) : stores_(std::move(stores)) {}
+    std::int64_t capacity() const override { return 0; }
+    int read(std::int64_t, std::uint8_t*, int) const override { return -1; }
+    bool validate() const override {
+        for (const auto& store : stores_) if (!store || !store->validate()) return false;
+        return true;
+    }
+private:
+    std::vector<peare::fs::ByteStorePtr> stores_;
+};
+
+bool guardValid(const void* guard) {
+    const auto* store = static_cast<const peare::fs::ByteStorePtr*>(guard);
+    return !store || !*store || (*store)->validate();
+}
+
 peare_status copyBytes(const char* data, size_t length, peare_blob* out) {
     if (!out) return PEARE_STATUS_INVALID_ARGUMENT;
     out->bytes=nullptr; out->length=0;
@@ -101,6 +166,8 @@ peare_container_format toCFormat(peare::ModuleFormat f)
     case peare::ModuleFormat::SIEMENS_FSF: return PEARE_CONTAINER_SIEMENS_FSF;
     case peare::ModuleFormat::ISO9660: return PEARE_CONTAINER_ISO9660;
     case peare::ModuleFormat::WIM: return PEARE_CONTAINER_WIM;
+    case peare::ModuleFormat::TIBX: return PEARE_CONTAINER_TIBX;
+    case peare::ModuleFormat::TIB: return PEARE_CONTAINER_TIB;
     case peare::ModuleFormat::FAT: return PEARE_CONTAINER_FAT;
     case peare::ModuleFormat::UDF: return PEARE_CONTAINER_UDF;
     case peare::ModuleFormat::UFS: return PEARE_CONTAINER_UFS;
@@ -203,16 +270,23 @@ peare_status fillSnapshotItem(const peare::OpenedResource& opened,
     // Layer-backed content is not read here: keep only the store, so building
     // this item (and the whole sibling list) costs nothing in bytes. The content
     // is materialised on demand in peare_resource_get_payload.
-    if (opened.contentStore)
+    if (opened.contentStore) {
         item->lazy_content = new (std::nothrow) peare::fs::ByteStorePtr(opened.contentStore);
+        if (!item->lazy_content) {
+            freeSnapshotItem(item);
+            return PEARE_STATUS_ALLOCATION_FAILED;
+        }
+    }
     item->is_directory = opened.isDirectory ? 1 : 0;
     if (opened.isDirectory) {
         const QByteArray sp = opened.subPath.toUtf8();
         item->sub_path = static_cast<char*>(std::malloc(static_cast<size_t>(sp.size()) + 1));
-        if (item->sub_path) {
-            std::memcpy(item->sub_path, sp.constData(), static_cast<size_t>(sp.size()));
-            item->sub_path[sp.size()] = '\0';
+        if (!item->sub_path) {
+            freeSnapshotItem(item);
+            return PEARE_STATUS_ALLOCATION_FAILED;
         }
+        std::memcpy(item->sub_path, sp.constData(), static_cast<size_t>(sp.size()));
+        item->sub_path[sp.size()] = '\0';
     }
     const auto& source = opened.context;
     item->context.container_format = toCFormat(source.containerFormat);
@@ -242,6 +316,8 @@ void destroySnapshot(peare_resource_handle_s* handle)
     std::free(handle->related);
     handle->related = nullptr;
     handle->related_count = 0;
+    delete static_cast<peare::fs::ByteStorePtr*>(handle->source_guard);
+    handle->source_guard = nullptr;
 }
 
 peare_status makeResourceHandle(const std::shared_ptr<SessionState>& state,
@@ -251,13 +327,23 @@ peare_status makeResourceHandle(const std::shared_ptr<SessionState>& state,
     if (!out_resource) return PEARE_STATUS_INVALID_ARGUMENT;
     *out_resource = nullptr;
     if (!state) return PEARE_STATUS_INVALID_HANDLE;
+    if (state->sourceGuard && !state->sourceGuard->validate()) return PEARE_STATUS_INTEGRITY_FAILED;
     const peare::OpenedResource primary = state->session.openResource(resourceIndex);
-    if (!primary.isValid()) return PEARE_STATUS_NOT_FOUND;
+    if (state->sourceGuard && !state->sourceGuard->validate()) return PEARE_STATUS_INTEGRITY_FAILED;
+    if (!primary.isValid()) {
+        const peare::ResourceEntry* entry = state->session.resourceEntry(resourceIndex);
+        return entry && entry->deferredContent ? PEARE_STATUS_INTEGRITY_FAILED
+                                               : PEARE_STATUS_NOT_FOUND;
+    }
 
     auto* handle = new (std::nothrow) peare_resource_handle_s{};
     if (!handle) return PEARE_STATUS_ALLOCATION_FAILED;
     handle->magic = PEARE_RESOURCE_SNAPSHOT_MAGIC;
     handle->version = PEARE_RESOURCE_SNAPSHOT_VERSION;
+    if (state->sourceGuard) {
+        handle->source_guard = new (std::nothrow) peare::fs::ByteStorePtr(state->sourceGuard);
+        if (!handle->source_guard) { delete handle; return PEARE_STATUS_ALLOCATION_FAILED; }
+    }
 
     const peare_status status = fillSnapshotItem(primary, &handle->primary);
     if (status != PEARE_STATUS_OK) {
@@ -289,7 +375,11 @@ peare_status peare_opener_create(peare_opener_handle* out_opener)
 
 void peare_opener_destroy(peare_opener_handle opener)
 {
-    if (opener) opener->password.fill(QChar(0));
+    if (opener) {
+        opener->password.fill(QChar(0));
+        opener->tibxPrivateKey.fill(0);
+        opener->tibxKeyPassphrase.fill(QChar(0));
+    }
     delete opener;
 }
 
@@ -302,7 +392,68 @@ peare_status peare_opener_set_password(peare_opener_handle opener,
     return PEARE_STATUS_OK;
 }
 
+peare_status peare_opener_set_tibx_private_key(peare_opener_handle opener,
+                                               const uint8_t* bytes, size_t length)
+{
+    if (!opener || !opener->state) return PEARE_STATUS_INVALID_HANDLE;
+    if ((!bytes && length) || length > static_cast<size_t>(std::numeric_limits<int>::max()))
+        return PEARE_STATUS_INVALID_ARGUMENT;
+    try {
+        QByteArray next;
+        if (length) next = QByteArray(reinterpret_cast<const char*>(bytes), static_cast<int>(length));
+        opener->tibxPrivateKey.fill(0);
+        opener->tibxPrivateKey = std::move(next);
+        return PEARE_STATUS_OK;
+    } catch (const std::bad_alloc&) {
+        return PEARE_STATUS_ALLOCATION_FAILED;
+    } catch (...) {
+        return PEARE_STATUS_INTERNAL_ERROR;
+    }
+}
+
+peare_status peare_opener_set_tibx_key_passphrase(peare_opener_handle opener,
+                                                 const char* passphrase_utf8)
+{
+    if (!opener || !opener->state) return PEARE_STATUS_INVALID_HANDLE;
+    try {
+        const QString next = passphrase_utf8 ? QString::fromUtf8(passphrase_utf8) : QString();
+        opener->tibxKeyPassphrase.fill(QChar(0));
+        opener->tibxKeyPassphrase = next;
+        return PEARE_STATUS_OK;
+    } catch (const std::bad_alloc&) {
+        return PEARE_STATUS_ALLOCATION_FAILED;
+    } catch (...) {
+        return PEARE_STATUS_INTERNAL_ERROR;
+    }
+}
+
 // ---- Unified open --------------------------------------------------------
+
+peare_status peare_source_create_callback(uint64_t length, const char* name_utf8,
+                                          void* context, peare_source_read_callback read,
+                                          peare_source_release_callback release,
+                                          peare_source_handle* out_source)
+{
+    if (!out_source) return PEARE_STATUS_INVALID_ARGUMENT;
+    *out_source = nullptr;
+    if (!read) return PEARE_STATUS_INVALID_ARGUMENT;
+    if (length > static_cast<uint64_t>(INT64_MAX)) return PEARE_STATUS_OUT_OF_RANGE;
+    try {
+        std::unique_ptr<peare_source_handle_s> source(new peare_source_handle_s{});
+        std::shared_ptr<CallbackStore> store = std::make_shared<CallbackStore>(
+            static_cast<std::int64_t>(length), context, read, release);
+        source->name = name_utf8 ? QString::fromUtf8(name_utf8) : QStringLiteral("source.bin");
+        source->store = store;
+        source->sourceGuard = store;
+        store->takeOwnership();
+        *out_source = source.release();
+        return PEARE_STATUS_OK;
+    } catch (const std::bad_alloc&) {
+        return PEARE_STATUS_ALLOCATION_FAILED;
+    } catch (...) {
+        return PEARE_STATUS_INTERNAL_ERROR;
+    }
+}
 
 // Internal only: building a file source is not part of the public ABI (external
 // callers open files by path via peare_opener_open_file). Kept as a helper for
@@ -326,8 +477,11 @@ peare_status peare_resource_get_source(peare_resource_handle resource, peare_sou
     if (!out_source) return PEARE_STATUS_INVALID_ARGUMENT;
     *out_source = nullptr;
     if (!peare_resource_snapshot_valid(resource)) return PEARE_STATUS_INVALID_HANDLE;
+    if (!guardValid(resource->source_guard)) return PEARE_STATUS_INTEGRITY_FAILED;
     auto* s = new (std::nothrow) peare_source_handle_s{};
     if (!s) return PEARE_STATUS_ALLOCATION_FAILED;
+    if (resource->source_guard)
+        s->sourceGuard = *static_cast<peare::fs::ByteStorePtr*>(resource->source_guard);
     const peare_resource_snapshot_item& it = resource->primary;
     // Prefer the lazy store (no materialisation here); fall back to the array.
     if (it.lazy_content) {
@@ -352,34 +506,111 @@ peare_status peare_opener_open(peare_opener_handle opener, peare_source_handle s
 {
     if (!opener || !opener->state) return PEARE_STATUS_INVALID_HANDLE;
     if (!source) return PEARE_STATUS_INVALID_ARGUMENT;
+    if (source->sourceGuard && !source->sourceGuard->validate())
+        return PEARE_STATUS_INTEGRITY_FAILED;
     if (source->store && !source->store->validate())
         return PEARE_STATUS_INTEGRITY_FAILED;
     try {
         auto next = std::make_shared<SessionState>();
+        next->sourceGuard = source->sourceGuard;
         bool opened = false;
         if (source->isFile) {
-            opened = next->session.openFile(source->filePath, opener->password);
+            opened = next->session.openFile(source->filePath, opener->password, opener->tibxPrivateKey,
+                                            opener->tibxKeyPassphrase);
         } else if (source->store) {
             // Open the positioned source without copying the full nested image.
             // A subPath selects one directory for lazy file-system enumeration.
             opened = next->session.openStore(source->store, source->name, source->subPath,
-                                             opener->password);
+                                             opener->password, opener->tibxPrivateKey, opener->tibxKeyPassphrase);
         } else {
-            opened = next->session.openBuffer(source->bytes, source->name, opener->password);
+            opened = next->session.openBuffer(source->bytes, source->name, opener->password,
+                                              opener->tibxPrivateKey, opener->tibxKeyPassphrase);
         }
         opener->state = std::move(next);
+        if (source->sourceGuard && !source->sourceGuard->validate())
+            return PEARE_STATUS_INTEGRITY_FAILED;
         if (opened) return PEARE_STATUS_OK;
         switch (opener->state->session.info().openError) {
         case peare::ModuleOpenError::PasswordRequired:
             return PEARE_STATUS_PASSWORD_REQUIRED;
         case peare::ModuleOpenError::PasswordInvalidOrCorrupt:
             return PEARE_STATUS_PASSWORD_INVALID;
+        case peare::ModuleOpenError::PrivateKeyRequired:
+            return PEARE_STATUS_PRIVATE_KEY_REQUIRED;
+        case peare::ModuleOpenError::PrivateKeyInvalidOrCorrupt:
+            return PEARE_STATUS_PRIVATE_KEY_INVALID;
+        case peare::ModuleOpenError::PasswordOrPrivateKeyRequired:
+            return PEARE_STATUS_PASSWORD_OR_PRIVATE_KEY_REQUIRED;
+        case peare::ModuleOpenError::PrivateKeyPassphraseRequired:
+            return PEARE_STATUS_PRIVATE_KEY_PASSPHRASE_REQUIRED;
+        case peare::ModuleOpenError::PrivateKeyPassphraseInvalid:
+            return PEARE_STATUS_PRIVATE_KEY_PASSPHRASE_INVALID;
+        case peare::ModuleOpenError::PrivateKeyKdfLimitExceeded:
+            return PEARE_STATUS_PRIVATE_KEY_KDF_LIMIT_EXCEEDED;
         case peare::ModuleOpenError::None:
             return PEARE_STATUS_OPEN_FAILED;
         }
         return PEARE_STATUS_OPEN_FAILED;
     } catch (...) {
+        if (source->sourceGuard && !source->sourceGuard->validate())
+            return PEARE_STATUS_INTEGRITY_FAILED;
         return PEARE_STATUS_INTERNAL_ERROR;
+    }
+}
+
+peare_status peare_opener_open_parts(peare_opener_handle opener,
+                                     const peare_source_handle* parts, size_t part_count)
+{
+    if (!opener || !opener->state) return PEARE_STATUS_INVALID_HANDLE;
+    if (!parts || !part_count) return PEARE_STATUS_INVALID_ARGUMENT;
+    if (part_count == 1) return peare_opener_open(opener, parts[0]);
+    peare::fs::ByteStorePtr guard;
+    try {
+        std::vector<std::pair<peare::fs::ByteStorePtr, QString> > sources;
+        std::vector<peare::fs::ByteStorePtr> guards;
+        for (size_t i = 0; i < part_count; ++i) {
+            const peare_source_handle source = parts[i];
+            if (!source || !source->subPath.isEmpty()) return PEARE_STATUS_INVALID_ARGUMENT;
+            if (source->sourceGuard && !source->sourceGuard->validate()) return PEARE_STATUS_INTEGRITY_FAILED;
+            peare::fs::ByteStorePtr store = source->store;
+            if (!store && source->isFile) store = std::make_shared<peare::fs::QFileByteStore>(source->filePath);
+            if (!store) {
+                std::vector<std::uint8_t> bytes;
+                if (!source->bytes.isEmpty()) {
+                    const auto* begin = reinterpret_cast<const std::uint8_t*>(source->bytes.constData());
+                    bytes.assign(begin, begin + source->bytes.size());
+                }
+                store = std::make_shared<peare::fs::MemoryStore>(std::move(bytes));
+            }
+            if (!store->validate()) return PEARE_STATUS_INTEGRITY_FAILED;
+            sources.push_back(std::make_pair(store, source->name));
+            guards.push_back(store);
+            if (source->sourceGuard) guards.push_back(source->sourceGuard);
+        }
+        guard = std::make_shared<SourceSetGuard>(std::move(guards));
+        auto next = std::make_shared<SessionState>();
+        next->sourceGuard = guard;
+        const bool opened = next->session.openParts(sources, opener->password, opener->tibxPrivateKey,
+                                                    opener->tibxKeyPassphrase);
+        opener->state = std::move(next);
+        if (!guard->validate()) return PEARE_STATUS_INTEGRITY_FAILED;
+        if (opened) return PEARE_STATUS_OK;
+        switch (opener->state->session.info().openError) {
+        case peare::ModuleOpenError::PasswordRequired: return PEARE_STATUS_PASSWORD_REQUIRED;
+        case peare::ModuleOpenError::PasswordInvalidOrCorrupt: return PEARE_STATUS_PASSWORD_INVALID;
+        case peare::ModuleOpenError::PrivateKeyRequired: return PEARE_STATUS_PRIVATE_KEY_REQUIRED;
+        case peare::ModuleOpenError::PrivateKeyInvalidOrCorrupt: return PEARE_STATUS_PRIVATE_KEY_INVALID;
+        case peare::ModuleOpenError::PasswordOrPrivateKeyRequired: return PEARE_STATUS_PASSWORD_OR_PRIVATE_KEY_REQUIRED;
+        case peare::ModuleOpenError::PrivateKeyPassphraseRequired: return PEARE_STATUS_PRIVATE_KEY_PASSPHRASE_REQUIRED;
+        case peare::ModuleOpenError::PrivateKeyPassphraseInvalid: return PEARE_STATUS_PRIVATE_KEY_PASSPHRASE_INVALID;
+        case peare::ModuleOpenError::PrivateKeyKdfLimitExceeded: return PEARE_STATUS_PRIVATE_KEY_KDF_LIMIT_EXCEEDED;
+        case peare::ModuleOpenError::None: return PEARE_STATUS_OPEN_FAILED;
+        }
+        return PEARE_STATUS_OPEN_FAILED;
+    } catch (const std::bad_alloc&) {
+        return guard && !guard->validate() ? PEARE_STATUS_INTEGRITY_FAILED : PEARE_STATUS_ALLOCATION_FAILED;
+    } catch (...) {
+        return guard && !guard->validate() ? PEARE_STATUS_INTEGRITY_FAILED : PEARE_STATUS_INTERNAL_ERROR;
     }
 }
 
@@ -407,6 +638,10 @@ peare_status peare_opener_close(peare_opener_handle opener)
     try {
         opener->password.fill(QChar(0));
         opener->password = QString();
+        opener->tibxPrivateKey.fill(0);
+        opener->tibxPrivateKey.clear();
+        opener->tibxKeyPassphrase.fill(QChar(0));
+        opener->tibxKeyPassphrase = QString();
         opener->state = std::make_shared<SessionState>();
         return PEARE_STATUS_OK;
     } catch (const std::bad_alloc&) {
@@ -556,6 +791,7 @@ peare_status peare_resource_get_payload(peare_resource_handle resource, peare_bl
     if (!out_payload) return PEARE_STATUS_INVALID_ARGUMENT;
     out_payload->bytes = nullptr; out_payload->length = 0;
     if (!peare_resource_snapshot_valid(resource)) return PEARE_STATUS_INVALID_HANDLE;
+    if (!guardValid(resource->source_guard)) return PEARE_STATUS_INTEGRITY_FAILED;
     // Directory containers have no file payload; their store is the full image.
     // Open the directory as a container instead of materializing the image.
     if (resource->primary.is_directory) return PEARE_STATUS_OK;
@@ -563,7 +799,14 @@ peare_status peare_resource_get_payload(peare_resource_handle resource, peare_bl
     if (resource->primary.lazy_content) {
         auto* store = static_cast<peare::fs::ByteStorePtr*>(resource->primary.lazy_content);
         if (store && *store) {
-            return copyStore(**store, out_payload);
+            const peare_status status = copyStore(**store, out_payload);
+            if (!guardValid(resource->source_guard)) {
+                std::free(out_payload->bytes);
+                out_payload->bytes = nullptr;
+                out_payload->length = 0;
+                return PEARE_STATUS_INTEGRITY_FAILED;
+            }
+            return status;
         }
     }
     return copyBytes(reinterpret_cast<const char*>(resource->primary.payload.bytes),
@@ -577,6 +820,7 @@ peare_status peare_resource_read(peare_resource_handle resource, std::uint64_t o
     if (!out_read || (capacity && !buffer)) return PEARE_STATUS_INVALID_ARGUMENT;
     *out_read = 0;
     if (!peare_resource_snapshot_valid(resource)) return PEARE_STATUS_INVALID_HANDLE;
+    if (!guardValid(resource->source_guard)) return PEARE_STATUS_INTEGRITY_FAILED;
     if (resource->primary.is_directory) return PEARE_STATUS_NOT_APPLICABLE;
     const std::size_t amount = std::min<std::size_t>(capacity, INT_MAX);
     if (resource->primary.lazy_content) {
@@ -588,6 +832,7 @@ peare_status peare_resource_read(peare_resource_handle resource, std::uint64_t o
         if (offset == std::uint64_t(size)) return PEARE_STATUS_OK;
         if (!amount) return PEARE_STATUS_OK;
         const int read = (*store)->read(std::int64_t(offset), buffer, int(amount));
+        if (!guardValid(resource->source_guard)) return PEARE_STATUS_INTEGRITY_FAILED;
         if (read < 0) return PEARE_STATUS_DECODE_FAILED;
         if (!read) return PEARE_STATUS_INTEGRITY_FAILED;
         *out_read = std::size_t(read);
@@ -600,6 +845,33 @@ peare_status peare_resource_read(peare_resource_handle resource, std::uint64_t o
     const std::size_t read = std::min(amount, size - std::size_t(offset));
     std::memcpy(buffer, resource->primary.payload.bytes + std::size_t(offset), read);
     *out_read = read;
+    return PEARE_STATUS_OK;
+}
+
+peare_status peare_resource_read_original(peare_resource_handle resource, std::uint64_t offset,
+                                          std::uint8_t* buffer, std::size_t capacity,
+                                          std::size_t* out_read)
+{
+    if (!out_read || (capacity && !buffer)) return PEARE_STATUS_INVALID_ARGUMENT;
+    *out_read = 0;
+    if (!peare_resource_snapshot_valid(resource)) return PEARE_STATUS_INVALID_HANDLE;
+    if (!guardValid(resource->source_guard)) return PEARE_STATUS_INTEGRITY_FAILED;
+    if (resource->primary.is_directory) return PEARE_STATUS_NOT_APPLICABLE;
+    const auto* stored = static_cast<peare::fs::ByteStorePtr*>(resource->primary.lazy_content);
+    const auto restored = stored ? std::dynamic_pointer_cast<peare::fs::AcronisRestoredStore>(*stored)
+                                 : std::shared_ptr<peare::fs::AcronisRestoredStore>();
+    if (!restored) return peare_resource_read(resource, offset, buffer, capacity, out_read);
+    const auto& original = restored->original();
+    const std::int64_t size = original->capacity();
+    if (size < 0) return PEARE_STATUS_DECODE_FAILED;
+    if (offset > std::uint64_t(size)) return PEARE_STATUS_OUT_OF_RANGE;
+    if (offset == std::uint64_t(size) || !capacity) return PEARE_STATUS_OK;
+    const int amount = static_cast<int>(std::min<std::size_t>(capacity, INT_MAX));
+    const int read = original->read(static_cast<std::int64_t>(offset), buffer, amount);
+    if (!guardValid(resource->source_guard)) return PEARE_STATUS_INTEGRITY_FAILED;
+    if (read < 0) return PEARE_STATUS_DECODE_FAILED;
+    if (!read) return PEARE_STATUS_INTEGRITY_FAILED;
+    *out_read = static_cast<std::size_t>(read);
     return PEARE_STATUS_OK;
 }
 
@@ -734,6 +1006,12 @@ const char* peare_status_message(peare_status status)
     case PEARE_STATUS_INTEGRITY_FAILED: return "Resource integrity verification failed";
     case PEARE_STATUS_PASSWORD_REQUIRED: return "A password is required";
     case PEARE_STATUS_PASSWORD_INVALID: return "The password is incorrect or the archive is damaged";
+    case PEARE_STATUS_PRIVATE_KEY_REQUIRED: return "A private key is required";
+    case PEARE_STATUS_PRIVATE_KEY_INVALID: return "The private key is incorrect or the archive is damaged";
+    case PEARE_STATUS_PASSWORD_OR_PRIVATE_KEY_REQUIRED: return "A password or private key is required";
+    case PEARE_STATUS_PRIVATE_KEY_PASSPHRASE_REQUIRED: return "The private key passphrase is required";
+    case PEARE_STATUS_PRIVATE_KEY_PASSPHRASE_INVALID: return "The private key passphrase is incorrect or the key is damaged";
+    case PEARE_STATUS_PRIVATE_KEY_KDF_LIMIT_EXCEEDED: return "The private key derivation work limit was exceeded";
     }
     return "Unknown status";
 }

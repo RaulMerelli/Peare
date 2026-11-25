@@ -8,13 +8,35 @@
 #include <QStringList>
 #include <QVector>
 #include <memory>
+#include <functional>
+#include <mutex>
+#include <utility>
 
 namespace peare {
+
+class DeferredContent {
+public:
+    explicit DeferredContent(std::function<fs::ByteStorePtr()> open) : open_(std::move(open)) {}
+    fs::ByteStorePtr resolve() const {
+        std::call_once(once_, [this] { content_ = open_(); });
+        return content_;
+    }
+private:
+    std::function<fs::ByteStorePtr()> open_;
+    mutable std::once_flag once_;
+    mutable fs::ByteStorePtr content_;
+};
 
 enum class ModuleOpenError {
     None,
     PasswordRequired,
-    PasswordInvalidOrCorrupt
+    PasswordInvalidOrCorrupt,
+    PrivateKeyRequired,
+    PrivateKeyInvalidOrCorrupt,
+    PasswordOrPrivateKeyRequired,
+    PrivateKeyPassphraseRequired,
+    PrivateKeyPassphraseInvalid,
+    PrivateKeyKdfLimitExceeded
 };
 
 struct ModuleInfo {
@@ -47,6 +69,7 @@ struct ResourceEntry {
     bool isContainer = false;
     // When set, this lazy store is authoritative; otherwise the flat `data` is used.
     peare::fs::ByteStorePtr content;
+    std::shared_ptr<DeferredContent> deferredContent;
     // Directory containers retain the image store and the selected directory path.
     // Navigation reopens the same image at that path.
     bool isDirectory = false;

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,7 @@ public:
     virtual ~InflateInput() {}
     virtual bool readByte(std::uint8_t* value) = 0;
     virtual std::size_t consumed() const = 0;
+    virtual bool rewind(std::size_t) { return false; }
     virtual bool memoryView(const std::uint8_t**, std::size_t*, std::size_t**) {
         return false;
     }
@@ -108,6 +110,23 @@ bool inflateZlibExact(const std::uint8_t* data, std::size_t size,
 bool inflateZlibExact(const std::vector<std::uint8_t>& input,
                       std::size_t expected, std::vector<std::uint8_t>* output,
                       std::string* error = nullptr);
+
+bool inflateZlibStreamExact(InflateInput& input, std::size_t expected,
+                            std::vector<std::uint8_t>* output,
+                            std::string* error = nullptr);
+
+// Input must be limited to inputSize bytes and support rewind for lookahead.
+// The sink receives tentative bytes. Its caller must not expose them unless
+// the function succeeds, including the zlib checksum and end-of-stream checks.
+bool inflateZlibStreaming(InflateInput& input, std::size_t inputSize,
+                          const std::function<bool(std::uint8_t)>& sink,
+                          std::string* error = nullptr);
+
+// Sink bytes are tentative until the caller validates the enclosing checksum.
+bool inflateRawStreaming(InflateInput& input,
+                         const std::function<bool(std::uint8_t)>& sink,
+                         std::size_t* outputSize, std::size_t windowSize,
+                         std::string* error = nullptr);
 
 }  // namespace compression
 }  // namespace peare

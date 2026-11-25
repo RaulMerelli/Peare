@@ -110,7 +110,9 @@ enum class ModuleFormat {
     DXBC,
     NUP,
     XDBF,
-    ANDROID_APK
+    ANDROID_APK,
+    TIBX,
+    TIB
 };
 
 struct ModuleFormatInfo {

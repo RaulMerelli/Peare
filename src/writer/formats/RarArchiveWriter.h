@@ -28,6 +28,8 @@ public:
     bool beginUpdate(const QString& archivePath, const QString& password,
                      QString* error);
     static bool canUpdate(const QString& archivePath);
+    static bool updateFiles(const QString& archivePath, const QString& password,
+                            std::vector<QString>* paths);
     bool addFile(const QString& sourcePath, const QByteArray& entryName,
                  QString* error);
     bool addEmptyFile(const QByteArray& entryName, QString* error);

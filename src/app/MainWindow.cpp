@@ -73,6 +73,162 @@
 #endif
 
 namespace {
+
+struct OpenCredentials {
+    QString password;
+    QByteArray tibxPrivateKey;
+    QString tibxKeyPassphrase;
+    bool mixed = false;
+    ~OpenCredentials() {
+        password.fill(QChar(0));
+        tibxPrivateKey.fill(0);
+        tibxKeyPassphrase.fill(QChar(0));
+    }
+};
+
+bool isCredentialStatus(peare_status status) {
+    return status == PEARE_STATUS_PASSWORD_REQUIRED || status == PEARE_STATUS_PASSWORD_INVALID ||
+        status == PEARE_STATUS_PRIVATE_KEY_REQUIRED || status == PEARE_STATUS_PRIVATE_KEY_INVALID ||
+        status == PEARE_STATUS_PRIVATE_KEY_PASSPHRASE_REQUIRED ||
+        status == PEARE_STATUS_PRIVATE_KEY_PASSPHRASE_INVALID ||
+        status == PEARE_STATUS_PASSWORD_OR_PRIVATE_KEY_REQUIRED;
+}
+
+void showCredentialWarning(QWidget* parent, const QString& title, const QString& message) {
+    QDialog dialog(parent);
+    dialog.setObjectName(QStringLiteral("credentialWarningDialog"));
+    dialog.setWindowTitle(title);
+    QVBoxLayout* layout = new QVBoxLayout(&dialog);
+    QLabel* label = new QLabel(message, &dialog);
+    label->setObjectName(QStringLiteral("credentialWarningText"));
+    label->setWordWrap(true);
+    layout->addWidget(label);
+    QDialogButtonBox* buttons = new QDialogButtonBox(QDialogButtonBox::Ok, &dialog);
+    buttons->setObjectName(QStringLiteral("credentialWarningButtons"));
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    layout->addWidget(buttons);
+    dialog.exec();
+}
+
+bool promptCredentials(QWidget* parent, const QString& sourceName, peare_status status,
+                       OpenCredentials* credentials) {
+    if (status == PEARE_STATUS_PRIVATE_KEY_PASSPHRASE_REQUIRED ||
+        status == PEARE_STATUS_PRIVATE_KEY_PASSPHRASE_INVALID) {
+        for (;;) {
+            QInputDialog dialog(parent);
+            dialog.setObjectName(QStringLiteral("credentialKeyPassphraseDialog"));
+            dialog.setWindowTitle(QStringLiteral("Private key"));
+            dialog.setLabelText(status == PEARE_STATUS_PRIVATE_KEY_PASSPHRASE_INVALID
+                ? QStringLiteral("The private key passphrase is incorrect. Try again for %1").arg(sourceName)
+                : QStringLiteral("Enter the private key passphrase for %1").arg(sourceName));
+            dialog.setTextEchoMode(QLineEdit::Password);
+            if (dialog.exec() != QDialog::Accepted) return false;
+            QString passphrase = dialog.textValue();
+            dialog.setTextValue(QString());
+            if (passphrase.contains(QChar(0))) {
+                passphrase.fill(QChar(0));
+                showCredentialWarning(parent, QStringLiteral("Private key"),
+                                      QStringLiteral("The passphrase cannot contain a NUL character."));
+                continue;
+            }
+            if (passphrase.isNull()) passphrase = QStringLiteral("");
+            credentials->tibxKeyPassphrase.fill(QChar(0));
+            credentials->tibxKeyPassphrase = passphrase;
+            passphrase.fill(QChar(0));
+            return true;
+        }
+    }
+    bool key = status == PEARE_STATUS_PRIVATE_KEY_REQUIRED || status == PEARE_STATUS_PRIVATE_KEY_INVALID;
+    if (status == PEARE_STATUS_PASSWORD_OR_PRIVATE_KEY_REQUIRED) credentials->mixed = true;
+    const bool invalid = status == PEARE_STATUS_PASSWORD_INVALID || status == PEARE_STATUS_PRIVATE_KEY_INVALID;
+    const bool choose = status == PEARE_STATUS_PASSWORD_OR_PRIVATE_KEY_REQUIRED ||
+        (credentials->mixed && invalid);
+    if (choose && invalid) {
+        const QString message = status == PEARE_STATUS_PRIVATE_KEY_INVALID
+            ? QStringLiteral("The private key is invalid or the archive is damaged.")
+            : QStringLiteral("The password is incorrect or the archive is damaged.");
+        showCredentialWarning(parent, QStringLiteral("Encrypted archive"), message);
+    }
+    if (choose) {
+        QDialog choice(parent);
+        choice.setObjectName(QStringLiteral("credentialChoiceDialog"));
+        choice.setWindowTitle(QStringLiteral("Encrypted archive"));
+        QVBoxLayout* layout = new QVBoxLayout(&choice);
+        QLabel* label = new QLabel(QStringLiteral("Choose credentials for %1").arg(sourceName), &choice);
+        label->setWordWrap(true);
+        layout->addWidget(label);
+        QDialogButtonBox* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, &choice);
+        buttons->setObjectName(QStringLiteral("credentialChoiceButtons"));
+        QPushButton* passwordButton = buttons->addButton(QStringLiteral("Password"), QDialogButtonBox::ActionRole);
+        QPushButton* keyButton = buttons->addButton(QStringLiteral("Private key"), QDialogButtonBox::ActionRole);
+        passwordButton->setObjectName(QStringLiteral("credentialPasswordButton"));
+        keyButton->setObjectName(QStringLiteral("credentialPrivateKeyButton"));
+        QObject::connect(passwordButton, &QPushButton::clicked, &choice, [&choice, &key] { key = false; choice.accept(); });
+        QObject::connect(keyButton, &QPushButton::clicked, &choice, [&choice, &key] { key = true; choice.accept(); });
+        QObject::connect(buttons, &QDialogButtonBox::rejected, &choice, &QDialog::reject);
+        layout->addWidget(buttons);
+        if (choice.exec() != QDialog::Accepted) return false;
+    }
+    if (!key) {
+        bool accepted = false;
+        const QString prompt = status == PEARE_STATUS_PASSWORD_INVALID && !choose
+            ? QStringLiteral("The password is incorrect or the archive is damaged. Try again for %1").arg(sourceName)
+            : QStringLiteral("Enter the password for %1").arg(sourceName);
+        QString password = QInputDialog::getText(parent, QStringLiteral("Encrypted archive"), prompt,
+                                                  QLineEdit::Password, QString(), &accepted);
+        if (!accepted) return false;
+        if (password.isNull()) password = QStringLiteral("");
+        credentials->password.fill(QChar(0));
+        credentials->password = password;
+        password.fill(QChar(0));
+        if (choose) {
+            credentials->tibxPrivateKey.fill(0);
+            credentials->tibxPrivateKey.clear();
+            credentials->tibxKeyPassphrase.fill(QChar(0));
+            credentials->tibxKeyPassphrase.clear();
+        }
+        return true;
+    }
+    if (status == PEARE_STATUS_PRIVATE_KEY_INVALID && !choose)
+        showCredentialWarning(parent, QStringLiteral("Encrypted archive"),
+                              QStringLiteral("The private key is invalid or the archive is damaged."));
+    for (;;) {
+        QFileDialog dialog(parent, QStringLiteral("Select private key"));
+        dialog.setOption(QFileDialog::DontUseNativeDialog);
+        dialog.setFileMode(QFileDialog::ExistingFile);
+        if (dialog.exec() != QDialog::Accepted) return false;
+        const QString path = dialog.selectedFiles().value(0);
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly) || file.size() <= 0 ||
+            file.size() > std::numeric_limits<int>::max()) {
+            showCredentialWarning(parent, QStringLiteral("Private key"),
+                                  QStringLiteral("Cannot read the private key file."));
+            continue;
+        }
+        const qint64 size = file.size();
+        QByteArray data = file.readAll();
+        if (file.error() != QFile::NoError || data.size() != size) {
+            data.fill(0);
+            showCredentialWarning(parent, QStringLiteral("Private key"),
+                                  QStringLiteral("Cannot read the private key file."));
+            continue;
+        }
+        credentials->tibxPrivateKey.fill(0);
+        credentials->tibxPrivateKey.swap(data);
+        credentials->tibxKeyPassphrase.fill(QChar(0));
+        credentials->tibxKeyPassphrase.clear();
+        if (choose) {
+            credentials->password.fill(QChar(0));
+            credentials->password = QString();
+        }
+        return true;
+    }
+}
+
+bool writerProbeApplicable(peare_container_format format) {
+    return format != PEARE_CONTAINER_UFS && format != PEARE_CONTAINER_TIB &&
+           format != PEARE_CONTAINER_TIBX;
+}
 enum ItemRole {
     TypeRole = Qt::UserRole + 1,
     NameRole,
@@ -925,10 +1081,20 @@ bool MainWindow::inspectOffscreenPreview(OffscreenPreviewDiagnostics* diagnostic
     diagnostics->selectedType = selected->data(0, TypeRole).toString();
     const QString type = diagnostics->selectedType;
     pearegui::Session* owner = sessionOf(selected);
-    pearegui::Resource resource = owner
-        ? owner->openResource(selected->data(0, FolderIndexRole).toULongLong(),
-                              selected->data(0, ResourceIndexRole).toULongLong())
-        : pearegui::Resource();
+    const int directPayloadIndex = selected->data(0, DirectPayloadIndexRole).toInt();
+    const bool directResource = selected->data(0, DirectResourceRole).toBool();
+    pearegui::Resource resource;
+    if (directResource && directPayloadIndex >= 0 &&
+        directPayloadIndex < directResourcePayloads_.size()) {
+        const QByteArray& payload = directResourcePayloads_.at(directPayloadIndex);
+        resource = pearegui::Resource(payload, pearegui::ResourceContext{
+            PEARE_CONTAINER_UNKNOWN, PEARE_PLATFORM_UNKNOWN, currentFilePath_,
+            directResourceType_, selected->data(0, NameRole).toString(), {}, 0, 0,
+            quint64(payload.size()), false});
+    } else if (owner) {
+        resource = owner->openResource(selected->data(0, FolderIndexRole).toULongLong(),
+                                       selected->data(0, ResourceIndexRole).toULongLong());
+    }
     if (!resource.isValid()) {
         diagnostics->error = QStringLiteral("The selected GUI resource could not be opened.");
         return false;
@@ -2188,24 +2354,25 @@ void MainWindow::showModuleSummary(const QString& filePath,
     exportConvertedAction_->setEnabled(false);
     exportAllAction_->setEnabled(false);
 
-    QString password = initialPassword;
+    OpenCredentials credentials;
+    credentials.password = initialPassword;
     for (;;) {
-        if (currentSession_.openFile(filePath, &error, password)) break;
+        if (currentSession_.openFile(filePath, &error, credentials.password, credentials.tibxPrivateKey,
+                                     credentials.tibxKeyPassphrase)) break;
         const peare_status status = currentSession_.lastStatus();
-        if (status != PEARE_STATUS_PASSWORD_REQUIRED &&
-            status != PEARE_STATUS_PASSWORD_INVALID) break;
-        bool accepted = false;
-        const QString prompt = status == PEARE_STATUS_PASSWORD_REQUIRED
-            ? QStringLiteral("Enter the password for %1").arg(sourceName)
-            : QStringLiteral("The password is incorrect or the archive is damaged. Try again for %1")
-                  .arg(sourceName);
-        password = QInputDialog::getText(this, QStringLiteral("Encrypted archive"), prompt,
-                                         QLineEdit::Password, QString(), &accepted);
-        if (!accepted) {
+        if (status == PEARE_STATUS_PRIVATE_KEY_KDF_LIMIT_EXCEEDED) {
+            showCredentialWarning(this, QStringLiteral("Private key"),
+                                  QStringLiteral("The private key derivation work limit was exceeded."));
+            currentSession_.close();
             setWindowTitle(QStringLiteral("Peare"));
             return;
         }
-        if (password.isNull()) password = QStringLiteral("");
+        if (!isCredentialStatus(status)) break;
+        if (!promptCredentials(this, sourceName, status, &credentials)) {
+            currentSession_.close();
+            setWindowTitle(QStringLiteral("Peare"));
+            return;
+        }
     }
 
     if (!currentSession_.isOpen() && fi.size() > 0 &&
@@ -2291,7 +2458,7 @@ void MainWindow::showModuleSummary(const QString& filePath,
 
     const peare_container_format format = currentSession_.containerFormat();
     const QByteArray filePathUtf8 = filePath.toUtf8();
-    const bool writerCheckApplicable = format != PEARE_CONTAINER_UFS;
+    const bool writerCheckApplicable = writerProbeApplicable(format);
     const bool canAddFiles = writerCheckApplicable &&
         peare_writer_can_add_files(filePathUtf8.constData()) != 0;
     peare_writer_update_capabilities writerCapabilities = 0;
@@ -2714,7 +2881,33 @@ void MainWindow::expandContainerItem(QTreeWidgetItem* item) {
     pearegui::Session* parent = sessionOf(item);
     const size_t folder = item->data(0, FolderIndexRole).toULongLong();
     const size_t index = item->data(0, ResourceIndexRole).toULongLong();
-    std::unique_ptr<pearegui::Session> child = parent ? parent->openNested(folder, index) : nullptr;
+    OpenCredentials credentials;
+    if (parent) {
+        credentials.password = parent->password();
+        credentials.tibxPrivateKey = parent->tibxPrivateKey();
+        credentials.tibxKeyPassphrase = parent->tibxKeyPassphrase();
+    }
+    std::unique_ptr<pearegui::Session> child;
+    peare_status status = PEARE_STATUS_INVALID_HANDLE;
+    while (parent) {
+        child = parent->openNested(folder, index, credentials.password, credentials.tibxPrivateKey,
+                                   &status, credentials.tibxKeyPassphrase);
+        if (!child && status == PEARE_STATUS_PRIVATE_KEY_KDF_LIMIT_EXCEEDED) {
+            showCredentialWarning(this, QStringLiteral("Private key"),
+                                  QStringLiteral("The private key derivation work limit was exceeded."));
+            item->setData(0, PendingRole, true);
+            auto* placeholder = new QTreeWidgetItem(item, QStringList(QStringLiteral("...")));
+            placeholder->setData(0, PlaceholderRole, true);
+            return;
+        }
+        if (child || !isCredentialStatus(status)) break;
+        if (!promptCredentials(this, item->text(0), status, &credentials)) {
+            item->setData(0, PendingRole, true);
+            auto* placeholder = new QTreeWidgetItem(item, QStringList(QStringLiteral("...")));
+            placeholder->setData(0, PlaceholderRole, true);
+            return;
+        }
+    }
     if (!child) {
         // Not actually a navigable container after all: leave it as a leaf.
         item->setData(0, SizeRole, item->data(0, SizeRole));
@@ -3326,7 +3519,8 @@ void MainWindow::showItemContextMenu(QWidget* view, const QPoint& position,
     if (!folderMode_ && (rootDestination || entryDestination)) {
         peare_writer_update_capabilities capabilities = 0;
         const QByteArray encoded = currentFilePath_.toUtf8();
-        peare_writer_get_update_capabilities(encoded.constData(), 0, &capabilities);
+        if (writerProbeApplicable(currentSession_.containerFormat()))
+            peare_writer_get_update_capabilities(encoded.constData(), 0, &capabilities);
         menu.addSeparator();
         if (addFilesAction_->isEnabled())
             menu.addAction(addFilesAction_);
@@ -3400,7 +3594,8 @@ void MainWindow::showSelectedResource() {
             const QString path = writerEntryPath(item);
             peare_writer_update_capabilities capabilities = 0;
             const QByteArray encoded = currentFilePath_.toUtf8();
-            peare_writer_get_update_capabilities(encoded.constData(), 0, &capabilities);
+            if (writerProbeApplicable(currentSession_.containerFormat()))
+                peare_writer_get_update_capabilities(encoded.constData(), 0, &capabilities);
             newFolderAction_->setEnabled(capabilities & PEARE_WRITER_CAP_CREATE_DIRECTORY);
             newFileAction_->setEnabled(capabilities & PEARE_WRITER_CAP_CREATE_EMPTY_FILE);
             const bool canMutatePath = !path.isEmpty();
@@ -3418,7 +3613,8 @@ void MainWindow::showSelectedResource() {
     if (!folderMode_ && !directResource) {
         const QByteArray encoded = currentFilePath_.toUtf8();
         peare_writer_update_capabilities capabilities = 0;
-        peare_writer_get_update_capabilities(encoded.constData(), 0, &capabilities);
+        if (writerProbeApplicable(currentSession_.containerFormat()))
+            peare_writer_get_update_capabilities(encoded.constData(), 0, &capabilities);
         newFolderAction_->setEnabled(capabilities & PEARE_WRITER_CAP_CREATE_DIRECTORY);
         newFileAction_->setEnabled(capabilities & PEARE_WRITER_CAP_CREATE_EMPTY_FILE);
         const bool canMutatePath = !writerEntryPath(item).isEmpty();

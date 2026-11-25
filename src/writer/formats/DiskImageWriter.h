@@ -40,7 +40,9 @@ struct DiskImageTarget {
 class DiskImageUpdate final {
 public:
     static std::vector<DiskImageTarget> targets(const QString& imagePath);
+    static std::vector<DiskImageTarget> inspectTargets(const QString& imagePath);
     static bool canUpdate(const QString& imagePath);
+    static bool updateCompanions(const QString& imagePath, std::vector<QString>* paths);
 
     DiskImageUpdate();
     ~DiskImageUpdate();

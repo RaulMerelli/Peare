@@ -1,5 +1,14 @@
 [
   {
+    "name": "leaf-ico-peare-multilayer",
+    "source": "resources/peare.ico",
+    "tree_path": "",
+    "sample_id": "resources/peare.ico",
+    "expected_size": 157338,
+    "expected_sha256": "7f1e772b8e5465334f5c018bd117ad6136b560db431c565cb7d86a7700f4bd98",
+    "min_images": 7
+  },
+  {
     "name": "leaf-7z-explicit-directories.7z-3-nested-deep-copyright.txt",
     "source": "tests/formats/7z/fixtures/explicit-directories.7z",
     "tree_path": "nested/deep/copyright.txt",

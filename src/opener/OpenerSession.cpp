@@ -8,6 +8,9 @@
 #include "modules/MsgModule.h"
 #include "fs/LinuxRaid.h"
 #include "fs/DynamicDisk.h"
+#include "fs/AcronisRestoredStore.h"
+#include "fs/TibLegacyReader.h"
+#include "fs/TibxVolumeStore.h"
 
 #include <QCryptographicHash>
 #include <QHash>
@@ -158,26 +161,37 @@ ResourceContext contextFor(const ResourceEntry& entry,
 
 } // namespace
 
+static void probeResource(ResourceEntry& entry);
+
 OpenerSession::OpenerSession() = default;
 OpenerSession::~OpenerSession() = default;
 OpenerSession::OpenerSession(OpenerSession&&) noexcept = default;
 OpenerSession& OpenerSession::operator=(OpenerSession&&) noexcept = default;
 
-bool OpenerSession::openFile(const QString& filePath, const QString& password)
+bool OpenerSession::openFile(const QString& filePath, const QString& password, const QByteArray& tibxPrivateKey,
+                             const QString& tibxKeyPassphrase)
 {
     close();
-    return adoptModule(ModuleFactory::openWithPassword(filePath, password), filePath);
+    return adoptModule(ModuleFactory::openWithPassword(filePath, password, tibxPrivateKey, tibxKeyPassphrase), filePath);
 }
 
 bool OpenerSession::openStore(const peare::fs::ByteStorePtr& store, const QString& sourceName,
-                              const QString& subPath, const QString& password)
+                              const QString& subPath, const QString& password, const QByteArray& tibxPrivateKey,
+                              const QString& tibxKeyPassphrase)
 {
     close();
-    return adoptModule(ModuleFactory::open(store, sourceName, subPath, password), sourceName);
+    return adoptModule(ModuleFactory::open(store, sourceName, subPath, password, tibxPrivateKey, tibxKeyPassphrase), sourceName);
+}
+
+bool OpenerSession::openParts(const std::vector<std::pair<peare::fs::ByteStorePtr, QString> >& parts,
+                              const QString& password, const QByteArray& tibxPrivateKey, const QString& tibxKeyPassphrase)
+{
+    close();
+    return adoptModule(ModuleFactory::openParts(parts, password, tibxPrivateKey, tibxKeyPassphrase), parts.empty() ? QString() : parts[0].second);
 }
 
 bool OpenerSession::openBuffer(const QByteArray& data, const QString& sourceName,
-                               const QString& password)
+                               const QString& password, const QByteArray& tibxPrivateKey, const QString& tibxKeyPassphrase)
 {
     close();
 
@@ -195,7 +209,7 @@ bool OpenerSession::openBuffer(const QByteArray& data, const QString& sourceName
 
     const QString temporaryPath = temporary->fileName();
     temporary->close();
-    ModulePtr module = ModuleFactory::open(temporaryPath, sourceName, password);
+    ModulePtr module = ModuleFactory::open(temporaryPath, sourceName, password, tibxPrivateKey, tibxKeyPassphrase);
     bufferFile_ = std::move(temporary);
     return adoptModule(std::move(module), sourceName);
 }
@@ -251,6 +265,23 @@ OpenedResource OpenerSession::openResource(int resourceIndex) const
         return resource;
     }
 
+    ResourceEntry resolved;
+    if (entry->deferredContent) {
+        resolved = *entry;
+        resolved.content = entry->deferredContent->resolve();
+        if (!resolved.content || !resolved.content->validate() || resolved.content->capacity() < 0) {
+            resource.error = QStringLiteral("Cannot open NTFS file content");
+            return resource;
+        }
+        resolved.dataSize = static_cast<quint64>(resolved.content->capacity());
+        probeResource(resolved);
+        if (!resolved.content->validate()) {
+            resource.error = QStringLiteral("Cannot read NTFS file content");
+            return resource;
+        }
+        entry = &resolved;
+    }
+
     resource.session = this;
     resource.resourceIndex = resourceIndex;
     // Array-backed resources provide bytes directly; layer-backed resources read on demand.
@@ -299,50 +330,39 @@ int OpenerSession::findResource(const QString& folderType,
     return -1;
 }
 
-bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
+static void probeResource(ResourceEntry& entry)
 {
-    module_ = std::move(module);
-    if (!module_) {
-        info_.filePath = displayPath;
-        info_.error = QStringLiteral("Module factory returned no module");
-        return false;
-    }
-
-    info_ = module_->info();
-    info_.filePath = displayPath;
-    resourceContainer_ = dynamic_cast<const IResourceContainer*>(module_.get());
-    resources_.clear();
-    if (resourceContainer_)
-        resources_ = resourceContainer_->resources();
     // Probe whole files deeply and arbitrary embedded resources by strong signatures.
     // This keeps nested detection useful without scanning every resource payload.
-    for (ResourceEntry& entry : resources_) {
         entry.isContainer = false;
         if (entry.isDirectory) {
             entry.isContainer = !entry.containerSubPath.isEmpty();
-            continue;
+            return;
         }
 
         // Probe complete embedded files only; PE structures can resemble nested files.
         // This prevents recursive PE_HEADERS expansion.
         if (!entry.isEmbeddedFile)
-            continue;
+            return;
         if (entry.content && !entry.content->cheapRandomAccess() &&
             entry.content->capacity() > 16LL * 1024LL * 1024LL) {
             entry.isContainer = true;
-            continue;
+            return;
         }
 
+        bool readFailed = false;
         const auto readHead = [&](std::int64_t count) -> QByteArray {
             if (entry.content) {
                 const std::int64_t length = std::min<std::int64_t>(
                     std::max<std::int64_t>(count, 0),
                     std::max<std::int64_t>(entry.content->capacity(), 0));
                 QByteArray header(static_cast<int>(length), '\0');
-                if (length)
-                    entry.content->readExactly(0,
+                if (length && !entry.content->readExactlyChecked(0,
                         reinterpret_cast<std::uint8_t*>(header.data()),
-                        static_cast<int>(length));
+                        static_cast<int>(length))) {
+                    readFailed = true;
+                    return QByteArray();
+                }
                 return header;
             }
             const int length = static_cast<int>(std::min<std::int64_t>(
@@ -352,8 +372,11 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
         const auto readTail4 = [&]() -> QByteArray {
             if (entry.content && entry.content->capacity() >= 4) {
                 QByteArray tail(4, '\0');
-                entry.content->readExactly(entry.content->capacity() - 4,
-                    reinterpret_cast<std::uint8_t*>(tail.data()), 4);
+                if (!entry.content->readExactlyChecked(entry.content->capacity() - 4,
+                    reinterpret_cast<std::uint8_t*>(tail.data()), 4)) {
+                    readFailed = true;
+                    return QByteArray();
+                }
                 return tail;
             }
             return entry.data.size() >= 4
@@ -362,6 +385,7 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
         };
 
         const QByteArray prefix = readHead(512);
+        if (readFailed) return;
         ModuleFormat nestedFormat = prefix.isEmpty() ? ModuleFormat::Unknown
             : ModuleFormatDetector::detectNestedBuffer(prefix).format;
         if (nestedFormat == ModuleFormat::ZIP) {
@@ -389,6 +413,7 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
         if (entry.isEmbeddedFile && imgCandidate &&
             (!entry.content || entry.content->cheapRandomAccess())) {
             const QByteArray tail = readTail4();
+            if (readFailed) return;
             if (tail.size() == 4) {
                 const auto* p = reinterpret_cast<const unsigned char*>(tail.constData());
                 const quint32 value = quint32(p[0]) | (quint32(p[1]) << 8) |
@@ -399,8 +424,15 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
 
         if (nestedFormat == ModuleFormat::Unknown && entry.isEmbeddedFile) {
             const QByteArray header = readHead(0x14000);
-            nestedFormat = header.isEmpty() ? ModuleFormat::Unknown
-                : ModuleFormatDetector::detectBuffer(header).format;
+            if (readFailed) {
+                const ModuleFormat shortFormat = ModuleFormatDetector::detectBuffer(prefix).format;
+                if (shortFormat != ModuleFormat::FAT && shortFormat != ModuleFormat::EXFAT)
+                    return;
+                nestedFormat = shortFormat;
+            } else {
+                nestedFormat = header.isEmpty() ? ModuleFormat::Unknown
+                    : ModuleFormatDetector::detectBuffer(header).format;
+            }
         }
         if (nestedFormat == ModuleFormat::Unknown && entry.isEmbeddedFile &&
             LzmaModule::hasExtension(entry.name))
@@ -432,6 +464,42 @@ bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
         entry.isContainer = nestedFormat != ModuleFormat::Unknown;
         if (entry.isContainer)
             entry.format = nestedFormat;
+}
+
+bool OpenerSession::adoptModule(ModulePtr module, const QString& displayPath)
+{
+    module_ = std::move(module);
+    if (!module_) {
+        info_.filePath = displayPath;
+        info_.error = QStringLiteral("Module factory returned no module");
+        return false;
+    }
+    info_ = module_->info();
+    info_.filePath = displayPath;
+    resourceContainer_ = dynamic_cast<const IResourceContainer*>(module_.get());
+    resources_.clear();
+    if (resourceContainer_)
+        resources_ = resourceContainer_->resources();
+    for (ResourceEntry& entry : resources_) {
+        if (!entry.deferredContent) probeResource(entry);
+        if (!entry.content) continue;
+        const auto legacy = std::dynamic_pointer_cast<fs::TibLegacyFilteredVolume>(entry.content);
+        const auto tibx = std::dynamic_pointer_cast<fs::TibxVolumeStore>(entry.content);
+        if (!legacy && (!tibx || entry.type != QStringLiteral("TIBX_VOLUME"))) continue;
+        if (legacy) {
+            entry.content = std::make_shared<fs::AcronisRestoredStore>(entry.content,
+                [legacy](fs::ByteStorePtr* filter) {
+                    *filter = legacy->fatClusterFilter();
+                    return true;
+                });
+        } else {
+            entry.content = std::make_shared<fs::AcronisRestoredStore>(entry.content,
+                [tibx](fs::ByteStorePtr* filter) {
+                    const auto result = tibx->openFatClusterFilter(filter);
+                    return result == fs::TibxVolumeStore::StreamResult::Found ||
+                           result == fs::TibxVolumeStore::StreamResult::NotFound;
+                }, true);
+        }
     }
     rebuildFolders();
     return info_.isValid();
@@ -527,6 +595,8 @@ void OpenerSession::rebuildFolders()
             entry.type == QStringLiteral("SIEMENS_FSF_FILE") ||
             entry.type == QStringLiteral("ISO_FILE") ||
             entry.type == QStringLiteral("WIM_FILE") ||
+            entry.type == QStringLiteral("TIBX_VOLUME") ||
+            entry.type == QStringLiteral("TIBX_FILE") ||
             entry.type == QStringLiteral("FAT_FILE") ||
             entry.type == QStringLiteral("UDF_FILE") ||
             entry.type == QStringLiteral("UFS_FILE") ||

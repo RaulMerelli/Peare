@@ -37,10 +37,15 @@ private:
         QByteArray name;
         QString stagedPath;
         QByteArray originalHash;
+        quint64 originalSize = 0;
+        QByteArray recordHash;
         QByteArray shortName;
         QByteArray streamData;
+        QByteArray recordTail;
         std::vector<QByteArray> alternateStreamHashes;
         quint32 securityId = 0;
+        quint32 unknown54 = 0;
+        quint64 inodeUnion = 0;
         quint16 streamCount = 0;
         int primaryStreamHashOffset = -1;
         bool fromExisting = false;

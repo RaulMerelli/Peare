@@ -93,7 +93,8 @@ public:
             } else {
                 const std::uint64_t physBlock =
                     found->startBlock + (logicalBlock - found->startOffset);
-                parent_->readExactly(fsBlockOffset(physBlock) + inBlock, dst + done, chunk);
+                if (!parent_->readExactlyChecked(fsBlockOffset(physBlock) + inBlock, dst + done, chunk))
+                    return -1;
             }
             done += chunk;
             want -= chunk;

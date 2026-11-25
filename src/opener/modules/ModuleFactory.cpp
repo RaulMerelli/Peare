@@ -72,6 +72,8 @@
 #include "wince/WinceRomModule.h"
 #include "IsoModule.h"
 #include "WimModule.h"
+#include "TibxModule.h"
+#include "TibModule.h"
 #include "FatModule.h"
 #include "UdfModule.h"
 #include "UfsModule.h"
@@ -101,6 +103,7 @@
 #include "BootConfigModule.h"
 
 #include "../fs/AndroidSparseStore.h"
+#include "../fs/AcronisRestoredStore.h"
 #include "../fs/AndroidSuperStore.h"
 #include "../fs/LinuxRaid.h"
 #include "../fs/DynamicDisk.h"
@@ -192,13 +195,15 @@ bool hasAdzExtension(const QString& sourceName)
 
 } // namespace
 
-ModulePtr ModuleFactory::open(const QString& filePath)
+ModulePtr ModuleFactory::open(const QString& filePath, const QByteArray& tibxPrivateKey,
+                              const QString& tibxKeyPassphrase)
 {
     if (RpmModule::hasSupportedExtension(filePath)) return RpmModule::open(filePath);
-    return openWithPassword(filePath, QString());
+    return openWithPassword(filePath, QString(), tibxPrivateKey, tibxKeyPassphrase);
 }
 
-ModulePtr ModuleFactory::openWithPassword(const QString& filePath, const QString& password)
+ModulePtr ModuleFactory::openWithPassword(const QString& filePath, const QString& password,
+                                          const QByteArray& tibxPrivateKey, const QString& tibxKeyPassphrase)
 {
     if (RpmModule::hasSupportedExtension(filePath)) return RpmModule::open(filePath);
     if (DebModule::hasSupportedExtension(filePath)) return DebModule::open(filePath);
@@ -233,7 +238,7 @@ ModulePtr ModuleFactory::openWithPassword(const QString& filePath, const QString
             info.error = QStringLiteral("Could not open the archive as a positioned byte source");
             return peare::makeUnique<DetectedModule>(std::move(info));
         }
-        return open(source, filePath, QString(), password);
+        return open(source, filePath, QString(), password, tibxPrivateKey, tibxKeyPassphrase);
     }
     if (info.format == ModuleFormat::PE) {
         auto fileModule = PeFileModule::open(filePath);
@@ -278,7 +283,9 @@ ModulePtr ModuleFactory::openWithPassword(const QString& filePath, const QString
     if (info.format == ModuleFormat::RAR4) return Rar4Module::open(filePath, password);
     if (info.format == ModuleFormat::RAR5) return Rar5Module::open(filePath, password);
     if (info.format == ModuleFormat::RESX) return ResxModule::open(filePath);
-    if (info.format == ModuleFormat::CUE_BIN) return CueBinModule::open(filePath);
+    if (info.format == ModuleFormat::CUE_BIN) {
+        return CueBinModule::open(filePath);
+    }
     if (info.format == ModuleFormat::CAB) return CabModule::open(filePath);
     if (isEncryptedAppFamily(info.format)) return EAppxModule::open(filePath);
     if (info.format == ModuleFormat::XAP && isPlayReadyXapFile(filePath))
@@ -307,6 +314,8 @@ ModulePtr ModuleFactory::openWithPassword(const QString& filePath, const QString
     if (info.format == ModuleFormat::SIEMENS_FSF) return SiemensFsfModule::open(filePath);
     if (info.format == ModuleFormat::ISO9660) return IsoModule::open(filePath);
     if (info.format == ModuleFormat::WIM) return WimModule::open(filePath);
+    if (info.format == ModuleFormat::TIBX) return TibxModule::open(filePath, password, tibxPrivateKey, tibxKeyPassphrase);
+    if (info.format == ModuleFormat::TIB) return TibModule::open(filePath, password);
     if (info.format == ModuleFormat::FAT) return FatModule::open(filePath);
     if (info.format == ModuleFormat::UDF) return UdfModule::open(filePath);
     if (info.format == ModuleFormat::UFS) return UfsModule::open(filePath);
@@ -342,7 +351,7 @@ ModulePtr ModuleFactory::openWithPassword(const QString& filePath, const QString
 }
 
 ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logicalName,
-                              const QString& password)
+                              const QString& password, const QByteArray& tibxPrivateKey, const QString& tibxKeyPassphrase)
 {
     if (RpmModule::hasSupportedExtension(logicalName))
         return RpmModule::open(std::make_shared<fs::QFileByteStore>(physicalPath), logicalName);
@@ -408,7 +417,8 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
         detected.format != ModuleFormat::SIEMENS_FSF &&
         detected.format != ModuleFormat::OS2_EA &&
         detected.format != ModuleFormat::RESX)
-        return password.isNull() ? open(physicalPath) : openWithPassword(physicalPath, password);
+        return password.isNull() && tibxPrivateKey.isEmpty() && tibxKeyPassphrase.isNull()
+            ? open(physicalPath) : openWithPassword(physicalPath, password, tibxPrivateKey, tibxKeyPassphrase);
 
     QFile file(physicalPath);
     if (!file.open(QIODevice::ReadOnly)) {
@@ -517,9 +527,36 @@ ModulePtr ModuleFactory::open(const QString& physicalPath, const QString& logica
     return SzddModule::open(data, logicalName);
 }
 
-ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourceName,
-                              const QString& subPath, const QString& password)
+ModulePtr ModuleFactory::openParts(const std::vector<std::pair<fs::ByteStorePtr, QString> >& parts,
+                                   const QString& password, const QByteArray& tibxPrivateKey, const QString& tibxKeyPassphrase)
 {
+    if (parts.empty() || !parts[0].first) return ModulePtr();
+    if (parts.size() == 1) return open(parts[0].first, parts[0].second, QString(), password, tibxPrivateKey, tibxKeyPassphrase);
+    const std::vector<std::uint8_t> head = parts[0].first->readRange(0, 12);
+    const QByteArray header(reinterpret_cast<const char*>(head.data()), static_cast<int>(head.size()));
+    const ModuleFormat format = ModuleFormatDetector::detectBuffer(header).format;
+    if (format == ModuleFormat::WIM) {
+        std::vector<fs::ByteStorePtr> stores;
+        stores.reserve(parts.size());
+        for (const auto& part : parts) stores.push_back(part.first);
+        return WimModule::open(stores, parts[0].second);
+    }
+    if (format == ModuleFormat::TIBX)
+        return TibxModule::openParts(parts, parts[0].second, password, tibxPrivateKey, tibxKeyPassphrase);
+    if (format == ModuleFormat::TIB && parts.size() == 2 && head.size() >= 8 &&
+        head[6] == 1 && head[7] == 0)
+        return TibModule::openMac(parts[0].first, parts[1].first, parts[0].second, parts[1].second);
+    if (format == ModuleFormat::TIB)
+        return TibModule::openParts(parts, password);
+    return ModulePtr();
+}
+
+ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourceName,
+                              const QString& subPath, const QString& password, const QByteArray& tibxPrivateKey,
+                              const QString& tibxKeyPassphrase)
+{
+    const auto restored = std::dynamic_pointer_cast<fs::AcronisRestoredStore>(disc);
+    if (restored) return open(restored->original(), sourceName, subPath, password, tibxPrivateKey, tibxKeyPassphrase);
     if (!disc) {
         ModuleInfo info;
         info.filePath = sourceName;
@@ -527,19 +564,54 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
         return peare::makeUnique<DetectedModule>(std::move(info));
     }
     if (disc->capacity() >= 901120 && disc->capacity() % 512 == 0) {
-        const std::vector<std::uint8_t> boot = disc->readRange(0, 12);
-        if (boot.size() == 12 && std::memcmp(boot.data(), "DOS", 3) == 0 &&
+        std::vector<std::uint8_t> boot(12);
+        if (!disc->readExactlyChecked(0, boot.data(), static_cast<int>(boot.size()))) {
+            ModuleInfo info;
+            info.filePath = sourceName;
+            info.error = QStringLiteral("Cannot read source header");
+            return peare::makeUnique<DetectedModule>(std::move(info));
+        }
+        if (std::memcmp(boot.data(), "DOS", 3) == 0 &&
             (boot[3] & 0xF8) == 0)
             return FloppyImageModule::open(disc, sourceName, subPath);
     }
-    if (RpmModule::hasSupportedExtension(sourceName)) return RpmModule::open(disc, sourceName);
-    if (DebModule::hasSupportedExtension(sourceName)) return DebModule::open(disc, sourceName);
+    if (subPath.isEmpty() && RpmModule::hasSupportedExtension(sourceName))
+        return RpmModule::open(disc, sourceName);
+    if (subPath.isEmpty() && DebModule::hasSupportedExtension(sourceName))
+        return DebModule::open(disc, sourceName);
     // Cheap header peek (covers ISO's descriptor at 0x8001, and the UDF volume
     // recognition sequence which can extend past 0x9000 on bridge discs).
-    const std::vector<std::uint8_t> head = disc->readRange(0, 0x14000);
+    if (disc->capacity() < 0) {
+        ModuleInfo info;
+        info.filePath = sourceName;
+        info.error = QStringLiteral("Invalid source size");
+        return peare::makeUnique<DetectedModule>(std::move(info));
+    }
+    std::vector<std::uint8_t> head(static_cast<std::size_t>(
+        std::min<std::int64_t>(disc->capacity(), 0x14000)));
+    if (!head.empty() && !disc->readExactlyChecked(0, head.data(), static_cast<int>(head.size()))) {
+        std::vector<std::uint8_t> boot(static_cast<std::size_t>(
+            std::min<std::int64_t>(disc->capacity(), 512)));
+        if (!boot.empty() && disc->readExactlyChecked(0, boot.data(), static_cast<int>(boot.size()))) {
+            const QByteArray prefix(reinterpret_cast<const char*>(boot.data()), static_cast<int>(boot.size()));
+            const ModuleFormat format = ModuleFormatDetector::detectBuffer(prefix).format;
+            if (format == ModuleFormat::FAT) return FatModule::open(disc, sourceName, subPath);
+            if (format == ModuleFormat::EXFAT) return ExFatModule::open(disc, sourceName, subPath);
+        }
+        ModuleInfo info;
+        info.filePath = sourceName;
+        info.error = QStringLiteral("Cannot read source header");
+        return peare::makeUnique<DetectedModule>(std::move(info));
+    }
     const QByteArray header(reinterpret_cast<const char*>(head.data()),
                             static_cast<int>(head.size()));
     ModuleFormatInfo detected = ModuleFormatDetector::detectBuffer(header);
+    if (!subPath.isEmpty() && detected.format == ModuleFormat::TIBX)
+        return TibxModule::open(disc, sourceName, subPath, password, tibxPrivateKey, tibxKeyPassphrase);
+    if (!subPath.isEmpty() && detected.format == ModuleFormat::TIB)
+        return TibModule::open(disc, sourceName, subPath, password);
+    if (RpmModule::hasSupportedExtension(sourceName)) return RpmModule::open(disc, sourceName);
+    if (DebModule::hasSupportedExtension(sourceName)) return DebModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::RPM) return RpmModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::CHM) return ChmModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::GZIP && hasAdzExtension(sourceName))
@@ -685,6 +757,8 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
     if (detected.format == ModuleFormat::XAR)
         return XarModule::open(disc, sourceName);
     if (detected.format == ModuleFormat::WIM) return WimModule::open(disc, sourceName, subPath);
+    if (detected.format == ModuleFormat::TIBX) return TibxModule::open(disc, sourceName, subPath, password, tibxPrivateKey, tibxKeyPassphrase);
+    if (detected.format == ModuleFormat::TIB) return TibModule::open(disc, sourceName, subPath, password);
     if (detected.format == ModuleFormat::FAT) return FatModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::UDF) return UdfModule::open(disc, sourceName, subPath);
     if (detected.format == ModuleFormat::UFS) return UfsModule::open(disc, sourceName, subPath);
@@ -766,11 +840,11 @@ ModulePtr ModuleFactory::open(const fs::ByteStorePtr& disc, const QString& sourc
     // Non-filesystem formats need the whole content: materialise once.
     const std::vector<std::uint8_t> all = disc->readAll();
     return open(QByteArray(reinterpret_cast<const char*>(all.data()),
-                           static_cast<int>(all.size())), sourceName, password);
+                           static_cast<int>(all.size())), sourceName, password, tibxPrivateKey, tibxKeyPassphrase);
 }
 
 ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName,
-                              const QString& password)
+                              const QString& password, const QByteArray& tibxPrivateKey, const QString& tibxKeyPassphrase)
 {
     if (hasAdzExtension(logicalName) && data.size() >= 2 &&
         static_cast<unsigned char>(data[0]) == 0x1F &&
@@ -1039,7 +1113,8 @@ ModulePtr ModuleFactory::open(const QByteArray& data, const QString& logicalName
         return MsgModule::open(data, logicalName);
     if (detected.format == ModuleFormat::MAC_RESOURCE_FORK)
         return ResourceForkModule::open(data, logicalName);
-    return open(path);
+    return password.isNull() && tibxPrivateKey.isEmpty() && tibxKeyPassphrase.isNull()
+        ? open(path) : openWithPassword(path, password, tibxPrivateKey, tibxKeyPassphrase);
 }
 
 } // namespace peare

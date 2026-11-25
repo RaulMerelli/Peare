@@ -269,6 +269,21 @@ when no journal exists. New journals store a SHA-256 checksum for each backup
 range. Recovery also accepts legacy `PEAREJ01` journals, which have no range
 checksums.
 
+Use `peare_writer_visit_update_targets()` to inspect a source in read-only
+mode. The function reports each target index, name, and capability mask.
+It does not recover an interrupted disk journal. A disk with a pending journal
+reports no writable targets in this mode.
+
+Use `peare_writer_get_update_target_disk_offset()` to match a disk target to its
+partition in the Opener. The offset is in bytes from the start of the logical
+disk. Archive targets return `PEARE_WRITER_UNSUPPORTED_OPERATION`.
+
+Use `peare_writer_visit_update_files()` to identify the source files for a
+disposable copy. It reports the primary path first, then the companion paths
+for supported split VMDK and RAR sets. Pass the archive password when required.
+The path and name strings in these callbacks remain valid only during the call.
+Return zero from a callback to stop the visit.
+
 `peare_writer_get_update_capabilities()` returns a bit mask of operations
 supported for the selected target. The current bits are `CREATE_FILE`,
 `CREATE_EMPTY_FILE`, `CREATE_DIRECTORY`, `UPDATE_FILE`, `RENAME_ENTRY`, and

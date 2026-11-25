@@ -39,8 +39,39 @@ def decoder(peare_decoder_path):
         C.POINTER(C.c_uint8), C.c_size_t, C.c_char_p, C.c_char_p,
         C.c_char_p, _Resolver, C.c_void_p, C.POINTER(_BlobArray)]
     library.peare_decoder_convert_resource.restype = C.c_int
+    library.peare_decode_images.argtypes = [
+        C.POINTER(C.c_uint8), C.c_size_t, C.c_char_p, C.c_char_p,
+        C.POINTER(_BlobArray)]
+    library.peare_decode_images.restype = C.c_int
     library.peare_blob_array_free.argtypes = [C.POINTER(_BlobArray)]
     return library
+
+
+@pytest.mark.parametrize("sample", [
+    Path(__file__).parents[1] / "resources" / "peare.ico",
+    *sorted((Path(__file__).parents[1] / "resources" / "filetypes").glob("*.ico")),
+])
+def test_ico_file_decodes_every_layer_via_abi(decoder, sample):
+    data = sample.read_bytes()
+    reserved, kind, count = struct.unpack_from("<HHH", data)
+    assert (reserved, kind) == (0, 1)
+    source = (C.c_uint8 * len(data)).from_buffer_copy(data)
+    images = _BlobArray()
+    status = decoder.peare_decode_images(
+        source, len(data), b"Unknown", b"UNKNOWN", C.byref(images))
+    assert status == 0, f"Decoder ABI returned {status} for {sample.name}"
+    try:
+        assert images.count == count
+        for index in range(count):
+            png = C.string_at(images.items[index].bytes, images.items[index].length)
+            assert png.startswith(b"\x89PNG\r\n\x1a\n")
+            width, height = struct.unpack_from(">II", png, 16)
+            entry = 6 + index * 16
+            expected_width = data[entry] or 256
+            expected_height = data[entry + 1] or 256
+            assert (width, height) == (expected_width, expected_height)
+    finally:
+        decoder.peare_blob_array_free(C.byref(images))
 
 
 def test_group_icon_exports_complete_multilayer_ico(peare_lib, decoder):

@@ -4,6 +4,7 @@ namespace peare { namespace resources {
 class RT_ICON {
 public:
     static QVector<QImage> decode(const QByteArray& data);
+    static QVector<QImage> decodeIcoFile(const QByteArray& data);
     static ResourcePreview preview(const ResourceEntry& entry);
 };
 } }

@@ -29,6 +29,7 @@ public:
     bool read(qint64 offset, char* data, qint64 length) const override;
     bool write(qint64 offset, const char* data, qint64 length) override;
     bool finish(QString* error) override;
+    std::vector<QString> extentPaths() const;
 
 private:
     struct Extent {

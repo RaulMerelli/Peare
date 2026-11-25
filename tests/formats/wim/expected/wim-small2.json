@@ -1,0 +1,33 @@
+{
+  "container_format": "WIM",
+  "tree": [
+    {
+      "path": "README.md",
+      "size": 832,
+      "is_container": false,
+      "format": "WIM",
+      "sha256": "db58e70bf344b11d839520e667f91292e19601a9fbfbc86ed8ce74090582e1fb"
+    },
+    {
+      "path": "empty",
+      "size": 0,
+      "is_container": true,
+      "format": "WIM",
+      "sha256": ""
+    },
+    {
+      "path": "nested",
+      "size": 0,
+      "is_container": true,
+      "format": "WIM",
+      "sha256": ""
+    },
+    {
+      "path": "nested/README.md",
+      "size": 832,
+      "is_container": false,
+      "format": "WIM",
+      "sha256": "db58e70bf344b11d839520e667f91292e19601a9fbfbc86ed8ce74090582e1fb"
+    }
+  ]
+}

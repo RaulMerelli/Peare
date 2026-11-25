@@ -7,6 +7,8 @@
 #include <QVector>
 #include <cstddef>
 #include <memory>
+#include <utility>
+#include <vector>
 
 class QTemporaryFile;
 
@@ -69,13 +71,19 @@ public:
     OpenerSession(OpenerSession&&) noexcept;
     OpenerSession& operator=(OpenerSession&&) noexcept;
 
-    bool openFile(const QString& filePath, const QString& password = QString());
+    bool openFile(const QString& filePath, const QString& password = QString(),
+                  const QByteArray& tibxPrivateKey = QByteArray(), const QString& tibxKeyPassphrase = QString());
     bool openBuffer(const QByteArray& data, const QString& sourceName = QStringLiteral("memory.bin"),
-                    const QString& password = QString());
+                    const QString& password = QString(), const QByteArray& tibxPrivateKey = QByteArray(),
+                    const QString& tibxKeyPassphrase = QString());
     // Open over a positioned byte source without materialising it (filesystem
     // formats read straight from the source).
     bool openStore(const peare::fs::ByteStorePtr& store, const QString& sourceName,
-                   const QString& subPath = QString(), const QString& password = QString());
+                   const QString& subPath = QString(), const QString& password = QString(),
+                   const QByteArray& tibxPrivateKey = QByteArray(), const QString& tibxKeyPassphrase = QString());
+    bool openParts(const std::vector<std::pair<peare::fs::ByteStorePtr, QString> >& parts,
+                   const QString& password = QString(), const QByteArray& tibxPrivateKey = QByteArray(),
+                   const QString& tibxKeyPassphrase = QString());
     void close();
 
     bool isOpen() const noexcept;

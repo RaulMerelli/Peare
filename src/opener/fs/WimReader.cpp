@@ -2,8 +2,12 @@
 
 #include "BlockDecompressor.h"
 
+#include <QCryptographicHash>
 #include <algorithm>
 #include <cstring>
+#include <exception>
+#include <limits>
+#include <mutex>
 #include <utility>
 
 namespace peare {
@@ -62,28 +66,40 @@ public:
         : disc_(std::move(disc)), fileOffset_(fileOffset), compressedSize_(compressedSize),
           originalSize_(originalSize), chunkSize_(chunkSize), compressed_(compressed),
           decomp_(std::move(decomp)) {
-        numChunks_ = int((originalSize_ + chunkSize_ - 1) / chunkSize_);
-        if (numChunks_ <= 0) numChunks_ = 1;
-        chunkOffsets_.assign(numChunks_, 0);
-        chunkLengths_.assign(numChunks_, 0);
-        const std::int64_t tableBytes = std::int64_t(numChunks_ - 1) * 4;
-        std::vector<std::uint8_t> tbl(static_cast<std::size_t>(tableBytes));
-        if (tableBytes > 0) disc_->readExactly(fileOffset_, tbl.data(), int(tableBytes));
-        for (int i = 1; i < numChunks_; ++i) {
-            chunkOffsets_[i] = le32(tbl, std::size_t((i - 1) * 4));
-            chunkLengths_[i - 1] = chunkOffsets_[i] - chunkOffsets_[i - 1];
+        if (!disc_ || fileOffset_ < 0 || compressedSize_ < 0 || originalSize_ < 0 ||
+            chunkSize_ <= 0 || fileOffset_ > disc_->capacity() ||
+            compressedSize_ > disc_->capacity() - fileOffset_) return;
+        const std::int64_t chunks = originalSize_ / chunkSize_ +
+            (originalSize_ % chunkSize_ != 0 ? 1 : 0);
+        entrySize_ = static_cast<std::uint64_t>(originalSize_) > UINT32_MAX ? 8 : 4;
+        numChunks_ = chunks > 0 ? static_cast<std::uint64_t>(chunks) : 1;
+        if (numChunks_ - 1 > static_cast<std::uint64_t>(compressedSize_) / entrySize_) return;
+        offsetDelta_ = static_cast<std::int64_t>((numChunks_ - 1) * entrySize_);
+        std::uint8_t buffer[65536];
+        std::uint64_t previous = 0;
+        for (std::int64_t at = 0; at < offsetDelta_;) {
+            const std::size_t n = static_cast<std::size_t>(std::min<std::int64_t>(sizeof(buffer), offsetDelta_ - at));
+            if (!readFull(fileOffset_ + at, buffer, n)) return;
+            for (std::size_t pos = 0; pos < n; pos += entrySize_) {
+                std::uint64_t value = 0;
+                for (unsigned int i = 0; i < entrySize_; ++i) value |= std::uint64_t(buffer[pos + i]) << (i * 8);
+                if (value < previous || value > static_cast<std::uint64_t>(compressedSize_ - offsetDelta_)) return;
+                previous = value;
+            }
+            at += static_cast<std::int64_t>(n);
         }
-        offsetDelta_ = tableBytes;
-        chunkLengths_[numChunks_ - 1] = compressedSize_ - offsetDelta_ - chunkOffsets_[numChunks_ - 1];
+        valid_ = true;
     }
 
     std::int64_t capacity() const override { return originalSize_; }
+    bool validate() const override { return valid_ && disc_->validate(); }
 
     int read(std::int64_t pos, std::uint8_t* dst, int count) const override {
-        if (pos < 0 || count <= 0 || pos >= originalSize_) return 0;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!valid_ || !dst || pos < 0 || count <= 0 || pos >= originalSize_) return 0;
         int produced = 0;
         while (count > 0 && pos < originalSize_) {
-            const int chunk = int(pos / chunkSize_);
+            const std::uint64_t chunk = static_cast<std::uint64_t>(pos / chunkSize_);
             const int chunkOff = int(pos % chunkSize_);
             if (!ensureChunk(chunk)) break;
             const int avail = int(cache_.size()) - chunkOff;
@@ -98,26 +114,51 @@ public:
     }
 
 private:
-    bool ensureChunk(int chunk) const {
+    bool readFull(std::int64_t pos, std::uint8_t* dst, std::size_t count) const {
+        std::size_t done = 0;
+        while (done < count) {
+            const int requested = static_cast<int>(std::min<std::size_t>(count - done, 65536));
+            const int n = disc_->read(pos + static_cast<std::int64_t>(done), dst + done, requested);
+            if (n <= 0 || n > requested) return false;
+            done += n;
+        }
+        return disc_->validate();
+    }
+
+    bool chunkOffset(std::uint64_t index, std::uint64_t* result) const {
+        if (index == 0) { *result = 0; return true; }
+        if (index == numChunks_) { *result = static_cast<std::uint64_t>(compressedSize_ - offsetDelta_); return true; }
+        if (index > numChunks_) return false;
+        std::uint8_t bytes[8] = {};
+        if (!readFull(fileOffset_ + static_cast<std::int64_t>((index - 1) * entrySize_), bytes, entrySize_)) return false;
+        std::uint64_t value = 0;
+        for (unsigned int i = 0; i < entrySize_; ++i) value |= std::uint64_t(bytes[i]) << (i * 8);
+        *result = value;
+        return value <= static_cast<std::uint64_t>(compressedSize_ - offsetDelta_);
+    }
+
+    bool ensureChunk(std::uint64_t chunk) const {
         if (cachedChunk_ == chunk) return true;
-        if (chunk < 0 || chunk >= numChunks_) return false;
+        if (chunk >= numChunks_) return false;
         const int target = (chunk == numChunks_ - 1)
             ? int(originalSize_ - std::int64_t(chunk) * chunkSize_)
             : chunkSize_;
-        const int compressedLen = int(chunkLengths_[chunk]);
-        if (compressedLen < 0) return false;
-        std::vector<std::uint8_t> raw(static_cast<std::size_t>(compressedLen));
-        if (compressedLen > 0)
-            disc_->readExactly(fileOffset_ + offsetDelta_ + chunkOffsets_[chunk], raw.data(), compressedLen);
+        std::uint64_t begin = 0, end = 0;
+        if (!chunkOffset(chunk, &begin) || !chunkOffset(chunk + 1, &end) || end < begin ||
+            end - begin > std::vector<std::uint8_t>().max_size()) return false;
+        std::vector<std::uint8_t> raw(static_cast<std::size_t>(end - begin));
+        if (!raw.empty() && !readFull(fileOffset_ + offsetDelta_ + static_cast<std::int64_t>(begin),
+                                      raw.data(), raw.size())) return false;
 
+        cachedChunk_ = UINT64_MAX;
         cache_.assign(std::size_t(target), 0);
-        if (!decomp_ || !compressed_ || compressedLen == target) {
-            const int n = compressedLen < target ? compressedLen : target;
-            std::memcpy(cache_.data(), raw.data(), std::size_t(n));
+        if (!decomp_ || !compressed_ || raw.size() == static_cast<std::size_t>(target)) {
+            if (raw.size() != static_cast<std::size_t>(target)) return false;
+            if (target > 0) std::memcpy(cache_.data(), raw.data(), std::size_t(target));
         } else {
             std::size_t out = 0;
             if (!decomp_->tryDecompress(raw.data(), raw.size(), cache_.data(),
-                                        std::size_t(target), out))
+                                        std::size_t(target), out) || out != std::size_t(target))
                 return false;
         }
         cachedChunk_ = chunk;
@@ -129,14 +170,234 @@ private:
     std::int32_t chunkSize_;
     bool compressed_;
     BlockDecompressorPtr decomp_;
-    int numChunks_ = 0;
-    std::vector<std::int64_t> chunkOffsets_, chunkLengths_;
+    std::uint64_t numChunks_ = 0;
+    unsigned int entrySize_ = 0;
     std::int64_t offsetDelta_ = 0;
-    mutable int cachedChunk_ = -1;
+    mutable std::uint64_t cachedChunk_ = UINT64_MAX;
+    mutable std::vector<std::uint8_t> cache_;
+    bool valid_ = false;
+    mutable std::mutex mutex_;
+};
+
+bool readWofExact(const ByteStorePtr& source, std::uint64_t offset,
+                  std::uint8_t* data, std::size_t length) {
+    if (!source || !source->validate() || source->capacity() < 0 ||
+        offset > static_cast<std::uint64_t>(source->capacity()) ||
+        length > static_cast<std::uint64_t>(source->capacity()) - offset) return false;
+    while (length) {
+        const int requested = static_cast<int>(std::min<std::size_t>(length, 65536));
+        const int n = source->read(static_cast<std::int64_t>(offset), data, requested);
+        if (n <= 0 || n > requested) return false;
+        offset += static_cast<std::uint64_t>(n);
+        data += n;
+        length -= static_cast<std::size_t>(n);
+    }
+    return source->validate();
+}
+
+class WofWimWindow final : public IByteStore {
+public:
+    WofWimWindow(ByteStorePtr source, std::int64_t offset, std::int64_t size)
+        : source_(std::move(source)), offset_(offset), size_(size) {}
+    std::int64_t capacity() const override { return size_; }
+    bool validate() const override { return source_ && source_->validate(); }
+    int read(std::int64_t pos, std::uint8_t* dst, int count) const override {
+        if (!validate() || pos < 0 || count < 0 || (count && !dst)) return -1;
+        if (!count || pos >= size_) return 0;
+        const int n = static_cast<int>(std::min<std::int64_t>(count, size_ - pos));
+        return readWofExact(source_, static_cast<std::uint64_t>(offset_ + pos), dst,
+                            static_cast<std::size_t>(n)) ? n : -1;
+    }
+private:
+    ByteStorePtr source_;
+    std::int64_t offset_, size_;
+};
+
+class VerifiedWofWimStore final : public IByteStore {
+public:
+    VerifiedWofWimStore(ByteStorePtr source, const std::array<std::uint8_t, 20>& hash)
+        : source_(std::move(source)), hash_(hash), length_(source_ ? source_->capacity() : -1) {}
+    std::int64_t capacity() const override { return length_; }
+    bool validate() const override {
+        try { return source_ && source_->capacity() == length_ && source_->validate(); }
+        catch (...) { return false; }
+    }
+    bool cheapRandomAccess() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return ready_ && source_ && source_->cheapRandomAccess();
+    }
+    bool verifyContent() const {
+        try {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return prepareLocked();
+        } catch (...) { return false; }
+    }
+    int read(std::int64_t pos, std::uint8_t* dst, int count) const override {
+      try {
+        if (!validate() || pos < 0 || count < 0 || (count && !dst)) return -1;
+        if (!count || pos >= capacity()) return 0;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!prepareLocked()) return -1;
+        const int wanted = static_cast<int>(std::min<std::int64_t>(
+            std::min<std::int64_t>(count, length_ - pos), 1024 * 1024));
+        std::vector<std::uint8_t> staged(static_cast<std::size_t>(wanted));
+        int done = 0;
+        while (done < wanted) {
+            const std::uint64_t at = static_cast<std::uint64_t>(pos) + done;
+            const std::uint64_t block = at / kBlockSize;
+            const std::size_t within = static_cast<std::size_t>(at % kBlockSize);
+            if (cachedBlock_ != block) {
+                const std::uint64_t start = block * kBlockSize;
+                const std::size_t n = static_cast<std::size_t>(std::min<std::uint64_t>(
+                    kBlockSize, static_cast<std::uint64_t>(length_) - start));
+                std::vector<std::uint8_t> bytes(n);
+                if (!readWofExact(source_, start, bytes.data(), bytes.size())) return -1;
+                const QByteArray digest = QCryptographicHash::hash(
+                    QByteArray::fromRawData(reinterpret_cast<const char*>(bytes.data()), static_cast<int>(n)),
+                    QCryptographicHash::Sha256);
+                if (digest.size() != 32 || block >= digests_.size() ||
+                    std::memcmp(digest.constData(), digests_[static_cast<std::size_t>(block)].data(), 32) != 0)
+                    return -1;
+                cache_.swap(bytes);
+                cachedBlock_ = block;
+            }
+            const std::size_t n = std::min<std::size_t>(wanted - done, cache_.size() - within);
+            std::memcpy(staged.data() + done, cache_.data() + within, n);
+            done += static_cast<int>(n);
+        }
+        if (!validate()) return -1;
+        std::memcpy(dst, staged.data(), static_cast<std::size_t>(done));
+        return done;
+      } catch (...) { return -1; }
+    }
+private:
+    static const std::uint64_t kBlockSize = 65536;
+    typedef std::array<std::uint8_t, 32> Digest;
+    bool prepareLocked() const {
+        if (ready_) return validate();
+        if (length_ < 0 || !validate()) return false;
+        const std::uint64_t length = static_cast<std::uint64_t>(length_);
+        const std::uint64_t blocks = length / kBlockSize + (length % kBlockSize != 0);
+        std::vector<Digest> digests;
+        if (blocks > digests.max_size()) return false;
+        digests.reserve(static_cast<std::size_t>(blocks));
+        std::uint8_t buffer[kBlockSize];
+        QCryptographicHash full(QCryptographicHash::Sha1);
+        for (std::uint64_t offset = 0; offset < length;) {
+            const std::size_t n = static_cast<std::size_t>(std::min<std::uint64_t>(kBlockSize, length - offset));
+            if (!readWofExact(source_, offset, buffer, n)) return false;
+            full.addData(reinterpret_cast<const char*>(buffer), static_cast<int>(n));
+            const QByteArray digest = QCryptographicHash::hash(
+                QByteArray::fromRawData(reinterpret_cast<const char*>(buffer), static_cast<int>(n)),
+                QCryptographicHash::Sha256);
+            if (digest.size() != 32) return false;
+            Digest entry;
+            std::memcpy(entry.data(), digest.constData(), entry.size());
+            digests.push_back(entry);
+            offset += n;
+        }
+        const QByteArray actual = full.result();
+        if (actual.size() != 20 || std::memcmp(actual.constData(), hash_.data(), 20) != 0 || !validate()) return false;
+        digests_.swap(digests);
+        ready_ = true;
+        return true;
+    }
+    ByteStorePtr source_;
+    std::array<std::uint8_t, 20> hash_;
+    std::int64_t length_;
+    mutable std::mutex mutex_;
+    mutable bool ready_ = false;
+    mutable std::vector<Digest> digests_;
+    mutable std::uint64_t cachedBlock_ = UINT64_MAX;
     mutable std::vector<std::uint8_t> cache_;
 };
 
+const std::uint64_t VerifiedWofWimStore::kBlockSize;
+
 }  // namespace
+
+ByteStorePtr WimReader::openWofResource(ByteStorePtr source, const WofWimReference& ref,
+                                       bool verifyContentAtOpen) {
+    try {
+        std::vector<std::uint8_t> header(148);
+        if (!readWofExact(source, 0, header.data(), header.size()) ||
+            std::memcmp(header.data(), "MSWIM\0\0\0", 8) != 0 ||
+            le32(header, 8) < header.size() ||
+            le32(header, 8) > static_cast<std::uint64_t>(source->capacity()) ||
+            std::memcmp(header.data() + 24, ref.guid.data(), ref.guid.size()) != 0 ||
+            le16(header, 40) != 1 || le16(header, 42) != 1 ||
+            !ref.imageIndex || ref.imageIndex > le32(header, 44)) return nullptr;
+        const std::uint32_t flags = le32(header, 16);
+        const std::uint32_t chunk = le32(header, 20);
+        const auto parseHeader = [](const std::vector<std::uint8_t>& bytes, std::size_t at,
+                                    ResHeader* result) -> bool {
+            if (!result || at > bytes.size() || bytes.size() - at < 24) return false;
+            const std::uint64_t first = std::uint64_t(le32(bytes, at)) |
+                                        (std::uint64_t(le32(bytes, at + 4)) << 32);
+            const std::uint64_t offset = std::uint64_t(le32(bytes, at + 8)) |
+                                         (std::uint64_t(le32(bytes, at + 12)) << 32);
+            const std::uint64_t size = std::uint64_t(le32(bytes, at + 16)) |
+                                       (std::uint64_t(le32(bytes, at + 20)) << 32);
+            if (offset > std::uint64_t(INT64_MAX) || size > std::uint64_t(INT64_MAX)) return false;
+            result->flags = static_cast<std::uint8_t>(first >> 56);
+            result->compressedSize = static_cast<std::int64_t>(first & 0x00ffffffffffffffULL);
+            result->fileOffset = static_cast<std::int64_t>(offset);
+            result->originalSize = static_cast<std::int64_t>(size);
+            return true;
+        };
+        ResHeader table;
+        if (!parseHeader(header, 48, &table)) return nullptr;
+        if (table.fileOffset < 0 || table.compressedSize < 0 || table.originalSize < 0 ||
+            (table.flags & ~(kResCompressed | kResMetaData)) || table.originalSize % 50 != 0 ||
+            table.fileOffset > source->capacity() || table.compressedSize > source->capacity() - table.fileOffset)
+            return nullptr;
+        ByteStorePtr tableWindow = std::make_shared<WofWimWindow>(source, table.fileOffset, table.compressedSize);
+        const auto verifiedTable = std::make_shared<VerifiedWofWimStore>(tableWindow, ref.tableHash);
+        if (!verifiedTable->verifyContent()) return nullptr;
+        ByteStorePtr tableSource = verifiedTable;
+        BlockDecompressorPtr decoder;
+        if (flags & kFlagLzx) decoder = std::make_shared<LzxWimDecompressor>(chunk);
+        else if (flags & kFlagXpress) decoder = std::make_shared<XpressHuffmanDecompressor>();
+        if ((flags & kFlagLzx) && (flags & kFlagXpress)) return nullptr;
+        const auto make = [&](const ResHeader& h, const ByteStorePtr& backing) -> ByteStorePtr {
+            if (h.fileOffset < 0 || h.compressedSize < 0 || h.originalSize < 0 ||
+                !backing || h.fileOffset > backing->capacity() || h.compressedSize > backing->capacity() - h.fileOffset ||
+                (h.flags & ~kResCompressed)) return nullptr;
+            if (!(h.flags & kResCompressed)) {
+                if (h.compressedSize != h.originalSize) return nullptr;
+                return std::make_shared<WofWimWindow>(backing, h.fileOffset, h.originalSize);
+            }
+            if (!decoder || !chunk || chunk > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) return nullptr;
+            auto result = std::make_shared<WimChunkStore>(backing, h.fileOffset, h.compressedSize,
+                                                          h.originalSize, static_cast<std::int32_t>(chunk), true, decoder);
+            return result->validate() ? result : ByteStorePtr();
+        };
+        ResHeader tableStream = table;
+        tableStream.flags &= static_cast<std::uint8_t>(~kResMetaData);
+        tableStream.fileOffset = 0;
+        ByteStorePtr index = make(tableStream, tableSource);
+        if (!index) return nullptr;
+        ResHeader match;
+        bool found = false;
+        for (std::uint64_t at = 0; at < static_cast<std::uint64_t>(table.originalSize); at += 50) {
+            std::vector<std::uint8_t> entry(50);
+            if (!readWofExact(index, at, entry.data(), entry.size())) return nullptr;
+            if (std::memcmp(entry.data() + 30, ref.contentHash.data(), 20) != 0) continue;
+            if (found || le16(entry, 24) != 1) return nullptr;
+            if (!parseHeader(entry, 0, &match)) return nullptr;
+            found = true;
+        }
+        if (!found || match.originalSize < 0 || match.compressedSize < 0 || match.fileOffset < 0 ||
+            static_cast<std::uint64_t>(match.originalSize) != ref.size ||
+            static_cast<std::uint64_t>(match.compressedSize) != ref.storedSize ||
+            static_cast<std::uint64_t>(match.fileOffset) != ref.offset) return nullptr;
+        ByteStorePtr content = make(match, source);
+        if (!content) return nullptr;
+        const auto verified = std::make_shared<VerifiedWofWimStore>(content, ref.contentHash);
+        if (verifyContentAtOpen && !verified->verifyContent()) return nullptr;
+        return verified;
+    } catch (...) { return nullptr; }
+}
 
 WimReader::WimReader(ByteStorePtr disc) : parts_{std::move(disc)} {
     try {
@@ -275,15 +536,41 @@ const std::vector<WimReader::DirEntry>& WimReader::directoryAt(std::int64_t offs
     while (pos >= 0 && std::size_t(pos) + 8 <= meta_.size()) {
         const std::int64_t length = le64(meta_, std::size_t(pos));
         if (length == 0) break;  // end of this directory
-        if (std::size_t(pos) + 102 > meta_.size()) break;
+        if (length < 102 || std::uint64_t(length) > meta_.size() - std::size_t(pos) ||
+            std::size_t(pos) + 102 > meta_.size()) break;
         DirEntry e;
         const std::uint32_t attributes = le32(meta_, std::size_t(pos) + 8);
         e.subdirOffset = le64(meta_, std::size_t(pos) + 16);
         e.hash.assign(meta_.begin() + std::size_t(pos) + 64, meta_.begin() + std::size_t(pos) + 84);
         const int fileNameLen = le16(meta_, std::size_t(pos) + 100);
+        const int shortNameLen = le16(meta_, std::size_t(pos) + 98);
+        const int streamCount = le16(meta_, std::size_t(pos) + 96);
+        const std::uint64_t namesEnd = 102u + std::uint64_t(fileNameLen) + 2u +
+                                       std::uint64_t(shortNameLen);
+        if ((fileNameLen & 1) || (shortNameLen & 1) || namesEnd > std::uint64_t(length))
+            break;
         if (fileNameLen > 0)
             e.name = utf16ToUtf8(meta_, std::size_t(pos) + 102, std::size_t(fileNameLen));
         e.isDirectory = (attributes & kAttrDirectory) != 0;
+        std::size_t next = std::size_t(pos) + std::size_t(length);
+        bool validStreams = true;
+        for (int i = 0; i < streamCount; ++i) {
+            if (next > meta_.size() || meta_.size() - next < 38) {
+                validStreams = false;
+                break;
+            }
+            const std::uint64_t streamLength = le64(meta_, next);
+            const std::uint16_t streamNameLength = le16(meta_, next + 36);
+            if (streamLength < 38 || streamLength > meta_.size() - next ||
+                (streamNameLength & 1) || 38u + streamNameLength > streamLength) {
+                validStreams = false;
+                break;
+            }
+            if (i == 0 && streamNameLength == 0 && !e.isDirectory)
+                e.hash.assign(meta_.begin() + next + 16, meta_.begin() + next + 36);
+            next += std::size_t(streamLength);
+        }
+        if (!validStreams) break;
         // File length comes from the content resource (originalSize).
         bool allZero = true;
         for (std::uint8_t h : e.hash) if (h) { allZero = false; break; }
@@ -292,7 +579,7 @@ const std::vector<WimReader::DirEntry>& WimReader::directoryAt(std::int64_t offs
             if (r != resources_.end()) e.length = r->second.originalSize;
         }
         if (!e.name.empty()) dir.push_back(std::move(e));
-        pos += length;
+        pos = std::int64_t(next);
     }
     auto res = dirCache_.emplace(offset, std::move(dir));
     return res.first->second;
@@ -310,7 +597,8 @@ const WimReader::DirEntry* WimReader::entryForPath(const std::string& path) cons
 
     const std::vector<DirEntry>* dir = &directoryAt(0);
     const DirEntry* found = nullptr;
-    for (const std::string& seg : parts) {
+    for (std::size_t partIndex = 0; partIndex < parts.size(); ++partIndex) {
+        const std::string& seg = parts[partIndex];
         found = nullptr;
         for (const DirEntry& e : *dir) {
             // Case-insensitive compare.
@@ -326,12 +614,16 @@ const WimReader::DirEntry* WimReader::entryForPath(const std::string& path) cons
             }
         }
         if (!found) return nullptr;
-        if (found->subdirOffset != 0) dir = &directoryAt(found->subdirOffset);
+        if (partIndex + 1 < parts.size()) {
+            if (!found->isDirectory || found->subdirOffset == 0) return nullptr;
+            dir = &directoryAt(found->subdirOffset);
+        }
     }
     return found;
 }
 
 std::vector<DiscEntry> WimReader::list(const std::string& dirPath) const {
+    std::lock_guard<std::mutex> lock(dirMutex_);
     std::vector<DiscEntry> out;
     if (!valid_) return out;
     const std::vector<DirEntry>* dir = nullptr;
@@ -339,7 +631,7 @@ std::vector<DiscEntry> WimReader::list(const std::string& dirPath) const {
         dir = &directoryAt(0);
     } else {
         const DirEntry* e = entryForPath(dirPath);
-        if (!e || !e->isDirectory) return out;
+        if (!e || !e->isDirectory || e->subdirOffset == 0) return out;
         dir = &directoryAt(e->subdirOffset);
     }
     for (const DirEntry& e : *dir) {
@@ -353,6 +645,7 @@ std::vector<DiscEntry> WimReader::list(const std::string& dirPath) const {
 }
 
 ByteStorePtr WimReader::openFile(const std::string& path) const {
+    std::lock_guard<std::mutex> lock(dirMutex_);
     if (!valid_) return nullptr;
     const DirEntry* e = entryForPath(path);
     if (!e || e->isDirectory) return nullptr;

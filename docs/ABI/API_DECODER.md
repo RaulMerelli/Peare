@@ -197,8 +197,11 @@ Font, SFN/SFNC, TrueType/TTC, OpenType, WOFF, WOFF2, EOT, SHP/SHX, Amiga
 bitmap and AnimFont data, and font records in Apple resource forks. AFM and SNF
 provide metadata but do not render glyphs. The Decoder does not change input
 bytes. It expands supported WOFF data in memory for rendering.
-The caller must create a `QGuiApplication` before it requests outline-font
-rendering. Bitmap-font rendering does not have this requirement.
+The Decoder can start a GUI runtime for outline fonts when the process does not
+already have a GUI application. For headless use, select an offscreen platform.
+After the last render, call `peare_decoder_release_font_runtime()` from the
+thread that started the runtime. The function leaves a caller-owned GUI
+application in place.
 
 First, query `get_info()`:
 

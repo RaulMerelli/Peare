@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
+#include <QRegularExpression>
 #include <QXmlStreamReader>
 
 #include "../fs/FloppyImage.h"
@@ -18,6 +19,7 @@
 #include "../fs/PartitionTable.h"
 #include "../fs/UfsReader.h"
 #include "../fs/AndroidSuperStore.h"
+#include "../fs/TibxPageStore.h"
 
 #include <cstring>
 #include <limits>
@@ -70,6 +72,35 @@ quint32 readLe32(const QByteArray &data, qsizetype offset)
            (quint32(p[3]) << 24);
 }
 
+bool hasFatBpb(const QByteArray& data)
+{
+    if (data.size() < 512) return false;
+    const auto* p = reinterpret_cast<const unsigned char*>(data.constData());
+    if (p[510] != 0x55 || p[511] != 0xaa ||
+        !((p[0] == 0xeb && p[2] == 0x90) || p[0] == 0xe9)) return false;
+    const quint64 sector = readLe16(data, 11);
+    const quint64 cluster = p[13];
+    const quint64 reserved = readLe16(data, 14);
+    const quint64 fats = p[16];
+    const quint64 root = readLe16(data, 17);
+    const quint64 total = readLe16(data, 19) ? readLe16(data, 19) : readLe32(data, 32);
+    const quint64 fat16 = readLe16(data, 22);
+    const quint64 fat = fat16 ? fat16 : readLe32(data, 36);
+    if (sector < 512 || sector > 4096 || (sector & (sector - 1)) ||
+        !cluster || cluster > 128 || (cluster & (cluster - 1)) ||
+        !reserved || !fats || fats > 2 || !total || !fat) return false;
+    const quint64 overhead = reserved + fats * fat + (root * 32 + sector - 1) / sector;
+    if (overhead >= total) return false;
+    const quint64 count = (total - overhead) / cluster;
+    if (!count || count > 0x0fffffedU) return false;
+    const bool fat32 = count >= 65525;
+    if (fat32 ? (root != 0 || fat16 != 0 || readLe32(data, 44) < 2 ||
+                 readLe32(data, 44) >= count + 2) : (!root || !fat16)) return false;
+    const quint64 entries = count + 2;
+    const quint64 required = count < 4085 ? (entries * 3 + 1) / 2 : entries * (fat32 ? 4 : 2);
+    return fat * sector >= required;
+}
+
 bool isNsisSignature(const QByteArray& bytes)
 {
     if (bytes.size() != 16) return false;
@@ -117,6 +148,37 @@ bool hasLzipHeader(const QByteArray& data)
         return false;
     const unsigned exponent = uchar(data[5]) & 0x1Fu;
     return exponent >= 12 && exponent <= 29;
+}
+
+bool hasTibxHeader(const QByteArray& data)
+{
+    return data.size() >= 12 && std::memcmp(data.constData(), "A\1\0\0", 4) == 0 &&
+           std::memcmp(data.constData() + 8, "ARCH", 4) == 0;
+}
+
+bool hasTibLegacyHeader(const QByteArray& data)
+{
+    return data.size() >= 12 &&
+           ((std::memcmp(data.constData(), "\xb4\x6e\x68\x44", 4) == 0 && readLe32(data, 8) != 0) ||
+            std::memcmp(data.constData(), "\xc6\x36\x5c\x8f", 4) == 0 ||
+            std::memcmp(data.constData(), "\xce\x24\xb9\xa2", 4) == 0);
+}
+
+bool isTibxContinuation(const QString& filePath)
+{
+    const QFileInfo info(filePath);
+    const QRegularExpression pattern(QStringLiteral("^(.*)-(\\d{4,})$"));
+    const QRegularExpressionMatch match = pattern.match(info.completeBaseName());
+    if (!match.hasMatch()) return false;
+    bool ok = false;
+    if (!match.captured(2).toULongLong(&ok) || !ok) return false;
+    const QString extension = info.suffix().isEmpty() ? QString() : QLatin1Char('.') + info.suffix();
+    QFile first(info.absoluteDir().filePath(match.captured(1) + extension));
+    if (!first.open(QIODevice::ReadOnly) || !hasTibxHeader(first.read(12))) return false;
+    auto source = std::make_shared<fs::QFileByteStore>(filePath);
+    fs::TibxPageStore pages(source);
+    fs::TibxPageStore::Page page;
+    return source->validate() && pages.readPage(0, &page, nullptr);
 }
 
 bool hasZstdHeader(const QByteArray& data)
@@ -810,6 +872,13 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
     if (!file.open(QIODevice::ReadOnly)) {
         return {ModuleFormat::Unknown, 0, {}, file.errorString()};
     }
+    if (isTibxContinuation(filePath))
+        return {ModuleFormat::TIBX, 0, QStringLiteral("Acronis TIBX backup"), {}};
+    if (hasTibLegacyHeader(file.peek(12)))
+        return {ModuleFormat::TIB, 0, QStringLiteral("Acronis TIB backup"), {}};
+    const QByteArray vmdkPrefix = file.peek(64);
+    if (vmdkPrefix.startsWith("KDMV") || vmdkPrefix.startsWith("# Disk DescriptorFile"))
+        return {ModuleFormat::VMDK, 0, QStringLiteral("VMware Virtual Disk (VMDK)"), {}};
     char amigaBoot[12];
     if (file.read(amigaBoot, sizeof(amigaBoot)) == sizeof(amigaBoot) &&
         std::memcmp(amigaBoot, "DOS", 3) == 0 &&
@@ -850,22 +919,6 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
                 QStringLiteral("Android dynamic-partition super image"), {}};
     if (fs::UfsReader::detect(*ufsStore))
         return {ModuleFormat::UFS, 0, QStringLiteral("Unix File System (UFS)"), {}};
-    if (file.size() >= 512 + 28) {
-        const qint64 scanLimit = qMin<qint64>(file.size() - 28, 64 * 1024 * 1024);
-        for (qint64 offset = 0; offset <= scanLimit; offset += 512) {
-            if (!file.seek(offset)) break;
-            const QByteArray prefix = file.read(28);
-            if (prefix.size() != 28 || !isNsisSignature(prefix.mid(4, 16))) continue;
-            const quint32 flags = readLe32(prefix, 0);
-            const quint32 headerSize = readLe32(prefix, 20);
-            const quint32 archiveSize = readLe32(prefix, 24);
-            if ((flags & ~0x0fU) == 0 && headerSize >= 68 &&
-                archiveSize >= 28 && quint64(archiveSize) <= quint64(file.size() - offset))
-                return {ModuleFormat::NSIS, quint32(offset),
-                        QStringLiteral("Nullsoft Scriptable Install System installer"), {}};
-        }
-        file.seek(0);
-    }
     if (file.read(4) == QByteArrayLiteral("ITSF")) {
         file.seek(0);
         return {ModuleFormat::CHM, 0, QStringLiteral("Microsoft Compiled HTML Help (CHM)"), {}};
@@ -883,6 +936,9 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         return {ModuleFormat::XAR, 0, QStringLiteral("XAR archive"), {}};
     if (hasArjHeader(rarPrefix))
         return {ModuleFormat::ARJ, 0, QStringLiteral("ARJ archive"), {}};
+    const ModuleFormatInfo optical = detectOpticalBuffer(rarPrefix);
+    if (optical.format != ModuleFormat::Unknown)
+        return optical;
     const QByteArray rar5Marker("Rar!\x1a\x07\x01\x00", 8);
     const qsizetype rar5Offset = rarPrefix.indexOf(rar5Marker);
     if (rar5Offset >= 0)
@@ -1193,10 +1249,21 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         file.seek(0);
         return {ModuleFormat::CUE_BIN, 0, QStringLiteral("CDRWIN BIN/CUE optical image"), {}};
     }
-    const ModuleFormatInfo optical = detectOpticalBuffer(winceHead);
-    if (optical.format != ModuleFormat::Unknown) {
+    if (file.size() >= 512 + 28) {
+        const qint64 scanLimit = qMin<qint64>(file.size() - 28, 64 * 1024 * 1024);
+        for (qint64 offset = 0; offset <= scanLimit; offset += 512) {
+            if (!file.seek(offset)) break;
+            const QByteArray prefix = file.read(28);
+            if (prefix.size() != 28 || !isNsisSignature(prefix.mid(4, 16))) continue;
+            const quint32 flags = readLe32(prefix, 0);
+            const quint32 headerSize = readLe32(prefix, 20);
+            const quint32 archiveSize = readLe32(prefix, 24);
+            if ((flags & ~0x0fU) == 0 && headerSize >= 68 &&
+                archiveSize >= 28 && quint64(archiveSize) <= quint64(file.size() - offset))
+                return {ModuleFormat::NSIS, quint32(offset),
+                        QStringLiteral("Nullsoft Scriptable Install System installer"), {}};
+        }
         file.seek(0);
-        return optical;
     }
     if (isWindowsCeRomHeader(winceHead) ||
         (scanImgfs && file.size() > winceHead.size() && fileContainsImgfs(file))) {
@@ -1217,19 +1284,6 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         const fs::FloppyGeometry geometry = fs::floppyGeometryForCapacity(file.size());
         if (geometry.valid())
             return {ModuleFormat::FLOPPY_IMAGE, 0, floppyDescription(geometry), {}};
-    }
-
-    // VMDK: KDMV sparse magic, or a text disk descriptor, at offset 0. Probed
-    // before the full read below so multi-GB virtual disks are never slurped into
-    // a QByteArray (which is capped at INT_MAX and would fail the whole detection).
-    if (file.size() >= 4) {
-        char head[64] = {0};
-        const qint64 n = file.seek(0) ? file.read(head, 64) : 0;
-        file.seek(0);
-        if (n >= 4 && std::memcmp(head, "KDMV", 4) == 0)
-            return {ModuleFormat::VMDK, 0, QStringLiteral("VMware Virtual Disk (VMDK)"), {}};
-        if (n >= 21 && std::memcmp(head, "# Disk DescriptorFile", 21) == 0)
-            return {ModuleFormat::VMDK, 0, QStringLiteral("VMware Virtual Disk (VMDK)"), {}};
     }
 
     // VHD fixed disks identify themselves only with the trailing footer. Dynamic
@@ -1642,6 +1696,9 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         return {ModuleFormat::WIM, 0, QStringLiteral("Windows Imaging (WIM) image"), {}};
     }
 
+    if (hasTibLegacyHeader(data)) return {ModuleFormat::TIB, 0, QStringLiteral("Acronis TIB backup"), {}};
+    if (hasTibxHeader(data)) return {ModuleFormat::TIBX, 0, QStringLiteral("Acronis TIBX backup"), {}};
+
     // VMDK hosted sparse extent: "KDMV" magic at offset 0.
     if (data.size() >= 4 && std::memcmp(data.constData(), "KDMV", 4) == 0) {
         return {ModuleFormat::VMDK, 0, QStringLiteral("VMware Virtual Disk (VMDK)"), {}};
@@ -1701,12 +1758,13 @@ ModuleFormatInfo ModuleFormatDetector::detectFile(const QString &filePath)
         return {ModuleFormat::EXFAT, 0, QStringLiteral("Microsoft exFAT volume"), {}};
     }
 
-    // Require the FAT boot signature and the label at the FAT12/16 or FAT32 offset.
+    // The filesystem label is informational; validate the BPB when it is absent.
     if (data.size() >= 512 &&
         static_cast<unsigned char>(data[510]) == 0x55 &&
         static_cast<unsigned char>(data[511]) == 0xAA &&
         ((data.size() >= 57 && std::memcmp(data.constData() + 54, "FAT", 3) == 0) ||
-         (data.size() >= 85 && std::memcmp(data.constData() + 82, "FAT", 3) == 0))) {
+         (data.size() >= 85 && std::memcmp(data.constData() + 82, "FAT", 3) == 0) ||
+         hasFatBpb(data))) {
         return {ModuleFormat::FAT, 0, QStringLiteral("FAT volume"), {}};
     }
 
@@ -1804,6 +1862,9 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
         return {ModuleFormat::XAR, 0, QStringLiteral("XAR archive"), {}};
     if (hasArjHeader(data))
         return {ModuleFormat::ARJ, 0, QStringLiteral("ARJ archive"), {}};
+    const ModuleFormatInfo optical = detectOpticalBuffer(data);
+    if (optical.format != ModuleFormat::Unknown)
+        return optical;
     const QByteArray rar5Marker("Rar!\x1a\x07\x01\x00", 8);
     const qsizetype rar5Offset = data.left(qMin<qsizetype>(
         data.size(), qsizetype(1024 * 1024 + 8))).indexOf(rar5Marker);
@@ -1914,10 +1975,6 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
     if (isResxDocument(data))
         return {ModuleFormat::RESX, 0, QStringLiteral(".NET XML resource (RESX)"), {}};
 
-    const ModuleFormatInfo optical = detectOpticalBuffer(data);
-    if (optical.format != ModuleFormat::Unknown)
-        return optical;
-
     if (isWindowsCeRomHeader(data))
         return {ModuleFormat::WINCE_ROM, 0, QStringLiteral("Windows CE ROM / IMGFS"), {}};
 
@@ -1946,6 +2003,9 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
 
     if (data.size() >= 8 && std::memcmp(data.constData(), "MSWIM\0\0\0", 8) == 0)
         return {ModuleFormat::WIM, 0, QStringLiteral("Windows Imaging (WIM) image"), {}};
+
+    if (hasTibLegacyHeader(data)) return {ModuleFormat::TIB, 0, QStringLiteral("Acronis TIB backup"), {}};
+    if (hasTibxHeader(data)) return {ModuleFormat::TIBX, 0, QStringLiteral("Acronis TIBX backup"), {}};
 
     if (data.size() >= 4 && std::memcmp(data.constData(), "KDMV", 4) == 0)
         return {ModuleFormat::VMDK, 0, QStringLiteral("VMware Virtual Disk (VMDK)"), {}};
@@ -2130,13 +2190,13 @@ ModuleFormatInfo ModuleFormatDetector::detectBuffer(const QByteArray &data)
         std::memcmp(data.constData() + 3, "EXFAT   ", 8) == 0)
         return {ModuleFormat::EXFAT, 0, QStringLiteral("Microsoft exFAT volume"), {}};
 
-    // FAT boot sector: 0x55AA signature at 510 and a "FAT" label at 54 (FAT12/16)
-    // or 82 (FAT32). The label distinguishes it from NTFS/exFAT/MBR.
+    // FAT labels are optional; a valid BPB also identifies the volume.
     if (data.size() >= 512 &&
         static_cast<unsigned char>(data[510]) == 0x55 &&
         static_cast<unsigned char>(data[511]) == 0xAA &&
         ((data.size() >= 57 && std::memcmp(data.constData() + 54, "FAT", 3) == 0) ||
-         (data.size() >= 85 && std::memcmp(data.constData() + 82, "FAT", 3) == 0)))
+         (data.size() >= 85 && std::memcmp(data.constData() + 82, "FAT", 3) == 0) ||
+         hasFatBpb(data)))
         return {ModuleFormat::FAT, 0, QStringLiteral("FAT volume"), {}};
 
     if (data.size() >= 12 && data.startsWith("DOS") &&
@@ -2308,6 +2368,8 @@ ModuleFormatInfo ModuleFormatDetector::detectNestedBuffer(const QByteArray& data
         return {ModuleFormat::XBCOMPRESS, 0, QStringLiteral("Microsoft XBCOMPRESS file"), {}};
     if (data.size() >= 8 && std::memcmp(data.constData(), "MSWIM\0\0\0", 8) == 0)
         return {ModuleFormat::WIM, 0, QStringLiteral("Windows Imaging (WIM) image"), {}};
+    if (hasTibLegacyHeader(data)) return {ModuleFormat::TIB, 0, QStringLiteral("Acronis TIB backup"), {}};
+    if (hasTibxHeader(data)) return {ModuleFormat::TIBX, 0, QStringLiteral("Acronis TIBX backup"), {}};
     if (data.size() >= 4 && std::memcmp(data.constData(), "KDMV", 4) == 0)
         return {ModuleFormat::VMDK, 0, QStringLiteral("VMware Virtual Disk (VMDK)"), {}};
     if (data.size() >= 8 &&
@@ -2420,6 +2482,8 @@ QString ModuleFormatDetector::formatName(ModuleFormat format)
     case ModuleFormat::SIEMENS_FSF: return QStringLiteral("Siemens FSF");
     case ModuleFormat::ISO9660: return QStringLiteral("ISO 9660");
     case ModuleFormat::WIM: return QStringLiteral("WIM");
+    case ModuleFormat::TIBX: return QStringLiteral("TIBX");
+    case ModuleFormat::TIB: return QStringLiteral("TIB");
     case ModuleFormat::FAT: return QStringLiteral("FAT");
     case ModuleFormat::UDF: return QStringLiteral("UDF");
     case ModuleFormat::UFS: return QStringLiteral("UFS");

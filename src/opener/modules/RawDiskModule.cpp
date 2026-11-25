@@ -54,6 +54,7 @@ ModulePtr RawDiskModule::open(const fs::ByteStorePtr& disk, const QString& sourc
         return ModulePtr(std::move(module));
     }
 
+    const std::vector<fs::ByteStorePtr> contextStores = fs::makePartitionContextStores(disk, parts);
     for (std::size_t i = 0; i < parts.size(); ++i) {
         const fs::PartitionInfo& p = parts[i];
         ResourceEntry entry;
@@ -67,7 +68,9 @@ ModulePtr RawDiskModule::open(const fs::ByteStorePtr& disk, const QString& sourc
         entry.dataOffset = quint64(p.offset);
         entry.dataSize = quint64(p.length);
         entry.format = ModuleFormat::RAW_DISK;
-        entry.content = p.content ? p.content : std::make_shared<fs::SubStore>(disk, p.offset, p.length);
+        entry.content = p.content ? p.content : contextStores[i];
+        if (!entry.content)
+            entry.content = std::make_shared<fs::SubStore>(disk, p.offset, p.length);
         module->resources_.push_back(std::move(entry));
     }
     return ModulePtr(std::move(module));

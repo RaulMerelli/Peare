@@ -28,6 +28,7 @@ ModulePtr ParallelsModule::open(const fs::ByteStorePtr& f, const QString& name) 
         return ModulePtr(std::move(m));
     }
     auto parts = fs::readPartitionTable(m->disk_);
+    const auto contextStores = fs::makePartitionContextStores(m->disk_, parts);
     auto add = [&](QString n, std::int64_t o, std::int64_t l, fs::ByteStorePtr c = {}) {
         ResourceEntry r;
         r.type = QStringLiteral("DISK_PARTITION");
@@ -45,7 +46,7 @@ ModulePtr ParallelsModule::open(const fs::ByteStorePtr& f, const QString& name) 
     else
         for (std::size_t i = 0; i < parts.size(); ++i)
             add(QStringLiteral("Partition %1").arg(i + 1), parts[i].offset, parts[i].length,
-                parts[i].content);
+                parts[i].content ? parts[i].content : contextStores[i]);
     return ModulePtr(std::move(m));
 }
 ModulePtr ParallelsModule::open(const QString& p) {

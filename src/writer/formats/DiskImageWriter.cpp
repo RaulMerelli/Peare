@@ -1640,6 +1640,22 @@ bool DiskImageUpdate::canUpdate(const QString& imagePath) {
     return !targets(imagePath).empty();
 }
 
+bool DiskImageUpdate::updateCompanions(const QString& imagePath,
+                                       std::vector<QString>* paths) {
+    QFile image(imagePath);
+    if (!image.open(QIODevice::ReadOnly) ||
+        QFileInfo::exists(imagePath + QStringLiteral(".peare-journal")) ||
+        QFileInfo::exists(imagePath + QStringLiteral(".lck"))) return false;
+    paths->clear();
+    if (hasVmdkSignature(&image) || !hasVmdkDescriptor(&image)) return true;
+    VmdkSplitImageWriter disk(imagePath, false);
+    if (!disk.valid()) return false;
+    *paths = disk.extentPaths();
+    for (const QString& path : *paths)
+        if (QFileInfo::exists(path + QStringLiteral(".lck"))) return false;
+    return true;
+}
+
 static std::vector<DiskImageTarget> scanDiskImageTargets(const QString& imagePath) {
     std::vector<DiskImageTarget> result;
     QFile image(imagePath);
@@ -1748,6 +1764,11 @@ static std::vector<DiskImageTarget> scanDiskImageTargets(const QString& imagePat
         if (volume.mounted()) result.push_back(candidate);
     }
     return result;
+}
+
+std::vector<DiskImageTarget> DiskImageUpdate::inspectTargets(const QString& imagePath) {
+    if (QFileInfo::exists(imagePath + QStringLiteral(".peare-journal"))) return {};
+    return scanDiskImageTargets(imagePath);
 }
 
 std::vector<DiskImageTarget> DiskImageUpdate::targets(const QString& imagePath) {

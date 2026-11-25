@@ -7290,6 +7290,13 @@ peare_writer_status addFilesToImpl(
 
 } // namespace
 
+static thread_local bool readOnlyTargetProbe = false;
+
+static std::vector<peare::writer::DiskImageTarget> writerDiskTargets(const QString& path) {
+    return readOnlyTargetProbe ? peare::writer::DiskImageUpdate::inspectTargets(path)
+                               : peare::writer::DiskImageUpdate::targets(path);
+}
+
 extern "C" {
 
 peare_writer_status peare_writer_create(peare_writer_handle* outWriter) {
@@ -8835,7 +8842,7 @@ int peare_writer_can_add_files(const char* containerPathUtf8) {
         QTemporaryDir uueStage;
         std::vector<UueEntry> uueEntries;
         if (decodeUueArchive(&input, &uueStage, &uueEntries)) return 1;
-        return peare::writer::DiskImageUpdate::canUpdate(QString::fromUtf8(containerPathUtf8));
+        return !writerDiskTargets(QString::fromUtf8(containerPathUtf8)).empty();
     } catch (...) {
         return 0;
     }
@@ -8844,7 +8851,7 @@ int peare_writer_can_add_files(const char* containerPathUtf8) {
 size_t peare_writer_add_target_count(const char* containerPathUtf8) {
     if (!containerPathUtf8 || !*containerPathUtf8) return 0;
     try {
-        return peare::writer::DiskImageUpdate::targets(
+        return writerDiskTargets(
             QString::fromUtf8(containerPathUtf8)).size();
     } catch (...) {
         return 0;
@@ -8858,6 +8865,71 @@ size_t peare_writer_update_target_count(const char* containerPathUtf8) {
         return fatTargets ? fatTargets : 1;
     } catch (...) {
         return 0;
+    }
+}
+
+peare_writer_status peare_writer_get_update_target_disk_offset(
+    const char* path, size_t index, uint64_t* outOffset) {
+    if (!path || !*path || !outOffset) return PEARE_WRITER_INVALID_ARGUMENT;
+    *outOffset = 0;
+    try {
+        const auto targets = peare::writer::DiskImageUpdate::inspectTargets(QString::fromUtf8(path));
+        if (targets.empty()) return PEARE_WRITER_UNSUPPORTED_OPERATION;
+        if (index >= targets.size()) return PEARE_WRITER_INVALID_ARGUMENT;
+        *outOffset = uint64_t(targets[index].offset);
+        return PEARE_WRITER_OK;
+    } catch (...) {
+        return PEARE_WRITER_INTERNAL_ERROR;
+    }
+}
+
+peare_writer_status peare_writer_visit_update_targets(
+    const char* path, peare_writer_target_callback visit, void* context) {
+    if (!path || !*path || !visit) return PEARE_WRITER_INVALID_ARGUMENT;
+    struct Probe {
+        const bool previous = readOnlyTargetProbe;
+        Probe() { readOnlyTargetProbe = true; }
+        ~Probe() { readOnlyTargetProbe = previous; }
+    } probe;
+    const size_t count = peare_writer_update_target_count(path);
+    for (size_t index = 0; index < count; ++index) {
+        char name[1024] = {};
+        peare_writer_status status = peare_writer_get_update_target_name(
+            path, index, name, sizeof(name));
+        if (status != PEARE_WRITER_OK) return status;
+        peare_writer_update_capabilities capabilities = 0;
+        status = peare_writer_get_update_capabilities(path, index, &capabilities);
+        if (status != PEARE_WRITER_OK) return status;
+        if (!visit(context, index, name, capabilities)) break;
+    }
+    return PEARE_WRITER_OK;
+}
+
+peare_writer_status peare_writer_visit_update_files(
+    const char* path, const char* password, peare_writer_update_file_callback visit,
+    void* context) {
+    if (!path || !*path || !visit) return PEARE_WRITER_INVALID_ARGUMENT;
+    try {
+        const QString primary = QFileInfo(QString::fromUtf8(path)).absoluteFilePath();
+        QFile input(primary);
+        if (!input.open(QIODevice::ReadOnly)) return PEARE_WRITER_IO_ERROR;
+        const auto marker = input.read(7);
+        input.close();
+        std::vector<QString> paths;
+        if (marker.startsWith(QByteArray("Rar!\x1a\x07", 6))) {
+            if (!peare::writer::RarArchiveWriter::updateFiles(
+                    primary, QString::fromUtf8(password), &paths))
+                return PEARE_WRITER_UNSUPPORTED_OPERATION;
+        } else if (!peare::writer::DiskImageUpdate::updateCompanions(primary, &paths)) {
+            return PEARE_WRITER_UNSUPPORTED_OPERATION;
+        }
+        if (!visit(context, primary.toUtf8().constData())) return PEARE_WRITER_OK;
+        for (const QString& part : paths) {
+            if (part != primary && !visit(context, part.toUtf8().constData())) break;
+        }
+        return PEARE_WRITER_OK;
+    } catch (...) {
+        return PEARE_WRITER_INTERNAL_ERROR;
     }
 }
 
@@ -9041,7 +9113,7 @@ peare_writer_status peare_writer_get_add_target_name(const char* containerPathUt
         return PEARE_WRITER_INVALID_ARGUMENT;
     try {
         const std::vector<peare::writer::DiskImageTarget> targets =
-            peare::writer::DiskImageUpdate::targets(QString::fromUtf8(containerPathUtf8));
+            writerDiskTargets(QString::fromUtf8(containerPathUtf8));
         if (targetIndex >= targets.size()) return PEARE_WRITER_INVALID_ARGUMENT;
         QByteArray name = targets[targetIndex].label.toUtf8();
         if (targets[targetIndex].efiSystem) name += QByteArrayLiteral(" (EFI System)");

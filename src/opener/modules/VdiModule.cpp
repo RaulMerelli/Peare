@@ -42,6 +42,7 @@ ModulePtr VdiModule::buildFromDisk(const fs::ByteStorePtr& disk, const QString& 
     module->disk_ = disk;
 
     std::vector<fs::PartitionInfo> parts = fs::readPartitionTable(disk);
+    const auto contextStores = fs::makePartitionContextStores(disk, parts);
     auto addPartition = [&](const QString& name, std::int64_t off, std::int64_t len,
                             const fs::ByteStorePtr& content = fs::ByteStorePtr()) {
         ResourceEntry entry;
@@ -64,7 +65,7 @@ ModulePtr VdiModule::buildFromDisk(const fs::ByteStorePtr& disk, const QString& 
                 ? QStringLiteral("Partition %1").arg(i + 1)
                 : QStringLiteral("Partition %1 — %2").arg(i + 1)
                       .arg(QString::fromStdString(p.typeName));
-            addPartition(partitionName, p.offset, p.length, p.content);
+            addPartition(partitionName, p.offset, p.length, p.content ? p.content : contextStores[i]);
         }
     }
     return ModulePtr(std::move(module));

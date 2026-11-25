@@ -15,6 +15,24 @@
 namespace peare {
 namespace {
 
+class WimDirectoryStore final : public fs::IByteStore {
+public:
+    WimDirectoryStore(fs::ByteStorePtr source, std::shared_ptr<fs::WimReader> reader)
+        : source_(std::move(source)), reader_(std::move(reader)) {}
+
+    std::int64_t capacity() const override { return source_->capacity(); }
+    int read(std::int64_t pos, std::uint8_t* dst, int count) const override {
+        return source_->read(pos, dst, count);
+    }
+    bool cheapRandomAccess() const override { return source_->cheapRandomAccess(); }
+    bool validate() const override { return source_->validate(); }
+    const std::shared_ptr<fs::WimReader>& reader() const { return reader_; }
+
+private:
+    fs::ByteStorePtr source_;
+    std::shared_ptr<fs::WimReader> reader_;
+};
+
 std::uint16_t readLe16(const std::vector<std::uint8_t>& bytes, std::size_t offset) {
     if (offset + 2 > bytes.size()) return 0;
     return std::uint16_t(bytes[offset]) | (std::uint16_t(bytes[offset + 1]) << 8);
@@ -45,15 +63,12 @@ bool splitWimPaths(const QString& filePath, QStringList* paths, QString* error) 
     QFileInfo selected(filePath);
     QString firstBase = selected.completeBaseName();
     if (partNumber > 1) {
-        int digitStart = firstBase.size();
-        while (digitStart > 0 && firstBase.at(digitStart - 1).isDigit()) --digitStart;
-        bool suffixOk = false;
-        const uint suffix = firstBase.mid(digitStart).toUInt(&suffixOk);
-        if (digitStart == firstBase.size() || !suffixOk || suffix != partNumber) {
+        const QString partSuffix = QString::number(partNumber);
+        if (!firstBase.endsWith(partSuffix) || firstBase.size() == partSuffix.size()) {
             *error = QStringLiteral("Open the first part of the split WIM set");
             return false;
         }
-        firstBase.truncate(digitStart);
+        firstBase.chop(partSuffix.size());
     }
 
     const QString suffix = selected.completeSuffix();
@@ -81,14 +96,17 @@ ModulePtr WimModule::open(const fs::ByteStorePtr& disc, const QString& sourceNam
     module->info_.format = ModuleFormat::WIM;
     module->info_.description = QStringLiteral("Windows Imaging (WIM) image");
 
-    auto reader = std::make_shared<fs::WimReader>(disc);
+    const auto existing = std::dynamic_pointer_cast<WimDirectoryStore>(disc);
+    auto reader = existing ? existing->reader() : std::make_shared<fs::WimReader>(disc);
     if (!reader->valid()) {
         module->info_.error = QString::fromStdString(reader->error());
         return ModulePtr(std::move(module));
     }
     module->fs_ = reader;
     module->info_.description = QString::fromStdString(reader->friendlyName());
-    buildFsLevel(*reader, disc, subPath.toStdString(), ModuleFormat::WIM,
+    const fs::ByteStorePtr directoryStore = existing ? disc :
+        std::make_shared<WimDirectoryStore>(disc, reader);
+    buildFsLevel(*reader, directoryStore, subPath.toStdString(), ModuleFormat::WIM,
                  QStringLiteral("WIM_FILE"), QStringLiteral("WIM_DIR"), module->resources_);
     return ModulePtr(std::move(module));
 }
@@ -107,7 +125,9 @@ ModulePtr WimModule::open(const std::vector<fs::ByteStorePtr>& parts,
     }
     module->fs_ = reader;
     module->info_.description = QString::fromStdString(reader->friendlyName());
-    buildFsLevel(*reader, parts.front(), std::string(), ModuleFormat::WIM,
+    const fs::ByteStorePtr directoryStore =
+        std::make_shared<WimDirectoryStore>(parts.front(), reader);
+    buildFsLevel(*reader, directoryStore, std::string(), ModuleFormat::WIM,
                  QStringLiteral("WIM_FILE"), QStringLiteral("WIM_DIR"), module->resources_);
     return ModulePtr(std::move(module));
 }

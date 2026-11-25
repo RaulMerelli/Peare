@@ -80,13 +80,19 @@ public:
     Session& operator=(const Session&) = delete;
 
     bool openFile(const QString& path, QString* error = nullptr,
-                  const QString& password = QString());
+                  const QString& password = QString(),
+                  const QByteArray& tibxPrivateKey = QByteArray(),
+                  const QString& tibxKeyPassphrase = QString());
     void close();
     bool isOpen() const { return open_; }
     peare_status lastStatus() const { return lastStatus_; }
     peare_container_format containerFormat() const;
     QString description() const;
     QString password() const { return password_; }
+    QString tibxKeyPassphrase() const { return tibxKeyPassphrase_; }
+    QByteArray tibxPrivateKey() const {
+        return QByteArray(tibxPrivateKey_.constData(), tibxPrivateKey_.size());
+    }
     size_t folderCount() const;
     QString folderType(size_t folder) const;
     size_t resourceCount(size_t folder) const;
@@ -96,6 +102,10 @@ public:
     // Open the content of one of this session's resources as a nested child
     // session (a container inside a container). Returns null if it does not open
     // as a navigable container. Uses the unified source+open path.
+    std::unique_ptr<Session> openNested(size_t folder, size_t resource,
+                                        const QString& password, const QByteArray& tibxPrivateKey,
+                                        peare_status* status = nullptr,
+                                        const QString& tibxKeyPassphrase = QString()) const;
     std::unique_ptr<Session> openNested(size_t folder, size_t resource) const;
 
 private:
@@ -103,6 +113,8 @@ private:
     bool open_ = false;
     peare_status lastStatus_ = PEARE_STATUS_NOT_OPEN;
     QString password_;
+    QByteArray tibxPrivateKey_;
+    QString tibxKeyPassphrase_;
 };
 
 struct Preview {

@@ -74,7 +74,7 @@ if errorlevel 1 goto :fail
 echo.
 echo Compiling Release...
 cmake --build "%BUILD_DIR%" --config Release
-if errorlevel 1 goto :fail
+if not "%ERRORLEVEL%"=="0" goto :fail
 
 if not exist "%EXE_PATH%" (
     echo ERROR: executable not generated:

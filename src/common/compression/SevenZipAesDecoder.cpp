@@ -1,4 +1,5 @@
 #include "SevenZipAesDecoder.h"
+#include "AesInitialization.h"
 
 #include "third_party/lzma/Aes.h"
 #include "third_party/lzma/Sha256.h"
@@ -10,7 +11,6 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
-#include <mutex>
 
 namespace peare {
 namespace compression {
@@ -96,8 +96,7 @@ bool decryptSevenZipAes(const QByteArray& properties, const QString& password,
     std::array<std::uint8_t, AES_BLOCK_SIZE> iv = {};
     if (ivSize) std::memcpy(iv.data(), props + offset + saltSize, ivSize);
 
-    static std::once_flag aesTablesOnce;
-    std::call_once(aesTablesOnce, AesGenTables);
+    initializeAesTables();
     alignas(16) UInt32 ivAndSchedule[AES_NUM_IVMRK_WORDS] = {};
     Aes_SetKey_Dec(ivAndSchedule + 4, key.data(), unsigned(key.size()));
     AesCbc_Init(ivAndSchedule, iv.data());
@@ -170,8 +169,7 @@ bool encryptSevenZipAes(const QByteArray& properties, const QString& password,
     if (!deriveKey(salt, saltSize, passwordBytes, cyclesPower, &key)) return false;
     std::array<std::uint8_t, AES_BLOCK_SIZE> iv = {};
     if (ivSize) std::memcpy(iv.data(), props + offset + saltSize, ivSize);
-    static std::once_flag aesTablesOnce;
-    std::call_once(aesTablesOnce, AesGenTables);
+    initializeAesTables();
     alignas(16) UInt32 ivAndSchedule[AES_NUM_IVMRK_WORDS] = {};
     Aes_SetKey_Enc(ivAndSchedule + 4, key.data(), unsigned(key.size()));
     AesCbc_Init(ivAndSchedule, iv.data());

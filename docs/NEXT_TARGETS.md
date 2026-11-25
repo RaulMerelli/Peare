@@ -18,30 +18,62 @@ Add reader support first. Plan writer support after real-sample reader coverage.
 
 ### File systems and disk images
 
-- Microsoft ReFS, with version-specific samples and feature coverage.
-- Broader UFS1/FFS and UFS2/FFS2 coverage beyond the verified Solaris and BSD samples.
-- ZFS pools and datasets, including feature flags and pool-version differences.
-- Classic HFS (Mac OS Standard), in addition to the supported HFS+ and HFSX variants.
-- APFS containers and volumes, including snapshots and encryption where keys are available.
-- F2FS, Minix, ReiserFS, BeFS, and other Unix file systems found in local images.
-- JFFS2 and UBIFS images, including their flash and UBI layer requirements. Treat EROFS as a read-only target unless its format defines a safe write workflow.
-- Early NTFS v1.x volumes from Windows NT 3.1 and 3.5.
-- Cisco ASDM `.img` files.
-- Apple floppy images: DC42 and DART.
-- DMS Amiga disk images.
-- VDI and Parallels HDD variants, including differencing and snapshot layouts.
-- QCOW and QCOW2 writing, including backing files and external data files.
-- VHD and VHDX differencing chains and snapshot layouts.
-- LUKS1 and LUKS2 block-encryption containers. Define key handling before adding unlock or write support. Never infer the inner file system from encrypted data.
+- This is a broad inventory of known filesystem families and disk-image formats, not a support claim or a delivery order. The current support matrix remains authoritative. Names that identify a network service, virtual/pseudo filesystem, access method, or storage product are retained as future source types, not misrepresented as disk-image parsers.
+
+#### Block and removable-media filesystems
+
+- Microsoft ReFS, with version and feature coverage; early NTFS v1.x (Windows NT 3.1/3.5); broader NTFS compressed-data coverage including LZNT1.
+- Broader UFS1/FFS and UFS2/FFS2 coverage; distinguish Solaris, BSD, endian, fragment, and cylinder-group variants. Also identify IBM z/OS HFS and zFS separately from Apple HFS/HFS+.
+- ZFS pools and datasets, including feature flags, pool versions, vdev layouts, and encryption; APFS containers/volumes, snapshots, and encrypted volumes when keys are available; Classic HFS/MFS.
+- Bcachefs, HAMMER/HAMMER2, Btrfs (including Zstandard), NILFS, XFS (including XZ/LZO where applicable), ReiserFS/Reiser4, Minix, BeFS/OpenBFS, SkyFS, Fossil, and Plan 9 filesystems.
+- Historical and platform-specific disk filesystems: ADFS/DFS, Acorn ADFS, AdvFS, AthFS/AFS, System V BFS/BootFS, z/VM BFS, CP/M, Apple DOS 3.x, ProDOS, IRIX EFS, Files-11/ODS, Flex, HPFS, HTFS, IBM JFS variants, LFS, Macintosh MFS, TiVo MFS, NetWare FS/NSS, NeXT FS, Next3, OFS/FFS/PFS/SFS and variants for Amiga, OS-9, QNX4, Reliance/Reliance Nitro, RTEMS RFS, UDF variants, VxFS, and IBM zFS.
+- Existing readers also need broader variant review where applicable: FAT/FATX/VFAT and embedded variants; Ext feature combinations; XFS; SquashFS compression variants; UDF metadata, sparable, and virtual partition maps; HFS+/HFSX; UFS1/UFS2; and Android/Cisco `.img` layouts.
+
+#### Flash, embedded, and non-volatile-memory filesystems
+
+- 3FS; F2FS; JFFS/JFFS2; UBIFS with its UBI layer; EROFS; YAFFS; LogFS; SPIFFS; LittleFS; CHFS; JesFS; NOVA; WAFL; and Microsoft flash FFS1/FFS2 (distinct from the unrelated Amiga and BSD FFS names).
+- Embedded and commercial families: Reliance, Reliance Nitro, Reliance Velocity/Edge/Assure, Segger emFile, TrueFFS, ExtremeFFS, LSFS, TFAT, Palm NVFS, and XCFiles/exFAT implementations.
+- Cisco ASDM `.img`; Apple floppy DC42 and DART; Amiga DMS images. For raw-flash formats, preserve the distinction between a filesystem image, NAND/NOR geometry, and any UBI/translation layer.
+
+#### Record-oriented, mainframe, and structured storage
+
+- CMS filesystem/SFS for VM; Files-11 record attributes; Michigan Terminal System (MTS); OS4000 and Linked-OS; Pick OS; FlexOS/IBM 4680/Toshiba 4690 FAT record extensions.
+- IBM z/OS and z/VSE datasets and access methods: VSAM, BSAM, BPAM, and QSAM; DASD volume labels and VTOC metadata. These are dataset/volume structures, not ordinary directory filesystems.
+- Apple Newton Soup and database-like or application-managed stores when a real disk or sample image is available.
+
+#### Clustered, shared-disk, distributed, and network filesystems
+
+- Shared/clustered: CFS, CXFS, Dell Fluid/ExaFS, Blue Whale/BWFS, SAN File System, EMC Celerra HighRoad, GFS2, IBM GPFS/Spectrum Scale, Nasan, Oracle ACFS, OCFS2, QFS, ScoutFS, StorNext/CVFS, Veritas Storage Foundation, Xsan, VMFS, and clustered Files-11.
+- Distributed/network and fault-tolerant: 9P, AFS/OpenAFS/Arla, DCE/DFS, DECnet FAL/DAP, NCP/NetWare, NFS/pNFS, SMB/CIFS, OS4000 Linked-OS, SFS, Coda, Windows DFS, InterMezzo, LizardFS, MooseFS, Scality, Tahoe-LAFS, OpenHarmony HMDFS, Magma, MapRFS, AvereOS, Cloudian, Amazon S3, Office Groove/DoHyki, and ChironFS.
+- Parallel/object/cloud storage: BeeGFS, Lustre, PVFS/PVFS2/OrangeFS, Alluxio, CephFS/RADOS, dCache, Gfarm, GlusterFS, Google File System, HDFS, IBRIX Fusion, JuiceFS, ObjectiveFS, OneFS, OIO-FS, PanFS, Quobyte, RozoFS, SeaweedFS, XtreemFS, CloudStore/QFS, IBM Cloud Object Storage, Scality, IPFS, CRFS, POHMELFS, and DST.
+- These targets need a defined acquisition model (local metadata/image, protocol client, or exported snapshot) before they can be treated as openable files. A network protocol alone is not a disk format.
+
+#### Stacked, special-purpose, pseudo, and encrypted filesystems
+
+- Stacked/union and boot/read-only: aufs, UnionFS, OverlayFS, AXFS, UnixWare BootFS, Linux CDFS/CDfs, experimental Compact Disc FS, CramFS, romfs, SquashFS, UMSDOS/UVFAT, and Venti/Fossil.
+- Interfaces and mounted sources: davfs2/WebDAV, FTPFS, Freenet, GmailFS, GridFS, LTFS, MVFS/ClearCase, Nexfs, Barracuda, lnfs, wikifs, Venti, and other filesystem-like object or tape stores.
+- Pseudo filesystems and kernel views: devfs, procfs, tmpfs, sysfs, debugfs, configfs, sysctlfs, kernfs, and WinFS. Filesystem interfaces include FUSE, LUFS, PUFFS, SSHFS, and VFS; treat these as access layers, not on-disk formats. Pseudo filesystems are live/system sources, not standalone disk images, unless an export format exists.
+- Encryption/container layer: LUKS1/LUKS2, eCryptfs, EncFS, Windows EFS, AIX EFS, ZFS encryption, and historical Rubberhose. Define key handling before unlock support; never infer an inner filesystem from encrypted bytes.
+
+#### Disk-image and virtual-disk formats
+
+- Raw and ambiguous extensions: `.raw`, `.img`, `.bin`, `.dd`, `.dsk`, and extensionless raw images; identify by content/partition structure and samples because these suffixes are not unique formats.
+- QEMU and related: raw, QCOW/QCOW2 (including backing chains, external data files, snapshots, encryption, and compression), legacy QED, legacy COW, Linux compressed loop (`.cloop`), and Bochs disk images (flat, growing, redolog, and undoable variants).
+- Microsoft/Hyper-V: VHD fixed/dynamic/differencing; VHDX fixed/dynamic/differencing and parent chains; AVHD/AVHDX differencing disks; VHD Set `.vhds` (documented suffix), with `.vhdset` retained as a requested alias to check against samples and implementations.
+- VMware: VMDK extent/layout variants, including monolithic and split flat/sparse, streamOptimized, hosted sparse, and VMFS-oriented variants; descriptor/extent combinations and parent chains.
+- VirtualBox and other hypervisors: VDI fixed/dynamic/differencing; Parallels `.hdd` bundles and `.hds` extents; Virtuozzo/OpenVZ ploop images, deltas, and snapshot metadata; Xen XVA/VHD variants; Virtual PC/Connectix VHD.
+- Apple: UDIF `.dmg`, sparse `.sparseimage`, banded `.sparsebundle`, and modern sparse ASIF images; validate container and inner partition/filesystem layers separately.
+- Emulator and legacy hardfiles: Amiga `.hdf`; `.hda`; 86Box `.hdx`; PC-98 `.nhd`; generic `.dsk`; Bochs images; Apple DC42/DART; and other documented emulator-specific layouts.
+- Optical/removable images and containers: ISO 9660/UDF, CUE/BIN, CCD/IMG/SUB, MDS/MDF, NRG, CHD, CSO, and other track-based or compressed disc images. Keep these distinct from hard-disk virtual formats even when they use `.img` or `.bin`.
+- Include the requested suffixes explicitly in discovery/tests: `.raw`, `.img`, `.bin`, `.hdd`, `.hds`, `.qed`, `.cow`, `.vhds`/`.vhdset`, `.avhd`, `.avhdx`, `.dmg`, `.sparseimage`, `.sparsebundle`, `.hdf`, `.hda`, `.hdx`, `.nhd`, `.dsk`, plus Bochs and ploop images (whose filenames/layouts are not standardized to one suffix).
+- VDI, Parallels HDD, QCOW/QCOW2, VHD/VHDX, VMDK, XVA, raw floppy/disk, and selected optical images already appear in the support matrix. For them, target the missing variants and coverage, not a duplicate format claim.
+
 - Additional file-system write support beyond FAT and Ext.
-- Btrfs Zstandard compression.
-- XFS and SquashFS XZ or LZO compression.
-- NTFS LZNT1 decompression for compressed `$DATA` attributes.
-- UDF metadata, sparable, and virtual partition maps.
+- Btrfs Zstandard compression; XFS and SquashFS XZ/LZO coverage; UDF partition-map variants.
 
 ### Backup and imaging
 
-- Acronis TIB and TIBX.
+- Acronis TIB and TIBX: [reader research](formats/ACRONIS_READER.md).
 - Veeam VBK, VIM, and VRB.
 
 ### Firmware and executable images
@@ -61,6 +93,29 @@ Add reader support first. Plan writer support after real-sample reader coverage.
 - Android APK signature verification. Peare reports v2/v3/v3.1 signer metadata
   and the v3 certificate lineage but does not verify signatures.
 - Android Binary XML manifest decoding is supported.
+- Add readers for ACE, ALZ, BlackHole (BH), Brotli streams (BR), DAA 1.0,
+  EGG, ISZ, PMA, PEA, XXE, and ZPAQ archives.
+- Add standalone LZ4 stream support. Keep this distinct from the raw LZ4
+  compression supported inside XNB files.
+- Add support for generic self-extracting archive executables (SFX), including
+  7-Zip SFX. NSIS installers are already supported; do not treat that as
+  support for every EXE SFX layout.
+- Audit encryption by container and method. 7z AES-256 and encrypted RAR4/RAR5
+  headers and members are supported when a password is supplied. Document and
+  implement any remaining encrypted archive variants through the public ABI.
+- Validate format coverage against independent samples for ambiguous `.img` and
+  `.bin` inputs. Existing support covers specific disk/floppy images and
+  CUE/BIN optical images, not every file with those suffixes.
+- Expand XZ support to blocks using Delta and BCJ filters; current XZ support
+  accepts one LZMA2 filter per block.
+- Validate ISO/UDF combinations and broaden UDF partition-map coverage. Current
+  support includes Joliet, standard ISO, raw Mode 2, and UDF Type 1 partitions.
+- The raised ZIP, 7z/LZMA2, ZIPX/XZ, TAR family, TGZ, GZ, XZ, LHA/LZH (including
+  LH7), ISO/Joliet, ARJ, BZ2, CAB, MSI compound files, DEB, LZ/LZMA, RAR/RAR5,
+  TBZ/TBZ2, TLZ, TXZ, UDF, WIM, XPI, Z, UU/UUE, ASAR, Zstandard, and NSIS
+  variants already have reader support listed in the [format matrix](SUPPORTED_FORMATS.md).
+  Continue testing their documented variants; do not add duplicate format
+  targets. `AES` is an encryption method, not a standalone archive format.
 - Reduce memory use and decode time for very large archive members.
 - 7z archive files and decoded members larger than the Qt 5 `QByteArray` limit.
 - Identify the `.tpz` extension shown by 7-Zip from a real sample before planning support.
@@ -100,6 +155,11 @@ samples in test code. Do not add restricted samples to the repository. See the
 - [Linux kernel ext4 structures](https://docs.kernel.org/filesystems/ext4/)
 - [Linux kernel F2FS documentation](https://docs.kernel.org/filesystems/f2fs.html)
 - [Linux kernel UBIFS documentation](https://docs.kernel.org/filesystems/ubifs.html)
+- [List of file systems](https://en.wikipedia.org/wiki/List_of_file_systems) (broad seed inventory; includes disk, flash, record-oriented, cluster, network, special-purpose, pseudo, and encrypted families)
+- [QEMU disk image formats](https://www.qemu.org/docs/master/system/images.html)
+- [QEMU image utility and supported formats](https://www.qemu.org/docs/master/tools/qemu-img.html)
+- [Microsoft VHD Set protocol specification](https://learn.microsoft.com/en-ie/openspecs/windows_protocols/ms-rsvd/f75103f4-eaf1-446e-bef9-3e293e0e767c)
+- [Apple Disk Utility disk image formats](https://support.apple.com/guide/disk-utility/create-a-disk-image-dskutl11888/22.7/mac/27)
 - [System V ELF Generic ABI](https://refspecs.linuxfoundation.org/elf/gabi4+/contents.html)
 - [Qualcomm MBN and SBL header implementation in coreboot](https://chromium.googlesource.com/chromiumos/third_party/coreboot/+/chromeos-2016.05/util/qualcomm/mbn_tools.py)
 - [UEFI Platform Initialization specifications](https://uefi.org/specifications)

@@ -483,7 +483,7 @@ QByteArray hashFile(const QString& path, bool* ok) {
     return hash.result();
 }
 
-bool extractWimResource(QFile* source, quint64 offset, quint64 storedSize,
+bool extractWimResource(QIODevice* source, quint64 offset, quint64 storedSize,
                         quint64 originalSize, quint8 flags, quint32 compressionFlag,
                         quint32 chunkSize, QIODevice* destination) {
     if (!source || !destination || offset > quint64(source->size()) ||
@@ -604,6 +604,14 @@ void appendDirectoryEntries(const Node& node, QByteArray* metadata,
                             const std::vector<QByteArray>& streamData,
                             const std::vector<quint16>& streamCounts,
                             const std::vector<quint32>& securityIds,
+                            const std::vector<quint32>& attributes,
+                            const std::vector<quint32>& unknown54,
+                            const std::vector<quint64>& inodeUnions,
+                            const std::vector<quint64>& creationTimes,
+                            const std::vector<quint64>& accessTimes,
+                            const std::vector<quint64>& writeTimes,
+                            const std::vector<QByteArray>& recordHashes,
+                            const std::vector<QByteArray>& recordTails,
                             quint32 defaultSecurityId,
                             quint64 baseOffset) {
     Q_UNUSED(baseOffset);
@@ -615,29 +623,39 @@ void appendDirectoryEntries(const Node& node, QByteArray* metadata,
         const std::size_t index = child.entry >= 0 ? std::size_t(child.entry) : 0;
         const QByteArray shortName = child.entry >= 0 ? shortNames[index] : QByteArray();
         const QByteArray streams = child.entry >= 0 ? streamData[index] : QByteArray();
+        const QByteArray recordTail = child.entry >= 0 ? recordTails[index] : QByteArray();
         const quint16 streamCount = child.entry >= 0 ? streamCounts[index] : 0;
-        const quint64 recordSize = quint64((102 + shortName.size() + name.size() + 7) & ~7) + 8;
+        const quint64 recordSize = quint64((102 + name.size() + 2 + shortName.size() +
+                                            recordTail.size() + 7) & ~7);
         const int recordStart = metadata->size();
         put64(metadata, recordSize);
-        put32(metadata, directory ? kDirectoryAttribute : 0x20);
+        quint32 entryAttributes = child.entry >= 0 ? attributes[index] : 0;
+        if (entryAttributes == 0) entryAttributes = directory ? kDirectoryAttribute : 0x20;
+        if (directory) entryAttributes |= kDirectoryAttribute;
+        else entryAttributes &= ~kDirectoryAttribute;
+        put32(metadata, entryAttributes);
         put32(metadata, child.entry >= 0
             ? securityIds[std::size_t(child.entry)] : defaultSecurityId);
         put64(metadata, 0);
         put64(metadata, 0);
         put64(metadata, 0);
-        const quint64 fileTime = 0;
-        put64(metadata, fileTime);
-        put64(metadata, fileTime);
-        put64(metadata, fileTime);
-        if (child.entry >= 0 && !directory) metadata->append(hashes[std::size_t(child.entry)]);
-        else metadata->append(QByteArray(20, '\0'));
-        put32(metadata, 0);
-        put64(metadata, 0);
+        put64(metadata, child.entry >= 0 ? creationTimes[index] : 0);
+        put64(metadata, child.entry >= 0 ? accessTimes[index] : 0);
+        put64(metadata, child.entry >= 0 ? writeTimes[index] : 0);
+        if (child.entry >= 0 && !directory) {
+            const QByteArray& hash = recordHashes[index].size() == 20
+                ? recordHashes[index] : hashes[index];
+            metadata->append(hash);
+        } else metadata->append(QByteArray(20, '\0'));
+        put32(metadata, child.entry >= 0 ? unknown54[index] : 0);
+        put64(metadata, child.entry >= 0 ? inodeUnions[index] : 0);
         put16(metadata, streamCount);
         put16(metadata, quint16(shortName.size()));
         put16(metadata, quint16(name.size()));
-        metadata->append(shortName);
         metadata->append(name);
+        metadata->append(QByteArray(2, '\0'));
+        metadata->append(shortName);
+        metadata->append(recordTail);
         while (metadata->size() < recordStart + qint64(recordSize))
             metadata->append('\0');
         metadata->append(streams);
@@ -651,7 +669,9 @@ void appendDirectoryEntries(const Node& node, QByteArray* metadata,
             (*metadata)[subdirectory.second + i] = char((childOffset >> (8 * i)) & 0xff);
             appendDirectoryEntries(*subdirectory.first, metadata, hashes, sizes,
                                    shortNames, streamData, streamCounts,
-                                   securityIds, defaultSecurityId, baseOffset);
+                                   securityIds, attributes, unknown54, inodeUnions,
+                                   creationTimes, accessTimes, writeTimes, recordHashes,
+                                   recordTails, defaultSecurityId, baseOffset);
     }
 }
 
@@ -773,7 +793,7 @@ bool WimImageWriter::canUpdate(const QString& imagePath) {
            ((compression == 0 && !(flags & kWimCompression) && chunkSize == 0) ||
             (compression != 0 && (flags & kWimCompression) &&
              chunkSize == kDefaultChunkSize)) &&
-           get16(header, 40) == 1 && get16(header, 42) == 1 && get32(header, 44) > 0;
+           get16(header, 40) == 1 && get16(header, 42) == 1 && get32(header, 44) == 1;
 }
 
 bool WimImageWriter::beginUpdate(const QString& imagePath, QString* error) {
@@ -918,11 +938,19 @@ bool WimImageWriter::loadExisting(const QString& imagePath, QString* error) {
             const quint16 streamCount = get16(metadata, qsizetype(pos + 96));
             const quint16 nameLength = get16(metadata, qsizetype(pos + 100));
             const quint16 shortNameLength = get16(metadata, qsizetype(pos + 98));
-            const quint64 nameOffset = pos + 102 + shortNameLength;
+            const quint64 nameOffset = pos + 102;
+            const quint64 shortNameOffset = nameOffset + nameLength + 2;
             if ((nameLength & 1) || (shortNameLength & 1) ||
-                nameOffset + nameLength > pos + length) return false;
+                shortNameOffset + shortNameLength > pos + length ||
+                metadata.mid(qsizetype(nameOffset + nameLength), 2) != QByteArray(2, '\0'))
+                return false;
             Entry entry;
-            entry.shortName = metadata.mid(qsizetype(pos + 102), shortNameLength);
+            entry.recordHash = metadata.mid(qsizetype(pos + 64), 20);
+            entry.unknown54 = get32(metadata, qsizetype(pos + 84));
+            entry.inodeUnion = get64(metadata, qsizetype(pos + 88));
+            entry.shortName = metadata.mid(qsizetype(shortNameOffset), shortNameLength);
+            entry.recordTail = metadata.mid(qsizetype(shortNameOffset + shortNameLength),
+                qsizetype(pos + length - shortNameOffset - shortNameLength));
             entry.streamCount = streamCount;
             quint64 streamOffset = pos + length;
             const quint64 streamDataOffset = streamOffset;
@@ -965,15 +993,7 @@ bool WimImageWriter::loadExisting(const QString& imagePath, QString* error) {
                 auto resource = resources.find(hash);
                 if (resource != resources.end()) {
                     if (!inBounds(resource->second)) return false;
-                    const QString stagedPath = staging_->filePath(
-                        QStringLiteral("entry-%1.bin").arg(nextStagedFile_++));
-                    QFile staged(stagedPath);
-                    if (!staged.open(QIODevice::WriteOnly) ||
-                        !extractWimResource(&input, resource->second.offset,
-                            resource->second.size, resource->second.originalSize,
-                            resource->second.flags, compressionFlag_, chunkSize_, &staged))
-                        return false;
-                    entry.stagedPath = stagedPath;
+                    entry.originalSize = resource->second.originalSize;
                 } else if (hash != QByteArray(20, '\0')) {
                     return false;
                 }
@@ -1152,7 +1172,10 @@ bool WimImageWriter::writeImage(QString* error) {
         return false;
     }
     QByteArray placeholder(kHeaderSize, '\0');
-    if (!checkedWrite(&output, placeholder)) return false;
+    if (!checkedWrite(&output, placeholder)) {
+        if (error) *error = output.errorString();
+        return false;
+    }
     WimIntegrityBuilder integrity(integrityChunkSize_);
     WimIntegrityBuilder* integrityOutput = integrityChunkSize_ ? &integrity : nullptr;
 
@@ -1173,6 +1196,14 @@ bool WimImageWriter::writeImage(QString* error) {
     std::vector<QByteArray> streamData(entries_.size());
     std::vector<quint16> streamCounts(entries_.size());
     std::vector<quint32> securityIds(entries_.size(), 0);
+    std::vector<quint32> attributes(entries_.size(), 0);
+    std::vector<quint32> unknown54(entries_.size(), 0);
+    std::vector<quint64> inodeUnions(entries_.size(), 0);
+    std::vector<quint64> creationTimes(entries_.size(), 0);
+    std::vector<quint64> accessTimes(entries_.size(), 0);
+    std::vector<quint64> writeTimes(entries_.size(), 0);
+    std::vector<QByteArray> recordHashes(entries_.size());
+    std::vector<QByteArray> recordTails(entries_.size());
     std::map<QByteArray, int> resourceByHash;
     std::map<quint64, quint64> offsetMap;
     QFile oldImage(sourcePath_);
@@ -1184,8 +1215,14 @@ bool WimImageWriter::writeImage(QString* error) {
         if (i == selectedMetadataIndex_) continue;
         const ExistingResource& old = sourceResources_[i];
         if (old.offset > quint64(oldImage.size()) ||
-            old.size > quint64(oldImage.size()) - old.offset ||
-            !oldImage.seek(qint64(old.offset))) return false;
+            old.size > quint64(oldImage.size()) - old.offset) {
+            if (error) *error = QStringLiteral("A retained WIM resource is out of bounds.");
+            return false;
+        }
+        if (!oldImage.seek(qint64(old.offset))) {
+            if (error) *error = oldImage.errorString();
+            return false;
+        }
         Resource resource;
         resource.hash = old.hash;
         resource.tableRecord = old.tableRecord;
@@ -1203,8 +1240,14 @@ bool WimImageWriter::writeImage(QString* error) {
             const qint64 count = qint64(qMin<quint64>(remaining,
                 quint64(buffer.size())));
             const QByteArray bytes = oldImage.read(count);
-            if (bytes.size() != count || !writeTracked(&output, bytes, integrityOutput))
+            if (bytes.size() != count) {
+                if (error) *error = oldImage.errorString();
                 return false;
+            }
+            if (!writeTracked(&output, bytes, integrityOutput)) {
+                if (error) *error = output.errorString();
+                return false;
+            }
             remaining -= quint64(count);
         }
         offsetMap[old.offset] = resource.offset;
@@ -1214,10 +1257,22 @@ bool WimImageWriter::writeImage(QString* error) {
     }
     for (std::size_t i = 0; i < entries_.size(); ++i) {
         securityIds[i] = entries_[i].securityId;
+        attributes[i] = entries_[i].attributes;
+        unknown54[i] = entries_[i].unknown54;
+        inodeUnions[i] = entries_[i].inodeUnion;
+        creationTimes[i] = entries_[i].creationTime;
+        accessTimes[i] = entries_[i].accessTime;
+        writeTimes[i] = entries_[i].writeTime;
+        recordTails[i] = entries_[i].recordTail;
         shortNames[i] = entries_[i].shortName;
         streamData[i] = entries_[i].streamData;
         streamCounts[i] = entries_[i].streamCount;
         if (entries_[i].directory) continue;
+        if (entries_[i].fromExisting && entries_[i].stagedPath.isEmpty()) {
+            hashes[i] = entries_[i].originalHash;
+            sizes[i] = entries_[i].originalSize;
+            continue;
+        }
         if (entries_[i].stagedPath.isEmpty()) {
             hashes[i] = QByteArray(20, '\0');
             sizes[i] = 0;
@@ -1249,8 +1304,10 @@ bool WimImageWriter::writeImage(QString* error) {
             while (!input.atEnd()) {
                 const qint64 count = input.read(buffer.data(), buffer.size());
                 if (count < 0 || (count > 0 && !writeTracked(
-                        &output, buffer.constData(), count, integrityOutput)))
+                        &output, buffer.constData(), count, integrityOutput))) {
+                    if (error) *error = count < 0 ? input.errorString() : output.errorString();
                     return false;
+                }
             }
         } else {
             const quint64 chunkCount = (sizes[i] + chunkSize_ - 1) / chunkSize_;
@@ -1262,12 +1319,19 @@ bool WimImageWriter::writeImage(QString* error) {
             QByteArray chunkTable(int(tableSize), '\0');
             quint64 compressedOffset = 0;
             bool compressResource = input.seek(0);
+            if (!compressResource) {
+                if (error) *error = input.errorString();
+                return false;
+            }
             for (quint64 chunkIndex = 0; compressResource && chunkIndex < chunkCount;
                  ++chunkIndex) {
                 const qint64 count = qint64(qMin<quint64>(chunkSize_,
                     sizes[i] - chunkIndex * chunkSize_));
                 const QByteArray raw = input.read(count);
-                if (raw.size() != count) return false;
+                if (raw.size() != count) {
+                    if (error) *error = input.errorString();
+                    return false;
+                }
                 const QByteArray encoded = encodeWimChunk(compressionFlag_, raw);
                 if (encoded.isEmpty() || encoded.size() >= raw.size())
                     compressResource = false;
@@ -1286,17 +1350,25 @@ bool WimImageWriter::writeImage(QString* error) {
                     compressedOffset += quint64(encoded.size());
                 }
             }
-            if (!input.seek(0)) return false;
+            if (!input.seek(0)) {
+                if (error) *error = input.errorString();
+                return false;
+            }
             if (!compressResource) {
                 QByteArray buffer(1024 * 1024, Qt::Uninitialized);
                 while (!input.atEnd()) {
                     const qint64 count = input.read(buffer.data(), buffer.size());
                     if (count < 0 || (count > 0 && !writeTracked(
-                            &output, buffer.constData(), count, integrityOutput)))
+                            &output, buffer.constData(), count, integrityOutput))) {
+                        if (error) *error = count < 0 ? input.errorString() : output.errorString();
                         return false;
+                    }
                 }
             } else {
-            if (!writeTracked(&output, chunkTable, integrityOutput)) return false;
+            if (!writeTracked(&output, chunkTable, integrityOutput)) {
+                if (error) *error = output.errorString();
+                return false;
+            }
             quint64 chunkIndex = 0;
             quint64 encodedOffset = 0;
             while (!input.atEnd()) {
@@ -1304,19 +1376,34 @@ bool WimImageWriter::writeImage(QString* error) {
                     sizes[i] - chunkIndex * chunkSize_));
                 if (count <= 0) break;
                 const QByteArray raw = input.read(count);
-                if (raw.size() != count) return false;
+                if (raw.size() != count) {
+                    if (error) *error = input.errorString();
+                    return false;
+                }
                 QByteArray encoded = encodeWimChunk(compressionFlag_, raw);
-                if (encoded.isEmpty() || encoded.size() >= raw.size()) return false;
+                if (encoded.isEmpty() || encoded.size() >= raw.size()) {
+                    if (error) *error = QStringLiteral("WIM chunk encoding changed between passes.");
+                    return false;
+                }
                 if (chunkIndex != 0) {
                     const quint32 expectedOffset = get32(chunkTable,
                         qsizetype((chunkIndex - 1) * 4));
-                    if (encodedOffset != expectedOffset) return false;
+                    if (encodedOffset != expectedOffset) {
+                        if (error) *error = QStringLiteral("The WIM chunk offsets are inconsistent.");
+                        return false;
+                    }
                 }
-                if (!writeTracked(&output, encoded, integrityOutput)) return false;
+                if (!writeTracked(&output, encoded, integrityOutput)) {
+                    if (error) *error = output.errorString();
+                    return false;
+                }
                 encodedOffset += quint64(encoded.size());
                 ++chunkIndex;
             }
-            if (chunkIndex != chunkCount) return false;
+            if (chunkIndex != chunkCount) {
+                if (error) *error = QStringLiteral("The WIM chunk count changed between passes.");
+                return false;
+            }
             resource.flags = kResourceCompressed;
             }
         }
@@ -1324,9 +1411,18 @@ bool WimImageWriter::writeImage(QString* error) {
         resources.push_back(resource);
     }
     for (std::size_t i = 0; i < entries_.size(); ++i) {
+        recordHashes[i] = entries_[i].recordHash;
+        if (recordHashes[i].size() != 20 ||
+            recordHashes[i] == entries_[i].originalHash)
+            recordHashes[i] = hashes[i];
+    }
+    for (std::size_t i = 0; i < entries_.size(); ++i) {
         if (entries_[i].primaryStreamHashOffset >= 0) {
             const int hashOffset = entries_[i].primaryStreamHashOffset;
-            if (hashOffset > streamData[i].size() - 20) return false;
+            if (hashOffset > streamData[i].size() - 20) {
+                if (error) *error = QStringLiteral("A WIM stream hash is outside its metadata record.");
+                return false;
+            }
             streamData[i].replace(hashOffset, 20, hashes[i]);
         }
     }
@@ -1352,17 +1448,24 @@ bool WimImageWriter::writeImage(QString* error) {
             continue;
         }
         if (resource.flags & kResourceMetadata) continue;
-        const quint64 removed = oldUsage[resource.hash];
-        const quint64 added = newUsage[resource.hash];
-        if (removed > resource.refs) return false;
-        resource.refs = quint32(resource.refs - removed + added);
+        const quint64 knownOldRefs = oldUsage[resource.hash];
+        if (knownOldRefs != 0) {
+            const quint64 baseRefs = qMax<quint64>(resource.refs, knownOldRefs);
+            const quint64 updatedRefs = baseRefs - knownOldRefs + newUsage[resource.hash];
+            if (updatedRefs > std::numeric_limits<quint32>::max()) {
+                if (error) *error = QStringLiteral("A WIM resource reference count is too large.");
+                return false;
+            }
+            resource.refs = quint32(updatedRefs);
+        }
         QByteArray encodedRefs;
         put32(&encodedRefs, resource.refs);
         resource.tableRecord.replace(26, 4, encodedRefs);
     }
     resources.erase(std::remove_if(resources.begin(), resources.end(),
-        [](const Resource& resource) {
-            return !(resource.flags & kResourceMetadata) && resource.refs == 0;
+        [&](const Resource& resource) {
+            return !(resource.flags & kResourceMetadata) && resource.refs == 0 &&
+                   oldUsage[resource.hash] != 0;
         }), resources.end());
 
     Node root;
@@ -1415,13 +1518,83 @@ bool WimImageWriter::writeImage(QString* error) {
     const quint32 defaultSecurityId = 0;
     appendDirectoryEntries(root, &metadata, hashes, sizes, shortNames,
                            streamData, streamCounts, securityIds,
+                           attributes, unknown54, inodeUnions, creationTimes,
+                           accessTimes, writeTimes, recordHashes, recordTails,
                            defaultSecurityId, 0);
 
     Resource metadataResource;
     metadataResource.hash = QCryptographicHash::hash(metadata, QCryptographicHash::Sha1);
-    metadataResource.size = quint64(metadata.size());
     metadataResource.offset = quint64(output.pos());
-    if (!writeTracked(&output, metadata, integrityOutput)) return false;
+    metadataResource.originalSize = quint64(metadata.size());
+    if (compressionFlag_ == 0) {
+        metadataResource.size = metadataResource.originalSize;
+        metadataResource.flags = kResourceMetadata;
+        if (!writeTracked(&output, metadata, integrityOutput)) {
+            if (error) *error = output.errorString();
+            return false;
+        }
+    } else {
+        const quint64 chunkCount = (metadataResource.originalSize + chunkSize_ - 1) /
+                                   chunkSize_;
+        const quint64 tableSize = (chunkCount - 1) * 4;
+        if (chunkCount == 0 || tableSize > quint64(std::numeric_limits<int>::max())) {
+            if (error) *error = QStringLiteral("The WIM metadata chunk table is too large.");
+            return false;
+        }
+        QByteArray chunkTable(int(tableSize), '\0');
+        std::vector<QByteArray> encodedChunks;
+        encodedChunks.reserve(std::size_t(chunkCount));
+        quint64 encodedOffset = 0;
+        for (quint64 chunkIndex = 0; chunkIndex < chunkCount; ++chunkIndex) {
+            const quint64 start = chunkIndex * chunkSize_;
+            const qint64 length = qint64(qMin<quint64>(chunkSize_,
+                metadataResource.originalSize - start));
+            const QByteArray raw = metadata.mid(qsizetype(start), length);
+            const QByteArray encoded = encodeWimChunk(compressionFlag_, raw);
+            if (encoded.isEmpty()) {
+                if (error) *error = QStringLiteral("A WIM metadata chunk could not be encoded.");
+                return false;
+            }
+            if (chunkIndex != 0) {
+                if (encodedOffset > 0xffffffffull) {
+                    if (error) *error = QStringLiteral("The WIM metadata exceeds the chunk-offset range.");
+                    return false;
+                }
+                const quint32 value = quint32(encodedOffset);
+                for (unsigned byte = 0; byte < 4; ++byte)
+                    chunkTable[int((chunkIndex - 1) * 4 + byte)] =
+                        char((value >> (byte * 8)) & 0xff);
+            }
+            encodedOffset += quint64(encoded.size());
+            encodedChunks.push_back(encoded);
+        }
+        QByteArray encodedMetadata = chunkTable;
+        for (const QByteArray& encoded : encodedChunks) encodedMetadata.append(encoded);
+        QByteArray decodedMetadata;
+        QBuffer encodedInput(&encodedMetadata);
+        QBuffer decodedOutput(&decodedMetadata);
+        const bool encodedValid = encodedInput.open(QIODevice::ReadOnly) &&
+            decodedOutput.open(QIODevice::WriteOnly) &&
+            extractWimResource(&encodedInput, 0, quint64(encodedMetadata.size()),
+                metadataResource.originalSize,
+                kResourceMetadata | kResourceCompressed, compressionFlag_, chunkSize_,
+                &decodedOutput) && decodedMetadata == metadata;
+        if (encodedValid) {
+            if (!writeTracked(&output, encodedMetadata, integrityOutput)) {
+                if (error) *error = output.errorString();
+                return false;
+            }
+            metadataResource.size = quint64(encodedMetadata.size());
+            metadataResource.flags = kResourceMetadata | kResourceCompressed;
+        } else {
+            metadataResource.size = metadataResource.originalSize;
+            metadataResource.flags = kResourceMetadata;
+            if (!writeTracked(&output, metadata, integrityOutput)) {
+                if (error) *error = output.errorString();
+                return false;
+            }
+        }
+    }
 
     QByteArray table;
     QByteArray metadataRecord;
@@ -1429,14 +1602,14 @@ bool WimImageWriter::writeImage(QString* error) {
         metadataRecord = sourceResources_[selectedMetadataIndex_].tableRecord;
         offsetMap[sourceResources_[selectedMetadataIndex_].offset] = metadataResource.offset;
         metadataRecord.replace(0, 24, resourceHeader(metadataResource.size,
-            metadataResource.offset, metadataResource.size, kResourceMetadata));
+            metadataResource.offset, metadataResource.originalSize, metadataResource.flags));
         QByteArray referenceCount;
         put32(&referenceCount, 1);
         metadataRecord.replace(26, 4, referenceCount);
         metadataRecord.replace(30, 20, metadataResource.hash);
     } else {
         metadataRecord = resourceHeader(metadataResource.size, metadataResource.offset,
-                                        metadataResource.size, kResourceMetadata);
+                                        metadataResource.originalSize, metadataResource.flags);
         put16(&metadataRecord, 1);
         put32(&metadataRecord, 1);
         metadataRecord.append(metadataResource.hash);
@@ -1454,7 +1627,10 @@ bool WimImageWriter::writeImage(QString* error) {
         }
     }
     const quint64 tableOffset = quint64(output.pos());
-    if (!writeTracked(&output, table, integrityOutput)) return false;
+    if (!writeTracked(&output, table, integrityOutput)) {
+        if (error) *error = output.errorString();
+        return false;
+    }
 
     QByteArray integrityTable;
     if (integrityOutput) {
@@ -1514,9 +1690,15 @@ bool WimImageWriter::writeImage(QString* error) {
         xmlUtf16 = updatedXml;
     }
     const quint64 xmlOffset = quint64(output.pos());
-    if (!checkedWrite(&output, xmlUtf16)) return false;
+    if (!checkedWrite(&output, xmlUtf16)) {
+        if (error) *error = output.errorString();
+        return false;
+    }
     const quint64 integrityOffset = quint64(output.pos());
-    if (!integrityTable.isEmpty() && !checkedWrite(&output, integrityTable)) return false;
+    if (!integrityTable.isEmpty() && !checkedWrite(&output, integrityTable)) {
+        if (error) *error = output.errorString();
+        return false;
+    }
 
     QByteArray header;
     if (sourceHeader_.size() == kHeaderSize) {
@@ -1532,7 +1714,10 @@ bool WimImageWriter::writeImage(QString* error) {
         if (bootSize) {
             const quint64 oldBootOffset = get64(sourceHeader_, 104);
             auto mapped = offsetMap.find(oldBootOffset);
-            if (mapped == offsetMap.end()) return false;
+            if (mapped == offsetMap.end()) {
+                if (error) *error = QStringLiteral("The WIM boot resource was not retained.");
+                return false;
+            }
             auto oldBoot = std::find_if(sourceResources_.begin(), sourceResources_.end(),
                 [&](const ExistingResource& resource) {
                     return resource.offset == oldBootOffset;
@@ -1543,8 +1728,8 @@ bool WimImageWriter::writeImage(QString* error) {
             quint8 newFlags = oldBoot->flags;
             if (std::size_t(oldBoot - sourceResources_.begin()) == selectedMetadataIndex_) {
                 newSize = metadataResource.size;
-                newOriginalSize = metadataResource.size;
-                newFlags = kResourceMetadata;
+                newOriginalSize = metadataResource.originalSize;
+                newFlags = metadataResource.flags;
             }
             header.replace(96, 24, resourceHeader(newSize, mapped->second,
                 newOriginalSize, newFlags));

@@ -1,4 +1,5 @@
 #include "Rar5Crypto.h"
+#include "../compression/AesInitialization.h"
 
 #include "../../opener/compression/third_party/lzma/Aes.h"
 
@@ -6,7 +7,6 @@
 
 #include <array>
 #include <cstring>
-#include <mutex>
 
 namespace peare {
 namespace compression {
@@ -72,8 +72,7 @@ bool decryptRar5AesCbc(const QByteArray& key, const std::uint8_t* iv,
 {
     if (key.size() != 32 || !iv || !data || (data->size() & 15U) != 0)
         return false;
-    static std::once_flag aesTablesOnce;
-    std::call_once(aesTablesOnce, AesGenTables);
+    initializeAesTables();
     alignas(16) UInt32 ivAndSchedule[AES_NUM_IVMRK_WORDS] = {};
     Aes_SetKey_Dec(ivAndSchedule + 4,
                    reinterpret_cast<const Byte*>(key.constData()), 32);

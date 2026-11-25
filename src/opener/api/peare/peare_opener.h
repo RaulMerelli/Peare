@@ -22,12 +22,35 @@ PEARE_OPENER_API peare_status peare_opener_create(peare_opener_handle *out_opene
 PEARE_OPENER_API void peare_opener_destroy(peare_opener_handle opener);
 PEARE_OPENER_API peare_status peare_opener_set_password(peare_opener_handle opener,
                                                         const char *password_utf8);
+/* Copies the key bytes; pass NULL and zero length to clear the key. */
+PEARE_OPENER_API peare_status peare_opener_set_tibx_private_key(peare_opener_handle opener,
+                                                                const uint8_t *bytes,
+                                                                size_t length);
+PEARE_OPENER_API peare_status peare_opener_set_tibx_key_passphrase(peare_opener_handle opener,
+                                                                   const char *passphrase_utf8);
+/* Positioned reads can occur concurrently. Short reads are retried.
+ * See API_OPENER.md for errors, lifetime and callback requirements. */
+typedef peare_status (*peare_source_read_callback)(void *context, uint64_t offset,
+                                                   uint8_t *buffer, size_t capacity,
+                                                   size_t *out_read);
+typedef void (*peare_source_release_callback)(void *context);
+
+/* name_utf8 is an optional format hint, not a path. Peare retains context
+ * on success and invokes release after the last dependent handle is destroyed. */
+PEARE_OPENER_API peare_status peare_source_create_callback(
+    uint64_t length, const char *name_utf8, void *context,
+    peare_source_read_callback read, peare_source_release_callback release,
+    peare_source_handle *out_source);
 /* Open files and nested resources through the same source interface.
  */
 PEARE_OPENER_API peare_status peare_resource_get_source(peare_resource_handle resource,
                                                         peare_source_handle *out_source);
 PEARE_OPENER_API peare_status peare_opener_open(peare_opener_handle opener,
                                                 peare_source_handle source);
+/* Open an ordered set of physical sources without concatenating them. */
+PEARE_OPENER_API peare_status peare_opener_open_parts(peare_opener_handle opener,
+                                                      const peare_source_handle *parts,
+                                                      size_t part_count);
 PEARE_OPENER_API void peare_source_destroy(peare_source_handle source);
 
 /* Convenience shim over the unified path: open a file by path. */
@@ -60,6 +83,11 @@ PEARE_OPENER_API peare_status peare_resource_read(peare_resource_handle resource
                                                   uint8_t *buffer,
                                                   size_t capacity,
                                                   size_t *out_read);
+PEARE_OPENER_API peare_status peare_resource_read_original(peare_resource_handle resource,
+                                                           uint64_t offset,
+                                                           uint8_t *buffer,
+                                                           size_t capacity,
+                                                           size_t *out_read);
 PEARE_OPENER_API peare_status peare_resource_get_context(peare_resource_handle resource,
                                                   peare_resource_context *out_context);
 PEARE_OPENER_API peare_status peare_resource_get_archive_path(

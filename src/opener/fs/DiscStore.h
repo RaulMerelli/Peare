@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -51,6 +52,19 @@ public:
     }
 
     // Convenience helpers layered on read().
+    // Returns false on an error or premature EOF; dst may contain partial data.
+    bool readExactlyChecked(std::int64_t pos, std::uint8_t* dst, int count) const {
+        if (pos < 0 || count < 0 || (count != 0 && !dst) ||
+            count > std::numeric_limits<std::int64_t>::max() - pos) return false;
+        int done = 0;
+        while (done < count) {
+            const int n = read(pos + done, dst + done, count - done);
+            if (n <= 0 || n > count - done) return false;
+            done += n;
+        }
+        return true;
+    }
+
     void readExactly(std::int64_t pos, std::uint8_t* dst, int count) const {
         int done = 0;
         while (done < count) {
@@ -164,6 +178,7 @@ public:
         : parent_(std::move(parent)), start_(start), length_(length) {}
 
     std::int64_t capacity() const override { return length_; }
+    bool validate() const override { return parent_ && parent_->validate(); }
 
     int read(std::int64_t pos, std::uint8_t* dst, int count) const override {
         if (!parent_ || pos < 0 || count <= 0 || pos >= length_) return 0;

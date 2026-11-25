@@ -230,6 +230,8 @@ PEARE_DECODER_API peare_status peare_font_render_glyph_indexes_with_codepage(
 
 PEARE_DECODER_API void peare_blob_array_free(peare_blob_array *array);
 PEARE_DECODER_API void peare_font_codepoint_array_free(peare_font_codepoint_array *array);
+/* Release the Decoder-owned font runtime on the thread that created it. */
+PEARE_DECODER_API void peare_decoder_release_font_runtime(void);
 PEARE_DECODER_API void peare_value_free(peare_value *value);
 
 #ifdef __cplusplus

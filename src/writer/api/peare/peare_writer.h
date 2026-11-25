@@ -114,6 +114,19 @@ PEARE_WRITER_API peare_writer_status peare_writer_get_update_capabilities(
     peare_writer_update_capabilities *out_capabilities);
 PEARE_WRITER_API size_t peare_writer_update_target_count(
     const char *container_path_utf8);
+/* Byte offset on the logical disk. Archive targets return UNSUPPORTED_OPERATION. */
+PEARE_WRITER_API peare_writer_status peare_writer_get_update_target_disk_offset(
+    const char *container_path_utf8, size_t target_index, uint64_t *out_offset);
+typedef int (*peare_writer_target_callback)(void *context, size_t index,
+    const char *name_utf8, peare_writer_update_capabilities capabilities);
+/* Inspect update targets without triggering disk journal recovery. */
+PEARE_WRITER_API peare_writer_status peare_writer_visit_update_targets(
+    const char *container_path_utf8, peare_writer_target_callback visit, void *context);
+/* Report the primary file, then the companion files required for a copy. */
+typedef int (*peare_writer_update_file_callback)(void *context, const char *path_utf8);
+PEARE_WRITER_API peare_writer_status peare_writer_visit_update_files(
+    const char *container_path_utf8, const char *password_utf8,
+    peare_writer_update_file_callback visit, void *context);
 PEARE_WRITER_API peare_writer_status peare_writer_get_update_target_name(
     const char *container_path_utf8, size_t target_index,
     char *name_buffer, size_t name_buffer_size);

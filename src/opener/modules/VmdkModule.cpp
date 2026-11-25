@@ -3,9 +3,9 @@
 
 #include "../fs/VmdkDisk.h"
 #include "../fs/PartitionTable.h"
+#include "../fs/QFileByteStore.h"
 
 #include <QDir>
-#include <QFile>
 #include <QFileInfo>
 
 #include <string>
@@ -14,20 +14,9 @@
 namespace peare {
 namespace {
 
-// Wraps a file path as a positioned store (mmap, falling back to a full read),
-// keeping the QFile alive for the store's lifetime.
 fs::ByteStorePtr storeForFile(const QString& path) {
-    auto holder = std::make_shared<QFile>(path);
-    if (!holder->open(QIODevice::ReadOnly)) return nullptr;
-    const qint64 size = holder->size();
-    uchar* mapped = size > 0 ? holder->map(0, size) : nullptr;
-    if (mapped)
-        return std::make_shared<fs::ExternalStore>(
-            reinterpret_cast<const std::uint8_t*>(mapped), std::int64_t(size),
-            std::static_pointer_cast<void>(holder));
-    const QByteArray bytes = holder->readAll();
-    return std::make_shared<fs::MemoryStore>(
-        reinterpret_cast<const std::uint8_t*>(bytes.constData()), std::size_t(bytes.size()));
+    auto store = std::make_shared<fs::QFileByteStore>(path);
+    return store->validate() ? store : nullptr;
 }
 
 }  // namespace
@@ -45,6 +34,7 @@ ModulePtr VmdkModule::buildFromDisk(const fs::ByteStorePtr& disk, const QString&
     module->disk_ = disk;
 
     std::vector<fs::PartitionInfo> parts = fs::readPartitionTable(disk);
+    const auto contextStores = fs::makePartitionContextStores(disk, parts);
     auto addPartition = [&](const QString& name, std::int64_t off, std::int64_t len,
                             const fs::ByteStorePtr& content = fs::ByteStorePtr()) {
         ResourceEntry entry;
@@ -67,7 +57,7 @@ ModulePtr VmdkModule::buildFromDisk(const fs::ByteStorePtr& disk, const QString&
                 ? QStringLiteral("Partition %1").arg(i + 1)
                 : QStringLiteral("Partition %1 — %2").arg(i + 1)
                       .arg(QString::fromStdString(p.typeName));
-            addPartition(partitionName, p.offset, p.length, p.content);
+            addPartition(partitionName, p.offset, p.length, p.content ? p.content : contextStores[i]);
         }
     }
     return ModulePtr(std::move(module));

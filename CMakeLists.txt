@@ -249,6 +249,8 @@ add_library(PeareOpener SHARED
     src/common/compression/SevenZipBcj2Decoder.cpp
     src/common/compression/SevenZipAesDecoder.h
     src/common/compression/SevenZipAesDecoder.cpp
+    src/common/compression/AesInitialization.h
+    src/common/compression/AesInitialization.cpp
     src/opener/compression/LzmaDecoder.h
     src/opener/compression/LzmaDecoder.cpp
     src/opener/compression/third_party/blast/blast.h
@@ -442,6 +444,67 @@ add_library(PeareOpener SHARED
     src/opener/fs/XpressDecoder.cpp
     src/opener/fs/WimReader.h
     src/opener/fs/WimReader.cpp
+    src/opener/fs/TibxPageStore.h
+    src/opener/fs/TibxPageStore.cpp
+    src/opener/fs/TibxItemMetadata.h
+    src/opener/fs/TibxItemMetadata.cpp
+    src/opener/fs/TibxImapComparator.h
+    src/opener/fs/TibxImapComparator.cpp
+    src/opener/fs/TibxImapLsm.h
+    src/opener/fs/TibxImapLsm.cpp
+    src/opener/fs/TibLegacyReader.h
+    src/opener/fs/TibLegacyReader.cpp
+    src/opener/fs/TibRandomAccessVolume.h
+    src/opener/fs/TibRandomAccessVolume.cpp
+    src/opener/fs/TibRandomAccessIndex.h
+    src/opener/fs/TibRandomAccessIndex.cpp
+    src/opener/fs/AcronisFatRestore.h
+    src/opener/fs/AcronisFatRestore.cpp
+    src/opener/fs/AcronisRestoredStore.h
+    src/opener/fs/AcronisRestoredStore.cpp
+    src/opener/fs/TibOldFileFields.h
+    src/opener/fs/TibOldFileFields.cpp
+    src/opener/fs/TibOldFileCatalog.h
+    src/opener/fs/TibOldFileCatalog.cpp
+    src/opener/fs/TibOldFileEnvelope.h
+    src/opener/fs/TibOldFileEnvelope.cpp
+    src/opener/fs/TibOldFileIndex.h
+    src/opener/fs/TibOldFileIndex.cpp
+    src/opener/fs/TibOldFileStore.h
+    src/opener/fs/TibOldFileStore.cpp
+    src/opener/fs/TibOldFileDirectory.h
+    src/opener/fs/TibOldFileDirectory.cpp
+    src/opener/fs/TibFileIndex.h
+    src/opener/fs/TibHeader.h
+    src/opener/fs/TibMacReader.h
+    src/opener/fs/TibMacReader.cpp
+    src/opener/fs/TibFileIndex.cpp
+    src/opener/fs/TibLegacyFileTree.h
+    src/opener/fs/TibLegacyFileTree.cpp
+    src/opener/fs/TibLegacyFileChunks.h
+    src/opener/fs/TibLegacyFileChunks.cpp
+    src/opener/fs/TibFileReader.h
+    src/opener/fs/TibFileReader.cpp
+    src/opener/fs/TibMultiVolumeStore.h
+    src/opener/fs/TibMultiVolumeStore.cpp
+    src/opener/fs/TibCbcStore.h
+    src/opener/fs/TibCbcStore.cpp
+    src/opener/fs/TibCbcBounds.h
+    src/opener/compression/TibxCrypto.h
+    src/opener/compression/TibxCrypto.cpp
+    src/opener/compression/TibxEncryptedPem.cpp
+    src/opener/compression/TibxRsa.h
+    src/opener/compression/TibxRsa.cpp
+    src/opener/compression/TibxSecureRandom.h
+    src/opener/compression/TibxSecureRandom.cpp
+    src/opener/compression/Grasshopper.h
+    src/opener/compression/Grasshopper.cpp
+    src/opener/compression/TibCrypto.h
+    src/opener/compression/TibCrypto.cpp
+    src/opener/fs/TibxVolumeStore.h
+    src/opener/fs/TibxVolumeStore.cpp
+    src/opener/compression/Lz4Block.h
+    src/opener/compression/Lz4Block.cpp
     src/opener/fs/FatReader.h
     src/opener/fs/FatReader.cpp
     src/opener/fs/AmigaFsReader.h
@@ -468,6 +531,7 @@ add_library(PeareOpener SHARED
     src/opener/fs/VhdxDisk.cpp
     src/opener/fs/PartitionTable.h
     src/opener/fs/PartitionTable.cpp
+    src/opener/fs/PartialPartitionTable.cpp
     src/opener/fs/LinuxRaid.h
     src/opener/fs/LinuxRaid.cpp
     src/opener/fs/DynamicDisk.h
@@ -499,6 +563,10 @@ add_library(PeareOpener SHARED
     src/opener/modules/IsoModule.cpp
     src/opener/modules/WimModule.h
     src/opener/modules/WimModule.cpp
+    src/opener/modules/TibxModule.h
+    src/opener/modules/TibxModule.cpp
+    src/opener/modules/TibModule.h
+    src/opener/modules/TibModule.cpp
     src/opener/modules/FatModule.h
     src/opener/modules/FatModule.cpp
     src/opener/modules/UdfModule.h
@@ -615,6 +683,10 @@ set_source_files_properties(
     src/opener/compression/third_party/lzma/Sha256.c
     PROPERTIES COMPILE_DEFINITIONS Z7_NO_CPU_FEATURES
 )
+if(UNIX AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    set_property(SOURCE src/opener/compression/third_party/lzma/Aes.c
+        APPEND PROPERTY COMPILE_OPTIONS -fvisibility=hidden)
+endif()
 set_source_files_properties(
     src/opener/compression/third_party/packmp3/packmp3.cpp
     PROPERTIES COMPILE_DEFINITIONS BUILD_LIB
@@ -644,6 +716,9 @@ target_include_directories(PeareOpener
 )
 target_link_libraries(PeareOpener PRIVATE
     ${PEARE_QT_CORE} ${PEARE_QT_CORE5COMPAT})
+if(WIN32)
+    target_link_libraries(PeareOpener PRIVATE bcrypt)
+endif()
 set_target_properties(PeareOpener PROPERTIES
     C_STANDARD 99
     C_STANDARD_REQUIRED YES
@@ -804,6 +879,8 @@ add_library(PeareWriter SHARED
     src/common/compression/UnixCompress.cpp
     src/common/compression/SevenZipAesDecoder.h
     src/common/compression/SevenZipAesDecoder.cpp
+    src/common/compression/AesInitialization.h
+    src/common/compression/AesInitialization.cpp
     src/common/compression/SevenZipBcj2Decoder.h
     src/common/compression/SevenZipBcj2Decoder.cpp
     src/writer/api/peare/peare_writer.h

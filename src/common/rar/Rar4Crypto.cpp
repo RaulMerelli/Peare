@@ -1,4 +1,5 @@
 #include "Rar4Crypto.h"
+#include "../compression/AesInitialization.h"
 
 #include "../../opener/compression/third_party/lzma/Aes.h"
 
@@ -7,7 +8,6 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
-#include <mutex>
 
 namespace peare {
 namespace compression {
@@ -62,8 +62,7 @@ bool decryptRar4Data(const QString& password, const std::uint8_t* salt,
     std::array<std::uint8_t, 16> key = {};
     std::array<std::uint8_t, 16> iv = {};
     if (!deriveRar3Key(password, salt, &key, &iv)) return false;
-    static std::once_flag tablesOnce;
-    std::call_once(tablesOnce, AesGenTables);
+    initializeAesTables();
     alignas(16) UInt32 state[AES_NUM_IVMRK_WORDS] = {};
     Aes_SetKey_Dec(state + 4, key.data(), unsigned(key.size()));
     AesCbc_Init(state, iv.data());

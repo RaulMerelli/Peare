@@ -83,7 +83,8 @@ def load_library(env_name, stem, cli_path=None):
     if not cli_path and os.environ.get(env_name):
         candidates.append(os.environ[env_name])
     names = [f"{stem}.dll", f"lib{stem}.so", f"lib{stem}.dylib"]
-    for build in ("build-windows/Release", "build-windows", "build/Release", "build"):
+    for build in ("build-windows/Release", "build-windows", "build-linux-x64",
+                  "build-linux-arm64", "build/Release", "build"):
         candidates.extend(str(ROOT / build / name) for name in names)
     path = next((Path(value) for value in candidates if value and Path(value).is_file()), None)
     if path is None:
@@ -123,7 +124,7 @@ def bind_opener(lib):
 
 
 def enum_names():
-    header = (ROOT / "src/opener/api/peare/peare_types.h").read_text(encoding="utf-8")
+    header = abi_header("opener", "peare_types.h")
     match = re.search(r"typedef enum peare_container_format\s*\{(.*?)\}", header, re.S)
     if not match:
         return {}
@@ -270,7 +271,7 @@ class OpenerSession:
                             return blob.read()
                         finally:
                             self.lib.peare_blob_free(C.byref(blob))
-                    if is_container:
+                    if is_container and target.startswith(path + "/"):
                         child = self.child(resource)
                         if child:
                             try:
@@ -302,12 +303,20 @@ def bind_decoder(lib):
 
 
 def decoder_info_ids():
-    header = (ROOT / "src/opener/api/peare/peare_types.h").read_text(encoding="utf-8")
+    header = abi_header("decoder", "peare_decoder.h")
     match = re.search(r"typedef enum peare_info_id\s*\{(.*?)\}", header, re.S)
     if not match:
         return []
     body = re.sub(r"/\*.*?\*/|//[^\n]*", "", match.group(1), flags=re.S)
     return list(enumerate(re.findall(r"PEARE_INFO_(\w+)", body)))
+
+
+def abi_header(component, name):
+    if getattr(sys, "frozen", False):
+        path = Path(sys._MEIPASS) / name
+    else:
+        path = ROOT / "src" / component / "api" / "peare" / name
+    return path.read_text(encoding="utf-8")
 
 
 def value_json(value):

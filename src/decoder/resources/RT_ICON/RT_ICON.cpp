@@ -10,6 +10,9 @@ namespace peare {
 namespace resources {
 namespace {
 
+const quint16 kMaxIcoImages = 1024;
+const quint64 kMaxIcoPixels = 16u * 1024u * 1024u;
+
 quint16 ReadUInt16(const QByteArray& data, qsizetype offset)
 {
     if (offset < 0 || offset + 2 > data.size())
@@ -155,6 +158,45 @@ QVector<QImage> RT_ICON::decode(const QByteArray& data)
 {
     const QImage image = Get(data);
     return image.isNull() ? QVector<QImage>{} : QVector<QImage>{image};
+}
+
+QVector<QImage> RT_ICON::decodeIcoFile(const QByteArray& data)
+{
+    if (data.size() < 6 || ReadUInt16(data, 0) != 0 ||
+        ReadUInt16(data, 2) != 1)
+        return {};
+
+    const quint16 count = ReadUInt16(data, 4);
+    const quint64 directoryEnd = 6u + quint64(count) * 16u;
+    if (count == 0 || count > kMaxIcoImages || directoryEnd > quint64(data.size()))
+        return {};
+
+    QVector<QImage> images;
+    images.reserve(count);
+    quint64 totalPixels = 0;
+    for (quint16 i = 0; i < count; ++i) {
+        const int entryOffset = 6 + int(i) * 16;
+        const quint8 widthByte = quint8(data.at(entryOffset));
+        const quint8 heightByte = quint8(data.at(entryOffset + 1));
+        const quint8 reserved = quint8(data.at(entryOffset + 3));
+        const quint32 imageSize = ReadUInt32(data, entryOffset + 8);
+        const quint32 imageOffset = ReadUInt32(data, entryOffset + 12);
+        const int width = widthByte == 0 ? 256 : widthByte;
+        const int height = heightByte == 0 ? 256 : heightByte;
+        const quint64 imageEnd = quint64(imageOffset) + imageSize;
+        const quint64 pixels = quint64(width) * quint64(height);
+        if (reserved != 0 || imageSize == 0 || imageOffset < directoryEnd ||
+            imageEnd > quint64(data.size()) || pixels > kMaxIcoPixels - totalPixels)
+            return {};
+
+        const QByteArray payload = data.mid(int(imageOffset), int(imageSize));
+        const QImage image = Get(payload);
+        if (image.isNull() || image.width() != width || image.height() != height)
+            return {};
+        images.append(image);
+        totalPixels += pixels;
+    }
+    return images;
 }
 
 ResourcePreview RT_ICON::preview(const ResourceEntry& entry)

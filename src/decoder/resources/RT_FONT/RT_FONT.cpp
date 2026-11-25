@@ -45,21 +45,32 @@ namespace peare {
 namespace resources {
 namespace {
 
+struct FontRuntime {
+    std::mutex mutex;
+    std::unique_ptr<QGuiApplication> application;
+};
+
+FontRuntime& fontRuntime()
+{
+    static FontRuntime runtime;
+    return runtime;
+}
+
 QGuiApplication* ensureFontGuiApplication()
 {
     if (QCoreApplication::instance())
         return qobject_cast<QGuiApplication*>(QCoreApplication::instance());
 
-    static std::mutex mutex;
-    static std::unique_ptr<QGuiApplication> application;
-    std::lock_guard<std::mutex> lock(mutex);
-    if (!application && !QCoreApplication::instance()) {
+    FontRuntime& runtime = fontRuntime();
+    std::lock_guard<std::mutex> lock(runtime.mutex);
+    if (!runtime.application && !QCoreApplication::instance()) {
         static int argc = 1;
         static char applicationName[] = "PeareDecoder";
         static char* argv[] = {applicationName, nullptr};
-        application.reset(new QGuiApplication(argc, argv));
+        argc = 1;
+        runtime.application.reset(new QGuiApplication(argc, argv));
     }
-    return application.get();
+    return runtime.application.get();
 }
 
 quint16 u16(const QByteArray& d, int o)
@@ -1994,6 +2005,13 @@ QImage renderSfnFont(const font::SfnFont& fontData, const QString& text, int sca
 }
 
 } // namespace
+
+void RT_FONT::ReleaseFontRuntime()
+{
+    FontRuntime& runtime = fontRuntime();
+    std::lock_guard<std::mutex> lock(runtime.mutex);
+    runtime.application.reset();
+}
 
 bool RT_FONT::LooksLikeWindowsFnt(const QByteArray& resData)
 {

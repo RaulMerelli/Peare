@@ -8,6 +8,7 @@ namespace resources {
 class RT_FONT final
 {
 public:
+    static void ReleaseFontRuntime();
     static ResourcePreview preview(const ResourceEntry& entry);
     static QImage renderText(const ResourceEntry& entry, const QString& text, int scale,
                              int padding, QRgb foregroundRgba, QRgb backgroundRgba,

@@ -76,6 +76,20 @@ jobs:
           path: dist/**
           if-no-files-found: error
 
+      - name: Package and check Peare MCP
+        run: |
+          python -m pip install PyInstaller==6.22.3
+          python tools/package_peare_mcp.py --runtime dist --qt-root "$QT_ROOT_DIR" --output tmp/mcp-release
+          mkdir -p tmp/mcp-unpack
+          tar xzf tmp/mcp-release/peare-mcp-linux-x64.tar.gz -C tmp/mcp-unpack
+          PEARE_MCP_EXE="$PWD/tmp/mcp-unpack/peare-mcp" python tests/run_tests.py -q tests/test_peare_mcp.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: peare-mcp-linux-x64
+          path: tmp/mcp-release/*
+          if-no-files-found: error
+
   windows:
     name: Windows x64 (Qt 5.15.2)
     runs-on: windows-2022
@@ -153,6 +167,24 @@ jobs:
         with:
           name: peare-windows-x64
           path: dist/**
+          if-no-files-found: error
+
+      - name: Package and check Peare MCP
+        shell: pwsh
+        run: |
+          python -m pip install PyInstaller==6.22.3
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python tools/package_peare_mcp.py --runtime dist --qt-root $env:QT_ROOT_DIR --offscreen build/test-plugins/platforms --output tmp/mcp-release
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Expand-Archive tmp/mcp-release/peare-mcp-windows-x64.zip tmp/mcp-unpack
+          $env:PEARE_MCP_EXE = (Resolve-Path tmp/mcp-unpack/PeareMcp.exe).Path
+          python tests/run_tests.py -q tests/test_peare_mcp.py
+          exit $LASTEXITCODE
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: peare-mcp-windows-x64
+          path: tmp/mcp-release/*
           if-no-files-found: error
 
   android:
@@ -266,6 +298,7 @@ jobs:
           cp artifacts/peare-android-arm64/android-build-debug.apk "$GITHUB_WORKSPACE/release/peare-${GITHUB_REF_NAME}-android-arm64.apk"
           cp "release/peare-${GITHUB_REF_NAME}-linux-x64.tar.gz" release/peare-linux-x64.tar.gz
           cp "release/peare-${GITHUB_REF_NAME}-windows-x64.zip" release/peare-windows-x64.zip
+          cp artifacts/peare-mcp-linux-x64/* artifacts/peare-mcp-windows-x64/* release/
           cp "release/peare-${GITHUB_REF_NAME}-android-arm64.apk" release/peare-android-arm64.apk
           ls -la release
 
@@ -296,6 +329,7 @@ jobs:
           ( cd artifacts/peare-linux-x64 && tar czf "$GITHUB_WORKSPACE/release/peare-linux-x64.tar.gz" . )
           ( cd artifacts/peare-windows-x64 && zip -r "$GITHUB_WORKSPACE/release/peare-windows-x64.zip" . )
           cp artifacts/peare-android-arm64/android-build-debug.apk release/peare-android-arm64.apk
+          cp artifacts/peare-mcp-linux-x64/* artifacts/peare-mcp-windows-x64/* release/
 
       - name: Update latest CI release
         env:

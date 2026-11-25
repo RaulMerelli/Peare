@@ -1,9 +1,11 @@
 #include "PartitionTable.h"
 #include "JfsReader.h"
+#include "../compression/Crc32.h"
 
 #include <algorithm>
 #include <climits>
 #include <cstring>
+#include <mutex>
 #include <set>
 
 namespace peare {
@@ -816,6 +818,337 @@ std::vector<PartitionInfo> readPartitionTable(const ByteStorePtr& disk,
         out.insert(out.end(), recovered.begin(), recovered.end());
     }
     return assembleOs2JfsVolumes(disk, out);
+}
+
+namespace {
+
+struct VerifiedPartition {
+    PartitionIdentity identity;
+    std::int64_t offset = 0;
+    std::int64_t length = 0;
+};
+
+bool exactPartitionRead(const ByteStorePtr& disk, std::int64_t offset,
+                        std::uint8_t* output, std::size_t length) {
+    if (!disk || !disk->validate() || offset < 0 || disk->capacity() < 0 ||
+        offset > disk->capacity() || length > static_cast<std::uint64_t>(disk->capacity() - offset)) return false;
+    while (length) {
+        const int n = static_cast<int>(std::min<std::size_t>(length, 65536));
+        const int got = disk->read(offset, output, n);
+        if (got <= 0 || got > n) return false;
+        offset += got; output += got; length -= static_cast<std::size_t>(got);
+    }
+    return disk->validate();
+}
+
+bool nonzeroGuid(const std::uint8_t* guid) {
+    for (unsigned int i = 0; i < 16; ++i) if (guid[i]) return true;
+    return false;
+}
+
+bool sameIdentity(const PartitionIdentity& a, const PartitionIdentity& b) {
+    if (a.scheme != b.scheme ||
+        (a.scheme != PartitionScheme::Mbr && a.scheme != PartitionScheme::Gpt)) return false;
+    if (a.scheme == PartitionScheme::Mbr)
+        return a.mbrDiskSignature == b.mbrDiskSignature && a.startOffset == b.startOffset;
+    return a.diskGuid == b.diskGuid && a.partitionGuid == b.partitionGuid;
+}
+
+class VerifiedPartitionResolver;
+
+class VerifiedPartitionStore final : public IByteStore {
+public:
+    VerifiedPartitionStore(ByteStorePtr disk, std::int64_t offset, std::int64_t length,
+                           std::shared_ptr<const VerifiedPartitionResolver> context)
+        : disk_(std::move(disk)), offset_(offset), length_(length), context_(std::move(context)) {}
+    std::int64_t capacity() const override { return length_; }
+    bool validate() const override { return disk_ && disk_->validate(); }
+    int read(std::int64_t pos, std::uint8_t* dst, int count) const override {
+        if (!disk_ || pos < 0 || count <= 0 || pos >= length_) return 0;
+        const int n = static_cast<int>(std::min<std::int64_t>(count, length_ - pos));
+        return disk_->read(offset_ + pos, dst, n);
+    }
+    std::int64_t offset() const { return offset_; }
+    std::int64_t length() const { return length_; }
+    const std::shared_ptr<const VerifiedPartitionResolver>& context() const { return context_; }
+private:
+    ByteStorePtr disk_;
+    std::int64_t offset_, length_;
+    std::shared_ptr<const VerifiedPartitionResolver> context_;
+};
+
+class VerifiedPartitionResolver final : public IPartitionResolver,
+                                        public std::enable_shared_from_this<VerifiedPartitionResolver> {
+public:
+    VerifiedPartitionResolver(ByteStorePtr disk, const std::vector<PartitionInfo>& parts,
+                              std::int64_t logicalSectorSize)
+        : disk_(std::move(disk)), sectorSize_(static_cast<std::uint64_t>(logicalSectorSize)) {
+        for (const PartitionInfo& part : parts) {
+            if (!part.content && part.offset >= 0 && part.length > 0) {
+                VerifiedPartition entry;
+                entry.offset = part.offset;
+                entry.length = part.length;
+                exposed_.push_back(entry);
+            }
+        }
+    }
+
+    bool identity(std::int64_t offset, std::int64_t length, PartitionIdentity* out) const {
+        if (!out) return false;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!refreshLocked()) return false;
+        const VerifiedPartition* found = nullptr;
+        for (const VerifiedPartition& part : verified_) {
+            if (part.offset != offset || part.length != length) continue;
+            if (found) return false;
+            found = &part;
+        }
+        if (!found) return false;
+        unsigned int exposed = 0;
+        for (const VerifiedPartition& part : exposed_)
+            if (part.offset == found->offset && part.length == found->length) ++exposed;
+        if (exposed != 1) return false;
+        unsigned int matches = 0;
+        for (const VerifiedPartition& part : verified_)
+            if (sameIdentity(part.identity, found->identity)) ++matches;
+        if (matches != 1) return false;
+        *out = found->identity;
+        return true;
+    }
+
+    PartitionResolveResult open(const PartitionIdentity& identity, ByteStorePtr* result) const override {
+        return openBound(nullptr, 0, 0, identity, result);
+    }
+
+    PartitionResolveResult openBound(const PartitionIdentity* origin, std::int64_t offset,
+                                     std::int64_t length, const PartitionIdentity& identity,
+                                     ByteStorePtr* result) const {
+        if (!result) return PartitionResolveResult::Unavailable;
+        result->reset();
+        if (identity.scheme != PartitionScheme::Mbr && identity.scheme != PartitionScheme::Gpt)
+            return PartitionResolveResult::Unknown;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!refreshLocked()) return PartitionResolveResult::Unavailable;
+        if (origin) {
+            unsigned int originMatches = 0, identityMatches = 0, exposedMatches = 0;
+            for (const VerifiedPartition& part : verified_) {
+                if (part.offset == offset && part.length == length && sameIdentity(part.identity, *origin))
+                    ++originMatches;
+                if (sameIdentity(part.identity, *origin)) ++identityMatches;
+            }
+            for (const VerifiedPartition& part : exposed_)
+                if (part.offset == offset && part.length == length) ++exposedMatches;
+            if (originMatches != 1 || identityMatches != 1 || exposedMatches != 1)
+                return PartitionResolveResult::Unavailable;
+        }
+        const VerifiedPartition* found = nullptr;
+        for (const VerifiedPartition& part : verified_) {
+            if (!sameIdentity(part.identity, identity)) continue;
+            if (found) return PartitionResolveResult::Ambiguous;
+            found = &part;
+        }
+        if (!found) return PartitionResolveResult::NotFound;
+        unsigned int exposed = 0;
+        for (const VerifiedPartition& part : exposed_)
+            if (part.offset == found->offset && part.length == found->length) ++exposed;
+        if (exposed != 1) return exposed ? PartitionResolveResult::Ambiguous : PartitionResolveResult::NotFound;
+        *result = std::make_shared<VerifiedPartitionStore>(disk_, found->offset, found->length,
+                                                           shared_from_this());
+        return PartitionResolveResult::Found;
+    }
+private:
+    bool refreshLocked() const {
+        try { return disk_ && disk_->validate() && discover() && disk_->validate(); }
+        catch (...) { return false; }
+    }
+
+    bool discover() const {
+        std::vector<std::uint8_t> mbr(512);
+        if (!exactPartitionRead(disk_, 0, mbr.data(), mbr.size()) ||
+            mbr[510] != 0x55 || mbr[511] != 0xaa) return false;
+        bool protective = false;
+        for (unsigned int i = 0; i < 4; ++i)
+            if (mbr[0x1be + i * 16 + 4] == 0xee) protective = true;
+        std::vector<VerifiedPartition> result;
+        if (protective) {
+            std::vector<std::uint8_t> header(static_cast<std::size_t>(sectorSize_));
+            if (!exactPartitionRead(disk_, static_cast<std::int64_t>(sectorSize_), header.data(), header.size()) ||
+                std::memcmp(header.data(), "EFI PART", 8) != 0) return false;
+            const std::uint32_t headerSize = le32(header.data() + 12);
+            const std::uint32_t headerCrc = le32(header.data() + 16);
+            if (headerSize < 92 || headerSize > header.size() || le64(header.data() + 24) != 1 ||
+                !nonzeroGuid(header.data() + 56)) return false;
+            std::fill(header.begin() + 16, header.begin() + 20, 0);
+            if (compression::crc32(header.data(), headerSize) != headerCrc) return false;
+            const std::uint64_t firstUsable = le64(header.data() + 40);
+            const std::uint64_t lastUsable = le64(header.data() + 48);
+            const std::uint64_t tableLba = le64(header.data() + 72);
+            const std::uint32_t count = le32(header.data() + 80);
+            const std::uint32_t entrySize = le32(header.data() + 84);
+            const std::uint64_t sectors = static_cast<std::uint64_t>(disk_->capacity()) / sectorSize_;
+            const std::uint64_t backupLba = le64(header.data() + 32);
+            if (firstUsable > lastUsable || lastUsable >= sectors || backupLba <= lastUsable ||
+                backupLba >= sectors || tableLba < 2 || tableLba >= firstUsable ||
+                !count || count > 4096 || entrySize < 128 || entrySize > 4096) return false;
+            const std::uint64_t tableSize = std::uint64_t(count) * entrySize;
+            if (tableSize > (firstUsable - tableLba) * sectorSize_ || tableSize > std::vector<std::uint8_t>().max_size()) return false;
+            std::vector<std::uint8_t> table(static_cast<std::size_t>(tableSize));
+            if (!exactPartitionRead(disk_, static_cast<std::int64_t>(tableLba * sectorSize_), table.data(), table.size()) ||
+                compression::crc32(table.data(), table.size()) != le32(header.data() + 88)) return false;
+            for (std::uint32_t i = 0; i < count; ++i) {
+                const std::uint8_t* entry = table.data() + std::size_t(i) * entrySize;
+                if (!nonzeroGuid(entry)) continue;
+                const std::uint64_t first = le64(entry + 32), last = le64(entry + 40);
+                if (!nonzeroGuid(entry + 16) || first < firstUsable || last > lastUsable || first > last ||
+                    first > std::uint64_t(INT64_MAX) / sectorSize_ || last - first + 1 > std::uint64_t(INT64_MAX) / sectorSize_) return false;
+                VerifiedPartition part;
+                part.identity.scheme = PartitionScheme::Gpt;
+                std::copy(header.begin() + 56, header.begin() + 72, part.identity.diskGuid.begin());
+                std::copy(entry + 16, entry + 32, part.identity.partitionGuid.begin());
+                part.identity.startOffset = first * sectorSize_;
+                part.offset = static_cast<std::int64_t>(first * sectorSize_);
+                part.length = static_cast<std::int64_t>((last - first + 1) * sectorSize_);
+                result.push_back(part);
+            }
+        } else {
+            const std::uint32_t signature = le32(mbr.data() + 0x1b8);
+            if (!signature) return false;
+            const std::uint64_t sectors = static_cast<std::uint64_t>(disk_->capacity()) / sectorSize_;
+            std::vector<std::uint64_t> ebrSectors;
+            std::vector<std::pair<std::uint64_t, std::uint64_t> > primary;
+            for (unsigned int i = 0; i < 4; ++i) {
+                const std::uint8_t* entry = mbr.data() + 0x1be + i * 16;
+                if (!entry[4]) continue;
+                const std::uint64_t start = le32(entry + 8), count = le32(entry + 12);
+                if (!start || !count || start >= sectors || count > sectors - start) return false;
+                for (const auto& previous : primary)
+                    if (start < previous.second && previous.first < start + count) return false;
+                primary.push_back(std::make_pair(start, start + count));
+            }
+            for (unsigned int i = 0; i < 4; ++i) {
+                const std::uint8_t* entry = mbr.data() + 0x1be + i * 16;
+                const std::uint8_t type = entry[4];
+                if (!type) continue;
+                const std::uint64_t first = le32(entry + 8), count = le32(entry + 12);
+                if (!first || !count || first >= sectors || count > sectors - first) return false;
+                if (isExtended(type)) {
+                    const std::uint64_t end = first + count;
+                    std::uint64_t current = first;
+                    std::set<std::uint64_t> visited;
+                    for (;;) {
+                        if (current < first || current >= end || !visited.insert(current).second)
+                            return false;
+                        ebrSectors.push_back(current);
+                        std::uint8_t ebr[512];
+                        if (!exactPartitionRead(disk_, static_cast<std::int64_t>(current * sectorSize_), ebr, sizeof(ebr)) ||
+                            ebr[510] != 0x55 || ebr[511] != 0xaa) return false;
+                        const std::uint8_t* logical = ebr + 0x1be;
+                        const std::uint8_t* link = logical + 16;
+                        if ((logical[0] != 0 && logical[0] != 0x80) || !logical[4] ||
+                            isExtended(logical[4])) return false;
+                        const std::uint64_t relative = le32(logical + 8);
+                        const std::uint64_t length = le32(logical + 12);
+                        if (!relative || !length || relative >= end - current ||
+                            length > end - current - relative) return false;
+                        VerifiedPartition part;
+                        part.identity.scheme = PartitionScheme::Mbr;
+                        part.identity.mbrDiskSignature = signature;
+                        part.identity.startOffset = (current + relative) * sectorSize_;
+                        part.offset = static_cast<std::int64_t>((current + relative) * sectorSize_);
+                        part.length = static_cast<std::int64_t>(length * sectorSize_);
+                        result.push_back(part);
+                        if (ebr[0x1be + 2 * 16 + 4] || ebr[0x1be + 3 * 16 + 4]) return false;
+                        if (!link[4]) {
+                            if (le32(link + 8) || le32(link + 12)) return false;
+                            break;
+                        }
+                        if ((link[0] != 0 && link[0] != 0x80) || !isExtended(link[4])) return false;
+                        const std::uint64_t next = le32(link + 8), nextLength = le32(link + 12);
+                        if (!next || !nextLength || next >= count || nextLength > count - next)
+                            return false;
+                        current = first + next;
+                    }
+                    continue;
+                }
+                VerifiedPartition part;
+                part.identity.scheme = PartitionScheme::Mbr;
+                part.identity.mbrDiskSignature = signature;
+                part.identity.startOffset = first * sectorSize_;
+                part.offset = static_cast<std::int64_t>(first * sectorSize_);
+                part.length = static_cast<std::int64_t>(count * sectorSize_);
+                result.push_back(part);
+            }
+            for (std::uint64_t ebr : ebrSectors) {
+                const std::uint64_t pos = ebr * sectorSize_;
+                for (const VerifiedPartition& part : result) {
+                    const std::uint64_t start = static_cast<std::uint64_t>(part.offset);
+                    if (pos >= start && pos - start < static_cast<std::uint64_t>(part.length))
+                        return false;
+                }
+            }
+        }
+        for (std::size_t i = 0; i < result.size(); ++i) {
+            for (std::size_t j = i + 1; j < result.size(); ++j) {
+                const std::uint64_t a = static_cast<std::uint64_t>(result[i].offset);
+                const std::uint64_t b = static_cast<std::uint64_t>(result[j].offset);
+                if (a < b + static_cast<std::uint64_t>(result[j].length) &&
+                    b < a + static_cast<std::uint64_t>(result[i].length)) return false;
+            }
+        }
+        verified_.swap(result);
+        return true;
+    }
+
+    ByteStorePtr disk_;
+    std::uint64_t sectorSize_;
+    std::vector<VerifiedPartition> exposed_;
+    mutable std::mutex mutex_;
+    mutable std::vector<VerifiedPartition> verified_;
+};
+
+class BoundPartitionResolver final : public IPartitionResolver {
+public:
+    BoundPartitionResolver(std::shared_ptr<const VerifiedPartitionResolver> resolver,
+                           const PartitionIdentity& origin, std::int64_t offset, std::int64_t length)
+        : resolver_(std::move(resolver)), origin_(origin), offset_(offset), length_(length) {}
+    PartitionResolveResult open(const PartitionIdentity& identity, ByteStorePtr* result) const override {
+        return resolver_->openBound(&origin_, offset_, length_, identity, result);
+    }
+private:
+    std::shared_ptr<const VerifiedPartitionResolver> resolver_;
+    PartitionIdentity origin_;
+    std::int64_t offset_, length_;
+};
+
+}  // namespace
+
+std::vector<ByteStorePtr> makePartitionContextStores(
+    const ByteStorePtr& disk, const std::vector<PartitionInfo>& partitions,
+    std::int64_t logicalSectorSize) {
+    std::vector<ByteStorePtr> result(partitions.size());
+    if (!disk || disk->capacity() < 0 || (logicalSectorSize != 512 && logicalSectorSize != 4096)) return result;
+    const auto context = std::make_shared<VerifiedPartitionResolver>(disk, partitions, logicalSectorSize);
+    for (std::size_t i = 0; i < partitions.size(); ++i) {
+        const PartitionInfo& part = partitions[i];
+        if (part.content || part.offset < 0 || part.length <= 0 || part.offset > disk->capacity() ||
+            part.length > disk->capacity() - part.offset) continue;
+        result[i] = std::make_shared<VerifiedPartitionStore>(disk, part.offset, part.length, context);
+    }
+    return result;
+}
+
+bool partitionContext(const ByteStorePtr& store, PartitionIdentity* identity,
+                      std::shared_ptr<const IPartitionResolver>* resolver) {
+    if (identity) *identity = PartitionIdentity();
+    if (resolver) resolver->reset();
+    if (!identity || !resolver) return false;
+    const auto part = std::dynamic_pointer_cast<VerifiedPartitionStore>(store);
+    if (!part) return false;
+    *resolver = part->context();
+    if (!part->context()->identity(part->offset(), part->length(), identity)) return false;
+    *resolver = std::make_shared<BoundPartitionResolver>(part->context(), *identity,
+                                                        part->offset(), part->length());
+    return true;
 }
 
 }  // namespace fs
