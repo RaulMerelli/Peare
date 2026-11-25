@@ -24,7 +24,7 @@ sample evidence.
 
 | Test module | Coverage |
 |---|---|
-| `tests/test_peare_mcp.py` | Exercises the MCP transport and the public ABIs. Checks folder navigation, payload extraction, split WIM reading, and staged Writer updates. Set `PEARE_MCP_EXE` to test an unpacked release binary. |
+| `tests/test_peare_mcp.py` | Exercises the MCP transport and the public ABIs. Checks folder navigation, payload extraction, split WIM reading, and staged Writer updates. Set `PEARE_MCP_EXE` to test an unpacked release binary. CI supplies the Decoder library path and runs Qt image/font decoding with the offscreen platform. |
 | `tests/test_formats.py` | Opens each eligible repository fixture through the Opener ABI and compares its resource tree with a reviewed JSON manifest. Optional QEMU tests cover empty and non-empty stream-optimized VMDKs; the non-empty test compares the complete virtual-disk bytes with the raw source. |
 | `tests/test_tib_abi.py` and `tests/test_tibx_abi.py` | Exercise authentic local TIB/TIBX samples through the Opener ABI. The 9.0.2273 and 9.0.3677 file-level TIB regressions check five paths, sizes, and extracted-byte hashes. The Acronis 15 retention test checks selected payloads in all three chain points and the consolidated archive against source hashes. Set `PEARE_ACRONIS_SAMPLES` to the external sample directory; samples remain outside Git. The TI9 hashes pin Peare's first extraction and are not compared with original guest files. |
 | `tests/test_font_samples_abi.py` | Sends standalone font bytes and raw container-resource payloads to Decoder, checks collection faces, scans configured font directories, and tests GZIP/ZIP-wrapped fonts. Opener is tested only for generic container extraction and for not classifying standalone fonts. |

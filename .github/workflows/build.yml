@@ -68,6 +68,7 @@ jobs:
           PEARE_OPENER_LIB: dist/libPeareOpener.so
           PEARE_EXTERNAL_ORACLES: "0"
           LD_LIBRARY_PATH: ${{ env.QT_ROOT_DIR }}/lib
+          QT_QPA_PLATFORM: offscreen
           QT_QPA_PLATFORM_PLUGIN_PATH: ${{ env.QT_ROOT_DIR }}/plugins/platforms
 
       - uses: actions/upload-artifact@v4
@@ -158,9 +159,11 @@ jobs:
           python tests/run_tests.py -q
         env:
           PEARE_OPENER_LIB: dist\PeareOpener.dll
+          PEARE_DECODER_LIB: dist\PeareDecoder.dll
           PEARE_WRITER_LIB: dist\PeareWriter.dll
           PEARE_GUI_EXE: dist\Peare.exe
           PEARE_EXTERNAL_ORACLES: "0"
+          QT_QPA_PLATFORM: offscreen
           QT_QPA_PLATFORM_PLUGIN_PATH: build\test-plugins\platforms
 
       - uses: actions/upload-artifact@v4
