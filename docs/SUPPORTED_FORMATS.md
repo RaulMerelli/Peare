@@ -75,8 +75,8 @@ package-specific limits on ZIP-based files.
 | Extension | Format | Description | Read | Write |
 |---|---|---|---:|---:|
 | `.mtf`, `.bkf` | Microsoft tape backup | MTF and NTBackup BKF | Yes | No |
-| `.tib` | Acronis True Image Backup | Supported disk-image and file-level variants; see [Acronis Reader](formats/ACRONIS_READER.md) for limits | Yes | No |
-| `.tibx` | Acronis TIBX backup | Verified archive variants; see [Acronis Reader](formats/ACRONIS_READER.md) for limits | Yes | No |
+| `.tib` | Acronis True Image Backup | Reader scope and limits: [Acronis TIB/TIBX compatibility](formats/ACRONIS_READER.md) | Yes | No |
+| `.tibx` | Acronis TIBX backup | Reader scope and limits: [Acronis TIB/TIBX compatibility](formats/ACRONIS_READER.md) | Yes | No |
 | `.wim` | Windows imaging format | Single-part images with Store, XPRESS, or LZX compression | Yes | Yes |
 | `.swm` | Split Windows image set | Split image sets | Yes | No |
 | `.ffu` | Firmware update image | Windows Phone and desktop versions 1 and 2 | Yes | No |

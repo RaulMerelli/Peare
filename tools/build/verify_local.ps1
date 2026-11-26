@@ -74,6 +74,39 @@ function Assert-WorkingTreeMatchesIndex {
     }
 }
 
+function Assert-CiTestEnvironment {
+    $workflow = Get-Content -LiteralPath (Join-Path $root ".github\workflows\build.yml") -Raw
+    foreach ($job in @("linux", "windows")) {
+        $jobMatch = [regex]::Match($workflow,
+            "(?ms)^  ${job}:\r?\n(?<body>.*?)(?=^  [A-Za-z_][A-Za-z0-9_]*:\r?\n|\z)")
+        if (-not $jobMatch.Success) { throw "CI job '$job' is missing." }
+        $stepMatch = [regex]::Match($jobMatch.Groups["body"].Value,
+            "(?ms)^      - name: Run Opener tests\r?\n(?<body>.*?)(?=^      - |\z)")
+        if (-not $stepMatch.Success) { throw "CI test step is missing from '$job'." }
+        $envMatch = [regex]::Match($stepMatch.Groups["body"].Value,
+            "(?ms)^        env:\r?\n(?<body>(?:^          .*\r?\n)+)")
+        if (-not $envMatch.Success) { throw "CI test environment is missing from '$job'." }
+        $envLines = $envMatch.Groups["body"].Value
+        $required = if ($job -eq "linux") {
+            @('PEARE_OPENER_LIB: dist/libPeareOpener.so',
+              'QT_QPA_PLATFORM: offscreen',
+              'QT_QPA_PLATFORM_PLUGIN_PATH: ${{ env.QT_ROOT_DIR }}/plugins/platforms')
+        } else {
+            @('PEARE_OPENER_LIB: dist\PeareOpener.dll',
+              'PEARE_DECODER_LIB: dist\PeareDecoder.dll',
+              'PEARE_WRITER_LIB: dist\PeareWriter.dll',
+              'PEARE_GUI_EXE: dist\Peare.exe',
+              'QT_QPA_PLATFORM: offscreen',
+              'QT_QPA_PLATFORM_PLUGIN_PATH: build\test-plugins\platforms')
+        }
+        foreach ($setting in $required) {
+            if (-not $envLines.Contains("          $setting")) {
+                throw "CI test environment '$job' is missing '$setting'."
+            }
+        }
+    }
+}
+
 function Invoke-LoggedTestRun {
     param([string]$Python, [string[]]$Arguments, [string]$LogName)
     $stdout = Join-Path $tmpRoot "$LogName.stdout.log"
@@ -136,6 +169,7 @@ if ($Mode -eq "prepush") {
 Assert-WorkingTreeMatchesIndex
 & git diff --cached --check
 if ($LASTEXITCODE -ne 0) { throw "Staged diff has whitespace errors." }
+Assert-CiTestEnvironment
 New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
 $tree = Invoke-Git @("write-tree")
 if ($Mode -eq "precommit" -and (Test-Path $receipt) -and
@@ -255,8 +289,10 @@ $apk = Join-Path $root `
 if (-not (Test-Path $apk)) { throw "Android APK is missing: $apk" }
 
 $env:PEARE_OPENER_LIB = Join-Path $root "build-windows\Release\PeareOpener.dll"
+$env:PEARE_DECODER_LIB = Join-Path $root "build-windows\Release\PeareDecoder.dll"
 $env:PEARE_WRITER_LIB = Join-Path $root "build-windows\Release\PeareWriter.dll"
 $env:PEARE_GUI_EXE = Join-Path $root "build-windows\Release\Peare.exe"
+$env:QT_QPA_PLATFORM = "offscreen"
 $env:QT_QPA_PLATFORM_PLUGIN_PATH = Join-Path $root `
     "build-windows\test-plugins\platforms"
 $env:PEARE_ANDROID_APK = $null

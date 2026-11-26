@@ -73,7 +73,7 @@ Add reader support first. Plan writer support after real-sample reader coverage.
 
 ### Backup and imaging
 
-- Acronis TIB and TIBX: [reader research](formats/ACRONIS_READER.md).
+- Acronis TIB and TIBX: [reader compatibility](formats/ACRONIS_READER.md).
 - Veeam VBK, VIM, and VRB.
 
 ### Firmware and executable images

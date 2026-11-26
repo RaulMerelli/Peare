@@ -111,7 +111,10 @@ The Windows build script enables the local Git hooks. The pre-commit hook runs
 the Windows and Android builds, the Android package test, and the full Python
 test suite. The pre-push hook requires a successful gate for the current tree.
 The gate uses Python 3.12 and disables third-party command-line oracles, as CI
-does. Run third-party comparisons separately on the local machine.
+does. It also checks that the Linux and Windows CI test steps retain their
+required library paths and headless Qt settings, and runs the Windows tests
+with the Decoder DLL and offscreen platform configured. Run third-party
+comparisons separately on the local machine.
 
 Run the gate manually with:
 
