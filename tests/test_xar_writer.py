@@ -317,3 +317,85 @@ def test_xar_real_sample_cud(xar_writer, peare_lib, peare_gui_path, tmp_path):
             "big.txt", "empty.txt", "nested", "nested/deep",
             "nested/deep/file.txt", "setuid.sh", "store.bin",
         }
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_xar_gui_all_variants_complete_cud_persistent(
+        xar_writer, peare_lib, peare_gui_path, tmp_path, view):
+    initial = tmp_path / "initial.txt"
+    addition = tmp_path / "addition.txt"
+    replacement = tmp_path / "replacement.txt"
+    initial.write_bytes(b"Initial XAR payload.\n")
+    addition.write_bytes(b"Added XAR payload.\n")
+    replacement.write_bytes(b"Replaced XAR payload.\n")
+
+    variants = ("store", "gzip", "bzip2")
+    operations = []
+    outputs = {}
+    for variant in variants:
+        destination = tmp_path / f"gui-{variant}.xar"
+        outputs[variant] = destination
+        operations.append({
+            "type": "create_container", "test_id": f"create-{variant}",
+            "format": "xar", "variant": variant,
+            "destination": str(destination), "sources": [str(initial)],
+        })
+        operations.extend([
+            {"type": "create_directory", "test_id": f"directory-{variant}",
+             "name": "gui-dir", "expect_present": "gui-dir"},
+            {"type": "add_files", "test_id": f"add-{variant}",
+             "sources": [str(addition)], "destination": "gui-dir",
+             "expect_present": "gui-dir/addition.txt"},
+            {"type": "create_file", "test_id": f"empty-{variant}",
+             "parent": "gui-dir", "name": "empty.txt",
+             "expect_present": "gui-dir/empty.txt"},
+            {"type": "replace", "test_id": f"replace-{variant}",
+             "path": "initial.txt", "source": str(replacement),
+             "expect_present": "initial.txt"},
+            {"type": "rename", "test_id": f"rename-{variant}",
+             "path": "gui-dir/addition.txt", "name": "renamed.txt",
+             "expect_present": "gui-dir/renamed.txt",
+             "expect_absent": "gui-dir/addition.txt"},
+            {"type": "delete", "test_id": f"delete-empty-{variant}",
+             "path": "gui-dir/empty.txt",
+             "expect_absent": "gui-dir/empty.txt"},
+            {"type": "create_directory", "test_id": f"recursive-dir-{variant}",
+             "name": "remove-me", "expect_present": "remove-me"},
+            {"type": "add_files", "test_id": f"recursive-child-{variant}",
+             "sources": [str(addition)], "destination": "remove-me",
+             "expect_present": "remove-me/addition.txt"},
+            {"type": "delete", "test_id": f"recursive-delete-{variant}",
+             "path": "remove-me", "expect_absent": "remove-me"},
+        ])
+
+    scenario = tmp_path / "xar-all-variants-cud.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / f"xar-all-variants-cud-{view}"
+    result = subprocess.run([
+        sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+        "--exe", str(peare_gui_path), "--image",
+        str(ROOT / "tests" / "formats" / "xar" / "fixtures" / "mixed.xar"),
+        "--scenario", str(scenario), "--output-dir", str(output_dir),
+        "--timeout", "600",
+    ], capture_output=True, text=True, timeout=630)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    assert report["stage"] == "complete"
+    assert len(report["operations"]) == len(operations)
+    assert all(operation["passed"] for operation in report["operations"])
+
+    expected_files = {
+        "initial.txt": replacement.read_bytes(),
+        "gui-dir/renamed.txt": addition.read_bytes(),
+    }
+    for variant, archive in outputs.items():
+        files, directories = _xar_payloads(archive.read_bytes())
+        assert files == expected_files
+        assert directories == {"gui-dir"}
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = {row["path"]: row for row in opener.normalized_tree()}
+        for path, payload in expected_files.items():
+            assert rows[path]["sha256"] == hashlib.sha256(payload).hexdigest()
+        assert "remove-me" not in rows

@@ -586,6 +586,8 @@ void OpenerSession::rebuildFolders()
             entry.type == QStringLiteral("WAD_TEXTUREX") ||
             entry.type == QStringLiteral("WAD_DOOM_PATCH") ||
             entry.type == QStringLiteral("WAD_DOOM_SPRITE") ||
+            entry.type.startsWith(QStringLiteral("WAD2_LUMP_TYPE_")) ||
+            entry.type.startsWith(QStringLiteral("WAD3_LUMP_TYPE_")) ||
             entry.type == QStringLiteral("MDF_TRACK") ||
             entry.type == QStringLiteral("PS2_ROM_FILE") ||
             entry.type == QStringLiteral("MSI_STREAM") ||

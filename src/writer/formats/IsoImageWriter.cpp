@@ -466,7 +466,8 @@ bool decodeIdentifier(const QByteArray& raw, bool joliet, bool directory,
 }
 
 bool parseIsoEntries(QFile* input, bool joliet,
-                     std::vector<IsoImageEntry>* entries, QString* error) {
+                     std::vector<IsoImageEntry>* entries, QString* error,
+                     bool* hasJoliet) {
     if (!input || !entries || !input->isOpen() || input->size() < qint64(19) * kSectorSize) {
         if (error) *error = QStringLiteral("The ISO image is too small or unavailable.");
         return false;
@@ -488,6 +489,7 @@ bool parseIsoEntries(QFile* input, bool joliet,
         if (type == 255) break;
     }
     const bool useJoliet = joliet && !selectedDescriptor.isEmpty();
+    if (hasJoliet) *hasJoliet = useJoliet;
     if (!useJoliet) selectedDescriptor = primaryDescriptor;
     if (selectedDescriptor.isEmpty() || get16le(selectedDescriptor, 128) != kSectorSize ||
         get16be(selectedDescriptor, 130) != kSectorSize) {
@@ -578,15 +580,60 @@ bool parseIsoEntries(QFile* input, bool joliet,
     return true;
 }
 
+bool validLevelOneIdentifier(const QString& name, bool directory) {
+    if (name.isEmpty()) return false;
+    for (QChar ch : name) {
+        const ushort code = ch.unicode();
+        if (!((code >= 'A' && code <= 'Z') || (code >= 'a' && code <= 'z') ||
+              (code >= '0' && code <= '9') || code == '_' || code == '.')) return false;
+    }
+    const QString normalized = name.toUpper();
+    const int dot = directory ? -1 : normalized.indexOf(QLatin1Char('.'));
+    if ((!directory && dot >= 0 &&
+         (dot == 0 || dot != normalized.lastIndexOf(QLatin1Char('.')) ||
+          dot == normalized.size() - 1)) ||
+        (directory && name.size() > 8)) return false;
+    const QString base = directory || dot < 0 ? normalized : normalized.left(dot);
+    const QString extension = directory || dot < 0 ? QString() : normalized.mid(dot + 1);
+    if (base.size() > 8 || extension.size() > 3) return false;
+    const auto validPart = [](const QString& part) {
+        if (part.isEmpty()) return false;
+        for (QChar ch : part) {
+            const ushort code = ch.unicode();
+            if (!((code >= 'A' && code <= 'Z') ||
+                  (code >= '0' && code <= '9') || code == '_')) return false;
+        }
+        return true;
+    };
+    return validPart(base) && (directory || validPart(extension));
+}
+
+bool validateLevelOneTree(const Node& node, unsigned depth, QString* error) {
+    for (const auto& item : node.children) {
+        const Node& child = *item.second;
+        const unsigned childDepth = depth + (child.directory ? 1u : 0u);
+        if (childDepth > 8 || !validLevelOneIdentifier(child.name, child.directory) ||
+            child.primaryName != child.name.toUpper().toLatin1()) {
+            if (error) *error = QStringLiteral(
+                "ISO 9660 Level 1 requires ASCII 8.3 names and at most eight directory levels.");
+            return false;
+        }
+        if (child.directory && !validateLevelOneTree(child, childDepth, error)) return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 bool IsoImageWriter::write(const QString& outputPath,
                            const std::vector<IsoImageEntry>& entries,
+                           bool joliet,
                            QString* error) {
     Node root;
     quint32 nextId = 0;
     for (const IsoImageEntry& entry : entries)
         if (!insertEntry(&root, entry, &nextId, error)) return false;
+    if (!joliet && !validateLevelOneTree(root, 0, error)) return false;
 
     std::vector<Node*> directories;
     collectDirectories(&root, nullptr, &directories);
@@ -624,20 +671,21 @@ bool IsoImageWriter::write(const QString& outputPath,
         }
     }
 
-    quint64 sector = kFirstDataSector + 3;
+    quint64 sector = kFirstDataSector + (joliet ? 3 : 2);
     const quint32 primaryPathSize = [&] {
         QByteArray bytes = pathTable(directories, false, false);
         return quint32(bytes.size());
     }();
-    const quint32 jolietPathSize = quint32(pathTable(directories, true, false).size());
+    const quint32 jolietPathSize = joliet
+        ? quint32(pathTable(directories, true, false).size()) : 0;
     const quint64 primaryL64 = sector;
     sector += sectorsFor(primaryPathSize);
     const quint64 primaryM64 = sector;
     sector += sectorsFor(primaryPathSize);
-    const quint64 jolietL64 = sector;
-    sector += sectorsFor(jolietPathSize);
-    const quint64 jolietM64 = sector;
-    sector += sectorsFor(jolietPathSize);
+    const quint64 jolietL64 = joliet ? sector : 0;
+    if (joliet) sector += sectorsFor(jolietPathSize);
+    const quint64 jolietM64 = joliet ? sector : 0;
+    if (joliet) sector += sectorsFor(jolietPathSize);
     if (sector > UINT32_MAX) {
         if (error) *error = QStringLiteral("ISO path tables exceed the 32-bit sector limit.");
         return false;
@@ -652,7 +700,7 @@ bool IsoImageWriter::write(const QString& outputPath,
         directory->primarySize = quint32(directoryBytes(*directory, false));
         sector += sectorsFor(directory->primarySize);
     }
-    for (Node* directory : directories) {
+    if (joliet) for (Node* directory : directories) {
         if (sector > UINT32_MAX) {
             if (error) *error = QStringLiteral("Joliet directory extents exceed the 32-bit sector limit.");
             return false;
@@ -690,22 +738,22 @@ bool IsoImageWriter::write(const QString& outputPath,
     {
         const QByteArray pvd = volumeDescriptor(1, volumeSectors, primaryPathSize,
             primaryL, primaryM, root.primaryExtent, root.primarySize, false);
-        const QByteArray svd = volumeDescriptor(2, volumeSectors, jolietPathSize,
-            jolietL, jolietM, root.jolietExtent, root.jolietSize, true);
+        const QByteArray svd = joliet ? volumeDescriptor(2, volumeSectors, jolietPathSize,
+            jolietL, jolietM, root.jolietExtent, root.jolietSize, true) : QByteArray();
         QByteArray terminator(int(kSectorSize), '\0');
         terminator[0] = char(255);
         const QByteArray standardId = QByteArrayLiteral("CD001");
         std::copy(standardId.cbegin(), standardId.cend(), terminator.begin() + 1);
         terminator[6] = char(1);
         failureContext = QStringLiteral("Could not write the ISO volume descriptors.");
-        if (output.write(pvd) != pvd.size() || output.write(svd) != svd.size() ||
+        if (output.write(pvd) != pvd.size() || (joliet && output.write(svd) != svd.size()) ||
             output.write(terminator) != terminator.size()) goto io_error;
     }
     failureContext = QStringLiteral("Could not write the ISO path tables.");
     if (!appendSectorPadded(&output, pathTable(directories, false, false)) ||
         !appendSectorPadded(&output, pathTable(directories, false, true)) ||
-        !appendSectorPadded(&output, pathTable(directories, true, false)) ||
-        !appendSectorPadded(&output, pathTable(directories, true, true))) goto io_error;
+        (joliet && (!appendSectorPadded(&output, pathTable(directories, true, false)) ||
+                    !appendSectorPadded(&output, pathTable(directories, true, true))))) goto io_error;
     for (Node* directory : directories) {
         failureContext = QStringLiteral("Could not write the primary ISO directory tree.");
         const quint32 parent = directory->parent
@@ -714,7 +762,7 @@ bool IsoImageWriter::write(const QString& outputPath,
             directory->primaryExtent, parent, directory->primarySize);
         if (output.write(bytes) != bytes.size()) goto io_error;
     }
-    for (Node* directory : directories) {
+    if (joliet) for (Node* directory : directories) {
         failureContext = QStringLiteral("Could not write the Joliet directory tree.");
         const quint32 parent = directory->parent
             ? directory->parent->jolietExtent : directory->jolietExtent;
@@ -764,7 +812,8 @@ io_error:
 
 bool IsoImageWriter::readEntries(const QString& imagePath,
                                  std::vector<IsoImageEntry>* entries,
-                                 QString* error) {
+                                 QString* error,
+                                 bool* hasJoliet) {
     if (!entries) {
         if (error) *error = QStringLiteral("An ISO entry list is required.");
         return false;
@@ -774,7 +823,7 @@ bool IsoImageWriter::readEntries(const QString& imagePath,
         if (error) *error = input.errorString();
         return false;
     }
-    return parseIsoEntries(&input, true, entries, error);
+    return parseIsoEntries(&input, true, entries, error, hasJoliet);
 }
 
 }  // namespace writer

@@ -21,10 +21,12 @@ class IsoImageWriter final {
 public:
     static bool write(const QString& outputPath,
                       const std::vector<IsoImageEntry>& entries,
+                      bool joliet,
                       QString* error);
     static bool readEntries(const QString& imagePath,
                             std::vector<IsoImageEntry>* entries,
-                            QString* error);
+                            QString* error,
+                            bool* hasJoliet = nullptr);
 };
 
 }  // namespace writer

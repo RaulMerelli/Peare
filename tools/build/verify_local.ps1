@@ -107,6 +107,30 @@ function Assert-CiTestEnvironment {
     }
 }
 
+function Assert-CiLinuxBuildContract {
+    $workflow = Get-Content -LiteralPath (Join-Path $root ".github\workflows\build.yml") -Raw
+    $jobMatch = [regex]::Match($workflow,
+        "(?ms)^  linux:\r?\n(?<body>.*?)(?=^  [A-Za-z_][A-Za-z0-9_]*:\r?\n|\z)")
+    if (-not $jobMatch.Success) { throw "CI job 'linux' is missing." }
+    $linuxJob = $jobMatch.Groups["body"].Value
+    foreach ($required in @(
+        "runs-on: ubuntu-22.04",
+        'version: "5.15.2"',
+        "host: linux",
+        "target: desktop",
+        "arch: gcc_64",
+        "-DPEARE_CXX_STANDARD=11",
+        "cmake --build build --config Release --parallel",
+        "test -x dist/Peare",
+        "test -f dist/libPeareOpener.so",
+        "test -f dist/libPeareDecoder.so",
+        "test -f dist/libPeareWriter.so")) {
+        if (-not $linuxJob.Contains($required)) {
+            throw "Linux CI build contract is missing '$required'."
+        }
+    }
+}
+
 function Invoke-LoggedTestRun {
     param([string]$Python, [string[]]$Arguments, [string]$LogName)
     $stdout = Join-Path $tmpRoot "$LogName.stdout.log"
@@ -169,6 +193,7 @@ if ($Mode -eq "prepush") {
 Assert-WorkingTreeMatchesIndex
 & git diff --cached --check
 if ($LASTEXITCODE -ne 0) { throw "Staged diff has whitespace errors." }
+Assert-CiLinuxBuildContract
 Assert-CiTestEnvironment
 New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
 $tree = Invoke-Git @("write-tree")

@@ -95,7 +95,7 @@ package-specific limits on ZIP-based files.
 | `.dsk` | OS/2 XDF floppy image | 3.5-inch, 1.84 MiB XDF | Yes | Yes |
 | `.img`, `.ima`, `.raw` | Raw MBR/GPT disk | MBR and GPT partitioned disks | Yes | Yes |
 | varies | Apple Partition Map | Partitioned disk images | Yes | No |
-| `.iso` | Optical-disc image | Reader: Joliet, standard, and raw Mode 2 images. Writer: create and update 2048-byte-sector Joliet images. | Yes | Yes |
+| `.iso` | Optical-disc image | Reader: Joliet, standard, and raw Mode 2 images. Writer: create and update 2048-byte-sector Joliet and ISO 9660 Level 1 images. Level 1 accepts ASCII 8.3 names, stores them uppercase, and limits directory depth to eight. | Yes | Yes |
 | `.bin`, `.cue` | CDRWIN multi-track image | Multi-track optical-disc images | Yes | No |
 | `.mdf`, `.mds` | Alcohol disc image | MDF images with MDS descriptors | Yes | No |
 | `.dmg` | Apple disk image | UDIF disk images | Yes | No |
@@ -143,8 +143,8 @@ package-specific limits on ZIP-based files.
 | `.deb`, `.udeb` | Debian package | Version 2.0; raw or gzip/xz/zstd control TAR, plus raw/gzip/xz/zstd/bzip2/lzma data TAR | Yes | Yes |
 | `.lha`, `.lzh` | LHA / LZH | LHA and LZH archives | Yes | No |
 | `.wad` | Doom resource archive | IWAD and PWAD variants | Yes | Yes |
-| `.wad` | Quake resource archive | WAD2 variant | Yes | No |
-| `.wad` | Half-Life resource archive | WAD3 variant | Yes | No |
+| `.wad` | Quake resource archive | WAD2 variant; raw lumps | Yes | Yes |
+| `.wad` | Half-Life resource archive | WAD3 variant; raw, untyped lumps (no GoldSrc texture encoding) | Yes | Yes |
 | `.appx`, `.msix` | Windows application package | ZIP package with a validated application manifest | Yes | Yes |
 | `.eappx`, `.emsix` | Encrypted APPX / MSIX | EAPPX and EMSIX envelopes | Yes | No |
 | `.appxbundle` | Windows application bundle | ZIP bundle with a validated bundle manifest | Yes | Yes |

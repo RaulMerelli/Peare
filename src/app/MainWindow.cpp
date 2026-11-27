@@ -317,7 +317,9 @@ bool isDirectoryEntryType(const QString& type) {
 
 bool isFileEntryType(const QString& type) {
     return type.endsWith(QStringLiteral("_FILE"), Qt::CaseInsensitive) ||
-           type.endsWith(QStringLiteral("_LINK"), Qt::CaseInsensitive);
+           type.endsWith(QStringLiteral("_LINK"), Qt::CaseInsensitive) ||
+           type.startsWith(QStringLiteral("WAD2_LUMP_TYPE_")) ||
+           type.startsWith(QStringLiteral("WAD3_LUMP_TYPE_"));
 }
 
 bool itemIsDirectoryLike(QTreeWidgetItem* item) {

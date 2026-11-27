@@ -112,6 +112,13 @@ def _winrar_cli_executable():
     candidate = Path(gui).with_name("Rar.exe")
     return str(candidate) if candidate.is_file() else None
 
+def _winrar_cli_supports_rar7(executable):
+    result = subprocess.run([executable], capture_output=True, text=True,
+                            timeout=10, check=False)
+    match = re.search(r"\bRAR\s+(\d+)\.(\d+)",
+                      result.stdout + result.stderr)
+    return bool(match and tuple(map(int, match.groups())) >= (7, 0))
+
 def _bsdtar_executable():
     if not _external_oracles_enabled():
         return None
@@ -4708,6 +4715,8 @@ def test_tar_bzip2_create_and_cud_roundtrip_with_7zip(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
+    replacement = ROOT / "AGENTS.md"
+    addition = ROOT / "THIRDPARTY.md"
     assert writer_lib.peare_writer_create_format_count() == 33
     assert writer_lib.peare_writer_create_variant_count(b"tar-bzip2") == 9
     for level in range(1, 10):
@@ -4732,6 +4741,55 @@ def test_tar_bzip2_create_and_cud_roundtrip_with_7zip(
             [seven_zip, "t", str(archive)], capture_output=True,
             text=True, timeout=60)
         assert checked.returncode == 0, checked.stdout + checked.stderr
+        replacement = ROOT / "AGENTS.md"
+        added = ROOT / "THIRDPARTY.md"
+        writer = _HANDLE()
+        assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+        try:
+            assert writer_lib.peare_writer_update_begin(
+                writer, str(archive).encode()) == 0, \
+                writer_lib.peare_writer_last_error(writer)
+            assert writer_lib.peare_writer_create_directory(
+                writer, b"remove-me") == 0
+            assert writer_lib.peare_writer_create_file(
+                writer, str(payload).encode(), b"remove-me/child.txt") == 0
+            assert writer_lib.peare_writer_create_empty_file(
+                writer, b"empty.txt") == 0
+            assert writer_lib.peare_writer_replace_file(
+                writer, str(replacement).encode(), b"payload.txt") == 0
+            assert writer_lib.peare_writer_create_file(
+                writer, str(added).encode(), b"added.txt") == 0
+            assert writer_lib.peare_writer_rename_entry(
+                writer, b"added.txt", b"renamed.txt") == 0
+            assert writer_lib.peare_writer_delete_entry(
+                writer, b"empty.txt", 0) == 0
+            assert writer_lib.peare_writer_delete_entry(
+                writer, b"remove-me", 1) == 0
+            status = writer_lib.peare_writer_update_finish(writer)
+            assert status == 0, writer_lib.peare_writer_last_error(writer)
+        finally:
+            writer_lib.peare_writer_destroy(writer)
+
+        assert archive.read_bytes()[:4] == f"BZh{level}".encode()
+        with tarfile.open(archive, "r:bz2") as updated:
+            rows = {member.name: member for member in updated.getmembers()}
+            assert updated.extractfile(rows["payload.txt"]).read() == \
+                replacement.read_bytes()
+            assert updated.extractfile(rows["renamed.txt"]).read() == \
+                added.read_bytes()
+            assert set(rows) == {"payload.txt", "renamed.txt"}
+        checked = subprocess.run(
+            [seven_zip, "t", str(archive)], capture_output=True,
+            text=True, timeout=60)
+        assert checked.returncode == 0, checked.stdout + checked.stderr
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = opener.normalized_tree()
+            assert any(row["path"].endswith("/payload.txt") and
+                       row["sha256"] == hashlib.sha256(
+                           replacement.read_bytes()).hexdigest() for row in rows)
+            assert any(row["path"].endswith("/renamed.txt") and
+                       row["sha256"] == hashlib.sha256(
+                           added.read_bytes()).hexdigest() for row in rows)
 
     batch_archive = tmp_path / "batch.tbz2"
     batch_input = _WriterInputFile(str(payload).encode(), b"batch.txt")
@@ -4845,6 +4903,8 @@ def test_tar_zstd_create_and_cud_roundtrip_with_independent_decoder(
 
     payload = tmp_path / "payload.txt"
     payload.write_bytes((ROOT / "README.md").read_bytes())
+    replacement = ROOT / "AGENTS.md"
+    addition = ROOT / "THIRDPARTY.md"
     assert writer_lib.peare_writer_create_format_count() == 33
     assert writer_lib.peare_writer_create_variant_count(b"tar-zstd") == 27
     variants = [f"fast-{level}" for level in range(5, 0, -1)] + [
@@ -4866,6 +4926,54 @@ def test_tar_zstd_create_and_cud_roundtrip_with_independent_decoder(
         created = read_tar(archive)
         assert list(created) == ["payload.txt"]
         assert created["payload.txt"] == payload.read_bytes()
+
+        writer = _HANDLE()
+        assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+        try:
+            assert writer_lib.peare_writer_update_begin(
+                writer, str(archive).encode()) == 0, \
+                writer_lib.peare_writer_last_error(writer)
+            assert writer_lib.peare_writer_create_directory(
+                writer, b"remove-me") == 0
+            assert writer_lib.peare_writer_create_file(
+                writer, str(payload).encode(), b"remove-me/child.txt") == 0
+            assert writer_lib.peare_writer_create_empty_file(
+                writer, b"empty.txt") == 0
+            assert writer_lib.peare_writer_replace_file(
+                writer, str(replacement).encode(), b"payload.txt") == 0
+            assert writer_lib.peare_writer_create_file(
+                writer, str(addition).encode(), b"added.txt") == 0
+            assert writer_lib.peare_writer_rename_entry(
+                writer, b"added.txt", b"renamed.txt") == 0
+            assert writer_lib.peare_writer_delete_entry(
+                writer, b"empty.txt", 0) == 0
+            assert writer_lib.peare_writer_delete_entry(
+                writer, b"remove-me", 1) == 0
+            assert writer_lib.peare_writer_update_finish(writer) == 0, \
+                writer_lib.peare_writer_last_error(writer)
+        finally:
+            writer_lib.peare_writer_destroy(writer)
+
+        updated = read_tar(archive)
+        assert updated == {
+            "payload.txt": replacement.read_bytes(),
+            "renamed.txt": addition.read_bytes(),
+        }
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = {row["path"]: row["sha256"] for row in opener.normalized_tree()}
+        for name, data in updated.items():
+            assert any(path.endswith("/" + name) and digest ==
+                       hashlib.sha256(data).hexdigest()
+                       for path, digest in rows.items()), (variant, name)
+        assert not any("remove-me" in path or path.endswith("/empty.txt")
+                       for path in rows), variant
+        seven_zip = _seven_zip_executable()
+        seven_zip_version = _seven_zip_version(seven_zip) if seven_zip else None
+        if seven_zip and seven_zip_version and seven_zip_version >= (21, 0):
+            checked = subprocess.run(
+                [seven_zip, "t", str(archive)], capture_output=True,
+                text=True, timeout=60)
+            assert checked.returncode == 0, checked.stdout + checked.stderr
 
     batch_archive = tmp_path / "batch.tar.zst"
     batch_input = _WriterInputFile(str(payload).encode(), b"batch.txt")
@@ -4990,6 +5098,57 @@ def test_tar_unix_compress_create_all_variants_and_7zip(
             assert any(row["path"].endswith("/" + source.name) and
                        row["sha256"] == expected_hash for row in rows)
 
+        replacement = ROOT / "AGENTS.md"
+        writer = _HANDLE()
+        assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+        try:
+            assert writer_lib.peare_writer_update_begin(
+                writer, str(archive).encode()) == 0, \
+                writer_lib.peare_writer_last_error(writer)
+            assert writer_lib.peare_writer_create_directory(
+                writer, b"remove-me") == 0
+            assert writer_lib.peare_writer_create_file(
+                writer, str(source).encode(), b"remove-me/child.txt") == 0
+            assert writer_lib.peare_writer_create_empty_file(
+                writer, b"empty.txt") == 0
+            assert writer_lib.peare_writer_replace_file(
+                writer, str(replacement).encode(), source.name.encode()) == 0
+            assert writer_lib.peare_writer_create_file(
+                writer, str(source).encode(), b"added.txt") == 0
+            assert writer_lib.peare_writer_rename_entry(
+                writer, b"added.txt", b"renamed.txt") == 0
+            assert writer_lib.peare_writer_delete_entry(
+                writer, b"empty.txt", 0) == 0
+            assert writer_lib.peare_writer_delete_entry(
+                writer, b"remove-me", 1) == 0
+            status = writer_lib.peare_writer_update_finish(writer)
+            assert status == 0, writer_lib.peare_writer_last_error(writer)
+        finally:
+            writer_lib.peare_writer_destroy(writer)
+
+        flags = archive.read_bytes()[2]
+        expected_flags = int(variant.rsplit("-", 1)[1])
+        if variant.startswith("block-"):
+            expected_flags |= 0x80
+        assert flags == expected_flags, (variant, flags)
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = opener.normalized_tree()
+            assert any(row["path"].endswith("/" + source.name) and
+                       row["sha256"] == hashlib.sha256(
+                           replacement.read_bytes()).hexdigest() for row in rows)
+            assert any(row["path"].endswith("/renamed.txt") and
+                       row["sha256"] == expected_hash for row in rows)
+            assert not any(row["path"].endswith("/added.txt") or
+                           row["path"].endswith("/empty.txt") or
+                           "/remove-me/" in row["path"] for row in rows)
+
+        if not (variant.endswith("-9") and
+                _seven_zip_version(seven_zip) == (26, 5)):
+            checked = subprocess.run(
+                [seven_zip, "t", str(archive)], capture_output=True,
+                text=True, timeout=60)
+            assert checked.returncode == 0, checked.stdout + checked.stderr
+
 
 def test_tar_unix_compress_cud_from_upstream_sample(
         writer_lib, peare_lib, peare_gui_path, tmp_path):
@@ -5079,6 +5238,419 @@ def test_tar_unix_compress_cud_from_upstream_sample(
             encoding="utf-8"))
         assert all(operation["passed"] for operation in report["operations"])
 
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_tar_unix_compress_gui_all_variants_complete_cud_persistent(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    sample = ROOT / "tests" / "formats" / "xar" / "fixtures" / "mixed.xar"
+    initial = tmp_path / "initial.txt"
+    addition = tmp_path / "addition.txt"
+    replacement = tmp_path / "replacement.txt"
+    initial.write_bytes(b"Initial TAR.Z payload.\n")
+    addition.write_bytes(b"Added TAR.Z payload.\n")
+    replacement.write_bytes(b"Replaced TAR.Z payload.\n")
+    variants = ([f"block-{width}" for width in range(9, 17)] +
+                [f"legacy-{width}" for width in range(9, 17)])
+    assert writer_lib.peare_writer_create_variant_count(
+        b"tar-unix-compress") == len(variants)
+
+    operations = []
+    outputs = {}
+    for variant in variants:
+        destination = tmp_path / f"gui-{variant}.taz"
+        outputs[variant] = destination
+        gui_root = destination.name + "/"
+        operations.append({
+            "type": "create_container", "test_id": f"create-{variant}",
+            "format": "tar-unix-compress", "variant": variant,
+            "destination": str(destination), "sources": [str(initial)],
+        })
+        operations.extend([
+            {"type": "create_directory", "test_id": f"directory-{variant}",
+             "name": "gui-dir"},
+            {"type": "add_files", "test_id": f"add-{variant}",
+             "sources": [str(addition)], "destination": "gui-dir"},
+            {"type": "create_file", "test_id": f"empty-{variant}",
+             "parent": gui_root + "gui-dir", "view_path": gui_root + "gui-dir",
+             "name": "empty.txt"},
+            {"type": "replace", "test_id": f"replace-{variant}",
+             "path": gui_root + "initial.txt", "view_path": gui_root,
+             "source": str(replacement)},
+            {"type": "rename", "test_id": f"rename-{variant}",
+             "path": gui_root + "gui-dir/addition.txt",
+             "view_path": gui_root + "gui-dir", "name": "renamed.txt"},
+            {"type": "delete", "test_id": f"delete-empty-{variant}",
+             "path": gui_root + "gui-dir/empty.txt",
+             "view_path": gui_root + "gui-dir"},
+            {"type": "create_directory", "test_id": f"recursive-dir-{variant}",
+             "name": "remove-me"},
+            {"type": "add_files", "test_id": f"recursive-child-{variant}",
+             "sources": [str(addition)], "destination": "remove-me"},
+            {"type": "delete", "test_id": f"recursive-delete-{variant}",
+             "path": gui_root + "remove-me", "view_path": gui_root},
+        ])
+
+    scenario = tmp_path / "tar-z-all-variants-cud.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / f"tar-z-all-variants-cud-{view}"
+    result = subprocess.run([
+        sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+        "--exe", str(peare_gui_path), "--image", str(sample),
+        "--scenario", str(scenario), "--output-dir", str(output_dir),
+        "--timeout", "900",
+    ], capture_output=True, text=True, timeout=930)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    assert report["stage"] == "complete"
+    assert len(report["operations"]) == len(operations)
+    assert all(operation["passed"] for operation in report["operations"])
+    memory = json.loads((output_dir / "writer-test-memory.json").read_text(
+        encoding="utf-8"))
+    assert len(memory["samples"]) >= 2
+    assert memory["peak"]
+
+    expected_files = {
+        "initial.txt": replacement.read_bytes(),
+        "gui-dir/renamed.txt": addition.read_bytes(),
+    }
+    for variant, archive in outputs.items():
+        flags = archive.read_bytes()[2]
+        expected_flags = int(variant.rsplit("-", 1)[1])
+        if variant.startswith("block-"):
+            expected_flags |= 0x80
+        assert flags == expected_flags, (variant, flags)
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = opener.normalized_tree()
+        for path, payload in expected_files.items():
+            assert any(row["path"].endswith("/" + path) and
+                       row["sha256"] == hashlib.sha256(payload).hexdigest()
+                       for row in rows), variant
+        assert not any(row["path"].endswith("/empty.txt") or
+                       "remove-me" in row["path"] or
+                       row["path"].endswith("/gui-dir/addition.txt")
+                       for row in rows), variant
+
+        seven_zip = _seven_zip_executable()
+        if seven_zip and not (variant.endswith("-9") and
+                              _seven_zip_version(seven_zip) == (26, 5)):
+            checked = subprocess.run(
+                [seven_zip, "t", str(archive)], capture_output=True,
+                text=True, timeout=60)
+            assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+@pytest.mark.parametrize(("format_id", "suffix", "variants"), [
+    ("tar-bzip2", "tar.bz2", tuple(f"level-{level}" for level in range(1, 10))),
+    ("tar-xz", "tar.txz", ("none", "crc32", "crc64", "sha256")),
+], ids=["bzip2", "xz"])
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_tar_codec_gui_all_variants_complete_cud_persistent(
+        writer_lib, peare_lib, peare_gui_path, tmp_path,
+        format_id, suffix, variants, view):
+    sample = ROOT / "tests" / "formats" / "xar" / "fixtures" / "mixed.xar"
+    initial = tmp_path / "initial.txt"
+    addition = tmp_path / "addition.txt"
+    replacement = tmp_path / "replacement.txt"
+    initial.write_bytes(b"Initial compressed TAR payload.\n")
+    addition.write_bytes(b"Added compressed TAR payload.\n")
+    replacement.write_bytes(b"Replaced compressed TAR payload.\n")
+    assert writer_lib.peare_writer_create_variant_count(
+        format_id.encode()) == len(variants)
+
+    operations = []
+    outputs = {}
+    for variant in variants:
+        destination = tmp_path / f"gui-{variant}.{suffix}"
+        outputs[variant] = destination
+        gui_root = destination.stem + "/"
+        operations.append({
+            "type": "create_container", "test_id": f"create-{variant}",
+            "format": format_id, "variant": variant,
+            "destination": str(destination), "sources": [str(initial)],
+        })
+        operations.extend([
+            {"type": "create_directory", "test_id": f"directory-{variant}",
+             "name": "gui-dir"},
+            {"type": "add_files", "test_id": f"add-{variant}",
+             "sources": [str(addition)], "destination": "gui-dir"},
+            {"type": "create_file", "test_id": f"empty-{variant}",
+             "parent": gui_root + "gui-dir", "view_path": gui_root + "gui-dir",
+             "name": "empty.txt"},
+            {"type": "replace", "test_id": f"replace-{variant}",
+             "path": gui_root + "initial.txt", "view_path": gui_root,
+             "source": str(replacement)},
+            {"type": "rename", "test_id": f"rename-{variant}",
+             "path": gui_root + "gui-dir/addition.txt",
+             "view_path": gui_root + "gui-dir", "name": "renamed.txt"},
+            {"type": "delete", "test_id": f"delete-empty-{variant}",
+             "path": gui_root + "gui-dir/empty.txt",
+             "view_path": gui_root + "gui-dir"},
+            {"type": "create_directory", "test_id": f"recursive-dir-{variant}",
+             "name": "remove-me"},
+            {"type": "add_files", "test_id": f"recursive-child-{variant}",
+             "sources": [str(addition)], "destination": "remove-me"},
+            {"type": "delete", "test_id": f"recursive-delete-{variant}",
+             "path": gui_root + "remove-me", "view_path": gui_root},
+        ])
+
+    scenario = tmp_path / f"{format_id}-all-variants-cud.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / f"{format_id}-all-variants-cud-{view}"
+    result = subprocess.run([
+        sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+        "--exe", str(peare_gui_path), "--image", str(sample),
+        "--scenario", str(scenario), "--output-dir", str(output_dir),
+        "--timeout", "900",
+    ], capture_output=True, text=True, timeout=930)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    assert report["stage"] == "complete"
+    assert len(report["operations"]) == len(operations)
+    assert all(operation["passed"] for operation in report["operations"])
+    memory = json.loads((output_dir / "writer-test-memory.json").read_text(
+        encoding="utf-8"))
+    assert len(memory["samples"]) >= 2
+    assert memory["peak"]
+
+    expected_files = {
+        "initial.txt": replacement.read_bytes(),
+        "gui-dir/renamed.txt": addition.read_bytes(),
+    }
+    seven_zip = _seven_zip_executable()
+    for variant, archive in outputs.items():
+        archive_bytes = archive.read_bytes()
+        if format_id == "tar-bzip2":
+            assert archive_bytes[:4] == f"BZh{variant[-1]}".encode()
+            with tarfile.open(archive, "r:bz2") as opened:
+                members = {member.name: member for member in opened.getmembers()}
+                assert {name: opened.extractfile(member).read()
+                        for name, member in members.items() if member.isfile()} == \
+                    expected_files
+        else:
+            check_id = {"none": 0, "crc32": 1,
+                        "crc64": 4, "sha256": 10}[variant]
+            assert archive_bytes[7] & 0x0f == check_id
+            with lzma.open(archive, "rb") as compressed:
+                with tarfile.open(fileobj=io.BytesIO(compressed.read()),
+                                  mode="r:") as opened:
+                    members = {member.name: member for member in opened.getmembers()}
+                    assert {name: opened.extractfile(member).read()
+                            for name, member in members.items() if member.isfile()} == \
+                        expected_files
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = opener.normalized_tree()
+        for path, payload in expected_files.items():
+            assert any(row["path"].endswith("/" + path) and
+                       row["sha256"] == hashlib.sha256(payload).hexdigest()
+                       for row in rows), (variant, path)
+        assert not any(row["path"].endswith("/empty.txt") or
+                       "remove-me" in row["path"] or
+                       row["path"].endswith("/gui-dir/addition.txt")
+                       for row in rows), variant
+        if seven_zip:
+            checked = subprocess.run(
+                [seven_zip, "t", str(archive)], capture_output=True,
+                text=True, timeout=60)
+            assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_tar_gzip_gui_create_and_full_cud_persistent(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    initial = tmp_path / "initial.txt"
+    addition = tmp_path / "addition.txt"
+    replacement = tmp_path / "replacement.txt"
+    initial.write_bytes(b"Initial TAR.GZ payload.\n")
+    addition.write_bytes(b"Added TAR.GZ payload.\n")
+    replacement.write_bytes(b"Replaced TAR.GZ payload.\n")
+    assert writer_lib.peare_writer_create_variant_count(b"tar-gzip") == 1
+    variant = _WriterVariant()
+    assert writer_lib.peare_writer_get_create_variant(
+        b"tar-gzip", 0, C.byref(variant)) == 0
+    assert variant.id == b"ustar"
+
+    archive = tmp_path / "gui-created.tgz"
+    gui_root = "archive.tar/"
+    operations = [{
+        "type": "create_container", "test_id": "create-ustar",
+        "format": "tar-gzip", "variant": "ustar",
+        "destination": str(archive), "sources": [str(initial)],
+    }, {
+        "type": "create_directory", "test_id": "create-directory",
+        "name": "nested",
+    }, {
+        "type": "add_files", "test_id": "add-file",
+        "sources": [str(addition)], "destination": "nested",
+    }, {
+        "type": "create_file", "test_id": "create-empty",
+        "parent": gui_root, "view_path": gui_root, "name": "empty.txt",
+    }, {
+        "type": "replace", "test_id": "replace-file",
+        "path": gui_root + "initial.txt", "view_path": gui_root,
+        "source": str(replacement),
+    }, {
+        "type": "rename", "test_id": "rename-file",
+        "path": gui_root + "nested/addition.txt",
+        "view_path": gui_root + "nested", "name": "renamed.txt",
+    }, {
+        "type": "delete", "test_id": "delete-empty",
+        "path": gui_root + "empty.txt", "view_path": gui_root,
+    }, {
+        "type": "create_directory", "test_id": "recursive-directory",
+        "name": "remove-me",
+    }, {
+        "type": "add_files", "test_id": "recursive-child",
+        "sources": [str(addition)], "destination": "remove-me",
+    }, {
+        "type": "delete", "test_id": "recursive-delete",
+        "path": gui_root + "remove-me", "view_path": gui_root,
+    }]
+    scenario = tmp_path / f"tar-gzip-cud-{view}.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / f"tar-gzip-cud-{view}"
+    result = subprocess.run([
+        sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+        "--exe", str(peare_gui_path), "--image",
+        str(ROOT / "tests" / "formats" / "xar" / "fixtures" / "mixed.xar"),
+        "--scenario", str(scenario), "--output-dir", str(output_dir),
+        "--timeout", "300",
+    ], capture_output=True, text=True, timeout=330)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    assert report["stage"] == "complete"
+    assert len(report["operations"]) == len(operations)
+    assert all(operation["passed"] for operation in report["operations"])
+    memory = json.loads((output_dir / "writer-test-memory.json").read_text(
+        encoding="utf-8"))
+    assert len(memory["samples"]) >= 2
+    assert memory["peak"]
+
+    with tarfile.open(archive, "r:gz") as opened:
+        members = {member.name: member for member in opened.getmembers()}
+        assert set(members) == {"initial.txt", "nested", "nested/renamed.txt"}
+        assert opened.extractfile("initial.txt").read() == replacement.read_bytes()
+        assert opened.extractfile("nested/renamed.txt").read() == addition.read_bytes()
+    with peare_lib.open_file(str(archive)) as opened:
+        rows = {row["path"]: row["sha256"] for row in opened.normalized_tree()}
+    assert rows[gui_root + "initial.txt"] == hashlib.sha256(
+        replacement.read_bytes()).hexdigest()
+    assert rows[gui_root + "nested/renamed.txt"] == hashlib.sha256(
+        addition.read_bytes()).hexdigest()
+    assert not any(path.endswith("empty.txt") or "remove-me" in path
+                   or path.endswith("nested/addition.txt") for path in rows)
+    seven_zip = _seven_zip_executable()
+    if seven_zip:
+        checked = subprocess.run([seven_zip, "t", str(archive)],
+                                 capture_output=True, text=True, timeout=60)
+        assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_tar_zstd_gui_all_variants_complete_cud_persistent(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    sample = ROOT / "tests" / "formats" / "xar" / "fixtures" / "mixed.xar"
+    initial = tmp_path / "initial.txt"
+    addition = ROOT / "THIRDPARTY.md"
+    replacement = ROOT / "AGENTS.md"
+    initial.write_bytes(b"Initial TAR.ZST payload.\n")
+    variants = [f"fast-{level}" for level in range(5, 0, -1)] + [
+        f"level-{level}" for level in range(1, 23)]
+    assert writer_lib.peare_writer_create_variant_count(b"tar-zstd") == len(variants)
+
+    operations = []
+    outputs = {}
+    for variant in variants:
+        destination = tmp_path / f"gui-{variant}.tar.zst"
+        outputs[variant] = destination
+        gui_root = destination.stem + "/"
+        operations.append({
+            "type": "create_container", "test_id": f"create-{variant}",
+            "format": "tar-zstd", "variant": variant,
+            "destination": str(destination), "sources": [str(initial)],
+        })
+        operations.extend([
+            {"type": "create_directory", "test_id": f"directory-{variant}",
+             "name": "gui-dir"},
+            {"type": "add_files", "test_id": f"add-{variant}",
+             "sources": [str(addition)], "destination": "gui-dir"},
+            {"type": "create_file", "test_id": f"empty-{variant}",
+             "parent": gui_root + "gui-dir", "view_path": gui_root + "gui-dir",
+             "name": "empty.txt"},
+            {"type": "replace", "test_id": f"replace-{variant}",
+             "path": gui_root + "initial.txt", "view_path": gui_root,
+             "source": str(replacement)},
+            {"type": "rename", "test_id": f"rename-{variant}",
+             "path": gui_root + "gui-dir/THIRDPARTY.md",
+             "view_path": gui_root + "gui-dir", "name": "renamed.txt"},
+            {"type": "delete", "test_id": f"delete-empty-{variant}",
+             "path": gui_root + "gui-dir/empty.txt",
+             "view_path": gui_root + "gui-dir"},
+            {"type": "create_directory", "test_id": f"recursive-dir-{variant}",
+             "name": "remove-me"},
+            {"type": "add_files", "test_id": f"recursive-child-{variant}",
+             "sources": [str(addition)], "destination": "remove-me"},
+            {"type": "delete", "test_id": f"recursive-delete-{variant}",
+             "path": gui_root + "remove-me", "view_path": gui_root},
+        ])
+
+    scenario = tmp_path / "tar-zstd-all-variants-cud.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / f"tar-zstd-all-variants-cud-{view}"
+    result = subprocess.run([
+        sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+        "--exe", str(peare_gui_path), "--image", str(sample),
+        "--scenario", str(scenario), "--output-dir", str(output_dir),
+        "--timeout", "900",
+    ], capture_output=True, text=True, timeout=930)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    assert report["stage"] == "complete"
+    assert len(report["operations"]) == len(operations)
+    assert all(operation["passed"] for operation in report["operations"])
+    memory = json.loads((output_dir / "writer-test-memory.json").read_text(
+        encoding="utf-8"))
+    assert len(memory["samples"]) >= 2
+    assert memory["peak"]
+
+    expected = {
+        "initial.txt": replacement.read_bytes(),
+        "gui-dir/renamed.txt": addition.read_bytes(),
+    }
+    seven_zip = _seven_zip_executable()
+    seven_zip_version = _seven_zip_version(seven_zip) if seven_zip else None
+    for variant, archive in outputs.items():
+        with archive.open("rb") as compressed:
+            with zstandard.ZstdDecompressor().stream_reader(compressed) as reader:
+                decoded = reader.read()
+        with tarfile.open(fileobj=io.BytesIO(decoded), mode="r:") as tar:
+            rows = {member.name: tar.extractfile(member).read()
+                    for member in tar.getmembers() if member.isfile()}
+        assert rows == expected, variant
+        with peare_lib.open_file(str(archive)) as opener:
+            tree = opener.normalized_tree()
+        for path, data in expected.items():
+            assert any(row["path"].endswith("/" + path) and
+                       row["sha256"] == hashlib.sha256(data).hexdigest()
+                       for row in tree), (variant, path)
+        assert not any("remove-me" in row["path"] or
+                       row["path"].endswith("/empty.txt") or
+                       row["path"].endswith("/gui-dir/THIRDPARTY.md")
+                       for row in tree), variant
+        if seven_zip and seven_zip_version and seven_zip_version >= (21, 0):
+            checked = subprocess.run(
+                [seven_zip, "t", str(archive)], capture_output=True,
+                text=True, timeout=60)
+            assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
 def test_tar_xz_create_all_checks_and_7zip(writer_lib, peare_lib, tmp_path):
     seven_zip = _seven_zip_executable()
     if not seven_zip:
@@ -5112,6 +5684,50 @@ def test_tar_xz_create_all_checks_and_7zip(writer_lib, peare_lib, tmp_path):
             rows = opener.normalized_tree()
             assert any(row["path"].endswith("/README.md") and
                        row["sha256"] == payload_hash for row in rows)
+        replacement = ROOT / "AGENTS.md"
+        added = ROOT / "THIRDPARTY.md"
+        writer = _HANDLE()
+        assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+        try:
+            assert writer_lib.peare_writer_update_begin(
+                writer, str(archive).encode()) == 0, \
+                writer_lib.peare_writer_last_error(writer)
+            assert writer_lib.peare_writer_create_directory(
+                writer, b"remove-me") == 0
+            assert writer_lib.peare_writer_create_file(
+                writer, str(source).encode(), b"remove-me/child.txt") == 0
+            assert writer_lib.peare_writer_create_empty_file(
+                writer, b"empty.txt") == 0
+            assert writer_lib.peare_writer_replace_file(
+                writer, str(replacement).encode(), b"README.md") == 0
+            assert writer_lib.peare_writer_create_file(
+                writer, str(added).encode(), b"added.txt") == 0
+            assert writer_lib.peare_writer_rename_entry(
+                writer, b"added.txt", b"renamed.txt") == 0
+            assert writer_lib.peare_writer_delete_entry(
+                writer, b"empty.txt", 0) == 0
+            assert writer_lib.peare_writer_delete_entry(
+                writer, b"remove-me", 1) == 0
+            status = writer_lib.peare_writer_update_finish(writer)
+            assert status == 0, writer_lib.peare_writer_last_error(writer)
+        finally:
+            writer_lib.peare_writer_destroy(writer)
+
+        check_id = {"none": 0, "crc32": 1, "crc64": 4, "sha256": 10}[check]
+        assert archive.read_bytes()[7] & 0x0f == check_id
+        with lzma.open(archive, "rb") as compressed:
+            with tarfile.open(fileobj=io.BytesIO(compressed.read()), mode="r:") as tar:
+                rows = {member.name: member for member in tar.getmembers()}
+                assert tar.extractfile(rows["README.md"]).read() == \
+                    replacement.read_bytes()
+                assert tar.extractfile(rows["renamed.txt"]).read() == \
+                    added.read_bytes()
+                assert set(rows) == {"README.md", "renamed.txt"}
+        checked = subprocess.run(
+            [seven_zip, "t", str(archive)], capture_output=True,
+            text=True, timeout=60)
+        assert checked.returncode == 0, checked.stdout + checked.stderr
+
 
 def test_tar_xz_cud_from_independent_sample(writer_lib, peare_lib,
                                              peare_gui_path, tmp_path):
@@ -5217,6 +5833,8 @@ def test_tar_lzma_create_all_levels_and_7zip(writer_lib, peare_lib, tmp_path):
         pytest.skip("7-Zip is required for independent TAR.LZMA validation")
     source = ROOT / "README.md"
     payload_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    replacement = ROOT / "AGENTS.md"
+    addition = ROOT / "THIRDPARTY.md"
     assert writer_lib.peare_writer_create_format_count() == 33
     assert writer_lib.peare_writer_create_variant_count(b"tar-lzma") == 9
     item = _WriterInputFile(str(source).encode(), source.name.encode())
@@ -5244,6 +5862,151 @@ def test_tar_lzma_create_all_levels_and_7zip(writer_lib, peare_lib, tmp_path):
             rows = opener.normalized_tree()
             assert any(row["path"].endswith("/README.md") and
                        row["sha256"] == payload_hash for row in rows)
+
+        writer = _HANDLE()
+        assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+        try:
+            assert writer_lib.peare_writer_update_begin(
+                writer, str(archive).encode()) == 0, \
+                writer_lib.peare_writer_last_error(writer)
+            assert writer_lib.peare_writer_create_directory(
+                writer, b"remove-me") == 0
+            assert writer_lib.peare_writer_create_file(
+                writer, str(source).encode(), b"remove-me/child.txt") == 0
+            assert writer_lib.peare_writer_create_empty_file(
+                writer, b"empty.txt") == 0
+            assert writer_lib.peare_writer_replace_file(
+                writer, str(replacement).encode(), b"README.md") == 0
+            assert writer_lib.peare_writer_create_file(
+                writer, str(addition).encode(), b"added.txt") == 0
+            assert writer_lib.peare_writer_rename_entry(
+                writer, b"added.txt", b"renamed.txt") == 0
+            assert writer_lib.peare_writer_delete_entry(
+                writer, b"empty.txt", 0) == 0
+            assert writer_lib.peare_writer_delete_entry(
+                writer, b"remove-me", 1) == 0
+            assert writer_lib.peare_writer_update_finish(writer) == 0, \
+                writer_lib.peare_writer_last_error(writer)
+        finally:
+            writer_lib.peare_writer_destroy(writer)
+
+        with lzma.open(archive, "rb") as compressed:
+            with tarfile.open(fileobj=io.BytesIO(compressed.read()),
+                              mode="r:") as tar:
+                rows = {member.name: tar.extractfile(member).read()
+                        for member in tar.getmembers() if member.isfile()}
+        assert rows == {"README.md": replacement.read_bytes(),
+                        "renamed.txt": addition.read_bytes()}
+        checked = subprocess.run(
+            [seven_zip, "t", str(archive)], capture_output=True,
+            text=True, timeout=60)
+        assert checked.returncode == 0, checked.stdout + checked.stderr
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = {row["path"]: row["sha256"]
+                    for row in opener.normalized_tree()}
+        for name, data in (("README.md", replacement.read_bytes()),
+                           ("renamed.txt", addition.read_bytes())):
+            assert any(path.endswith("/" + name) and digest ==
+                       hashlib.sha256(data).hexdigest()
+                       for path, digest in rows.items()), (level, name)
+        assert not any("remove-me" in path or path.endswith("/empty.txt")
+                       for path in rows), level
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_tar_lzma_gui_all_levels_complete_cud_persistent(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    sample = ROOT / "tests" / "formats" / "xar" / "fixtures" / "mixed.xar"
+    initial = tmp_path / "initial.txt"
+    addition = ROOT / "THIRDPARTY.md"
+    replacement = ROOT / "AGENTS.md"
+    initial.write_bytes(b"Initial TAR.LZMA payload.\n")
+    variants = tuple(f"level-{level}" for level in range(1, 10))
+    assert writer_lib.peare_writer_create_variant_count(b"tar-lzma") == len(variants)
+
+    operations = []
+    outputs = {}
+    for variant in variants:
+        destination = tmp_path / f"gui-{variant}.tar.lzma"
+        outputs[variant] = destination
+        gui_root = destination.stem + "/"
+        operations.append({
+            "type": "create_container", "test_id": f"create-{variant}",
+            "format": "tar-lzma", "variant": variant,
+            "destination": str(destination), "sources": [str(initial)],
+        })
+        operations.extend([
+            {"type": "create_directory", "test_id": f"directory-{variant}",
+             "name": "gui-dir"},
+            {"type": "add_files", "test_id": f"add-{variant}",
+             "sources": [str(addition)], "destination": "gui-dir"},
+            {"type": "create_file", "test_id": f"empty-{variant}",
+             "parent": gui_root + "gui-dir", "view_path": gui_root + "gui-dir",
+             "name": "empty.txt"},
+            {"type": "replace", "test_id": f"replace-{variant}",
+             "path": gui_root + "initial.txt", "view_path": gui_root,
+             "source": str(replacement)},
+            {"type": "rename", "test_id": f"rename-{variant}",
+             "path": gui_root + "gui-dir/THIRDPARTY.md",
+             "view_path": gui_root + "gui-dir", "name": "renamed.txt"},
+            {"type": "delete", "test_id": f"delete-empty-{variant}",
+             "path": gui_root + "gui-dir/empty.txt",
+             "view_path": gui_root + "gui-dir"},
+            {"type": "create_directory", "test_id": f"recursive-dir-{variant}",
+             "name": "remove-me"},
+            {"type": "add_files", "test_id": f"recursive-child-{variant}",
+             "sources": [str(addition)], "destination": "remove-me"},
+            {"type": "delete", "test_id": f"recursive-delete-{variant}",
+             "path": gui_root + "remove-me", "view_path": gui_root},
+        ])
+
+    scenario = tmp_path / "tar-lzma-all-levels-cud.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / f"tar-lzma-all-levels-cud-{view}"
+    result = subprocess.run([
+        sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+        "--exe", str(peare_gui_path), "--image", str(sample),
+        "--scenario", str(scenario), "--output-dir", str(output_dir),
+        "--timeout", "600",
+    ], capture_output=True, text=True, timeout=630)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    assert report["stage"] == "complete"
+    assert len(report["operations"]) == len(operations)
+    assert all(operation["passed"] for operation in report["operations"])
+    memory = json.loads((output_dir / "writer-test-memory.json").read_text(
+        encoding="utf-8"))
+    assert len(memory["samples"]) >= 2
+    assert memory["peak"]
+
+    seven_zip = _seven_zip_executable()
+    expected = {"initial.txt": replacement.read_bytes(),
+                "gui-dir/renamed.txt": addition.read_bytes()}
+    for variant, archive in outputs.items():
+        with lzma.open(archive, "rb") as compressed:
+            with tarfile.open(fileobj=io.BytesIO(compressed.read()),
+                              mode="r:") as tar:
+                rows = {member.name: tar.extractfile(member).read()
+                        for member in tar.getmembers() if member.isfile()}
+        assert rows == expected, variant
+        with peare_lib.open_file(str(archive)) as opener:
+            tree = opener.normalized_tree()
+        for path, data in expected.items():
+            assert any(row["path"].endswith("/" + path) and
+                       row["sha256"] == hashlib.sha256(data).hexdigest()
+                       for row in tree), (variant, path)
+        assert not any("remove-me" in row["path"] or
+                       row["path"].endswith("/empty.txt") or
+                       row["path"].endswith("/gui-dir/THIRDPARTY.md")
+                       for row in tree), variant
+        if seven_zip:
+            checked = subprocess.run(
+                [seven_zip, "t", str(archive)], capture_output=True,
+                text=True, timeout=60)
+            assert checked.returncode == 0, checked.stdout + checked.stderr
+
 
 def test_tar_lzma_cud_from_independent_sample(writer_lib, peare_lib,
                                                peare_gui_path, tmp_path):
@@ -5544,6 +6307,129 @@ def test_uuencode_writer_empty_input_and_multiple_files(
         assert opener.container_format() == "UUE"
         rows = opener.normalized_tree()
         assert len(rows) == 2
+
+
+def _decode_uue_members(data):
+    members = {}
+    lines = data.splitlines()
+    index = 0
+    while index < len(lines):
+        header = lines[index]
+        index += 1
+        if not header.startswith((b"begin ", b"begin-encoded ",
+                                  b"begin-base64 ", b"begin-base64-encoded ")):
+            continue
+        parts = header.split(b" ", 2)
+        assert len(parts) == 3
+        encoded_name = b"encoded" in parts[0]
+        name = base64.b64decode(parts[2]) if encoded_name else parts[2]
+        payload = bytearray()
+        if parts[0].startswith(b"begin-base64"):
+            while index < len(lines) and lines[index] != b"====":
+                payload.extend(lines[index])
+                index += 1
+            assert index < len(lines)
+            index += 1
+            decoded = base64.b64decode(payload, validate=True)
+        else:
+            while index < len(lines) and lines[index] != b"end":
+                payload.extend(binascii.a2b_uu(lines[index]))
+                index += 1
+            assert index < len(lines)
+            index += 1
+            decoded = bytes(payload)
+        assert name not in members
+        members[name.decode("utf-8")] = decoded
+    return members
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_uuencode_gui_all_variants_create_and_full_cud_persistent(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    variants = []
+    for index in range(writer_lib.peare_writer_create_variant_count(b"uuencode")):
+        item = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"uuencode", index, C.byref(item)) == 0
+        variants.append(item.id.decode())
+    assert variants == [
+        "classic", "classic-encoded-name", "base64", "base64-encoded-name"]
+
+    seed = ROOT / "README.md"
+    addition = ROOT / "AGENTS.md"
+    replacement = ROOT / "LICENSE"
+    base_archive = tmp_path / "gui-uue-base.uue"
+    base_writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(base_writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            base_writer, b"uuencode", b"classic", str(base_archive).encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            base_writer, str(seed).encode(), seed.name.encode()) == 0
+        assert writer_lib.peare_writer_finish(base_writer) == 0, \
+            writer_lib.peare_writer_last_error(base_writer)
+    finally:
+        writer_lib.peare_writer_destroy(base_writer)
+
+    operations = []
+    outputs = []
+    for variant in variants:
+        destination = tmp_path / f"gui-created-{variant}.uue"
+        outputs.append(destination)
+        operations.append({
+            "type": "create_container", "test_id": f"create-{variant}",
+            "format": "uuencode", "variant": variant,
+            "destination": str(destination), "sources": [str(seed)],
+        })
+        operations.extend([
+            {"type": "add_files", "test_id": f"add-{variant}",
+             "sources": [str(addition)], "destination": "",
+             "expect_present": addition.name},
+            {"type": "create_file", "test_id": f"empty-{variant}",
+             "name": "empty.bin", "expect_present": "empty.bin"},
+            {"type": "replace", "test_id": f"replace-{variant}",
+             "path": seed.name, "source": str(replacement),
+             "expect_present": seed.name},
+            {"type": "rename", "test_id": f"rename-{variant}",
+             "path": seed.name, "name": "renamed.txt",
+             "expect_present": "renamed.txt", "expect_absent": seed.name},
+            {"type": "delete", "test_id": f"delete-empty-{variant}",
+             "path": "empty.bin", "expect_absent": "empty.bin"},
+        ])
+
+    scenario = tmp_path / "uue-all-variants-cud.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / f"uue-all-variants-cud-{view}"
+    result = subprocess.run([
+        sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+        "--exe", str(peare_gui_path), "--image", str(base_archive),
+        "--scenario", str(scenario), "--output-dir", str(output_dir),
+        "--timeout", "180",
+    ], capture_output=True, text=True, timeout=210)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    assert report["stage"] == "complete"
+    assert len(report["operations"]) == len(operations)
+    assert all(operation["passed"] for operation in report["operations"])
+    memory = json.loads((output_dir / "writer-test-memory.json").read_text(
+        encoding="utf-8"))
+    assert len(memory["samples"]) >= 2
+    assert memory["peak"]
+
+    expected = {
+        "renamed.txt": replacement.read_bytes(),
+        addition.name: addition.read_bytes(),
+    }
+    for archive in outputs:
+        assert _decode_uue_members(archive.read_bytes()) == expected
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert {path: row["sha256"] for path, row in rows.items()} == {
+            name: hashlib.sha256(payload).hexdigest()
+            for name, payload in expected.items()
+        }
 
 
 def _decode_classic_uue_members(data):
@@ -5870,11 +6756,56 @@ def test_deb_writer_all_compression_combinations(
     assert control["control"].startswith(b"Package: peare-generated\n")
     assert data["usr/share/peare/README.md"] == payload
 
+    original_control = members[control_name]
+    added = ROOT / "AGENTS.md"
+    replacement = ROOT / "LICENSE"
+    update = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(update)) == 0
+    try:
+        status = writer_lib.peare_writer_update_begin(update, str(output).encode())
+        assert status == 0, writer_lib.peare_writer_last_error(update)
+        assert writer_lib.peare_writer_create_directory(
+            update, b"usr/share/peare-cud") == 0
+        assert writer_lib.peare_writer_add_file(
+            update, str(added).encode(), b"usr/share/peare-cud/added.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            update, b"usr/share/peare-cud/empty.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            update, str(replacement).encode(), b"usr/share/peare/README.md") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            update, b"usr/share/peare-cud/added.txt",
+            b"usr/share/peare-cud/renamed.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            update, b"usr/share/peare-cud/empty.txt", 0) == 0
+        assert writer_lib.peare_writer_create_directory(
+            update, b"usr/share/peare-remove") == 0
+        assert writer_lib.peare_writer_add_file(
+            update, str(added).encode(), b"usr/share/peare-remove/child.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            update, b"usr/share/peare-remove", 1) == 0
+        status = writer_lib.peare_writer_update_finish(update)
+        assert status == 0, writer_lib.peare_writer_last_error(update)
+    finally:
+        writer_lib.peare_writer_destroy(update)
+
+    updated_members = _ar_members(output)
+    assert updated_members["debian-binary"] == b"2.0\n"
+    assert updated_members[control_name] == original_control
+    updated_data = _tar_members(
+        _deb_tar_payload(updated_members[data_name], data_codec))
+    normalized_data = {name.removeprefix("./"): content
+                       for name, content in updated_data.items()}
+    assert normalized_data["usr/share/peare/README.md"] == replacement.read_bytes()
+    assert normalized_data["usr/share/peare-cud/renamed.txt"] == added.read_bytes()
+    assert "usr/share/peare-cud/empty.txt" not in normalized_data
+    assert not any(name.startswith("usr/share/peare-remove/")
+                   for name in normalized_data)
+
     with peare_lib.open_file(str(output)) as opener:
         assert opener.container_format() == "DEB"
         rows = opener.normalized_tree()
     leaf = next(row for row in rows if row["path"].endswith("usr/share/peare/README.md"))
-    assert leaf["sha256"] == hashlib.sha256(payload).hexdigest()
+    assert leaf["sha256"] == hashlib.sha256(replacement.read_bytes()).hexdigest()
     if control_codec == "raw" and data_codec == "raw":
         seven_zip = _seven_zip_executable()
         if seven_zip:
@@ -6010,6 +6941,128 @@ def test_deb_existing_package_full_cud(writer_lib, peare_lib, peare_gui_path,
         gui_leaf = next(row for row in gui_rows
                         if row["path"].endswith("usr/bin/hello"))
         assert gui_leaf["sha256"] == hashlib.sha256(payload.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_deb_gui_all_variants_complete_cud_persistent(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    source = tmp_path / "README.md"
+    addition = tmp_path / "ADDED.md"
+    replacement = tmp_path / "REPLACEMENT.md"
+    source.write_bytes(b"Initial DEB payload.\n")
+    addition.write_bytes(b"Added DEB payload.\n")
+    replacement.write_bytes(b"Replacement DEB payload.\n")
+
+    seed = tmp_path / "seed.deb"
+    seed_writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(seed_writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            seed_writer, b"deb", b"control-raw+data-raw",
+            str(seed).encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            seed_writer, str(source).encode(), b"README.md") == 0
+        assert writer_lib.peare_writer_finish(seed_writer) == 0, \
+            writer_lib.peare_writer_last_error(seed_writer)
+    finally:
+        writer_lib.peare_writer_destroy(seed_writer)
+
+    suffixes = {"raw": "", "gzip": ".gz", "xz": ".xz", "zstd": ".zst",
+                "bzip2": ".bz2", "lzma": ".lzma"}
+    variants = []
+    for index in range(writer_lib.peare_writer_create_variant_count(b"deb")):
+        item = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"deb", index, C.byref(item)) == 0
+        variants.append(item.id.decode())
+    assert len(variants) == 24
+
+    operations = []
+    outputs = {}
+    for variant in variants:
+        control_codec, data_codec = variant.removeprefix("control-").split(
+            "+data-")
+        data_member = f"data.tar{suffixes[data_codec]}"
+        prefix = (f"{data_member}/" if data_codec == "raw" else
+                  f"{data_member}/data.tar/")
+        destination = tmp_path / f"gui-{variant}.deb"
+        outputs[variant] = destination
+        operations.append({
+            "type": "create_container", "test_id": f"create-{variant}",
+            "format": "deb", "variant": variant,
+            "destination": str(destination), "sources": [str(source)],
+        })
+        operations.extend([
+            {"type": "create_directory", "test_id": f"directory-{variant}",
+             "name": "gui-cud", "expect_present": prefix + "gui-cud"},
+            {"type": "add_files", "test_id": f"add-{variant}",
+             "sources": [str(addition)], "destination": "gui-cud",
+             "expect_present": prefix + "gui-cud/ADDED.md"},
+            {"type": "create_file", "test_id": f"empty-{variant}",
+             "parent": prefix + "gui-cud", "name": "empty.txt",
+             "expect_present": prefix + "gui-cud/empty.txt"},
+            {"type": "replace", "test_id": f"replace-{variant}",
+             "path": prefix + source.name, "source": str(replacement),
+             "expect_present": prefix + source.name},
+            {"type": "rename", "test_id": f"rename-{variant}",
+             "path": prefix + "gui-cud/ADDED.md", "name": "RENAMED.md",
+             "expect_present": prefix + "gui-cud/RENAMED.md",
+             "expect_absent": prefix + "gui-cud/ADDED.md"},
+            {"type": "delete", "test_id": f"delete-empty-{variant}",
+             "path": prefix + "gui-cud/empty.txt",
+             "expect_absent": prefix + "gui-cud/empty.txt"},
+            {"type": "create_directory", "test_id": f"recursive-dir-{variant}",
+             "name": "remove-me", "expect_present": prefix + "remove-me"},
+            {"type": "add_files", "test_id": f"recursive-child-{variant}",
+             "sources": [str(addition)], "destination": "remove-me",
+             "expect_present": prefix + "remove-me/ADDED.md"},
+            {"type": "delete", "test_id": f"recursive-delete-{variant}",
+             "path": prefix + "remove-me",
+             "expect_absent": prefix + "remove-me"},
+        ])
+
+    scenario = tmp_path / "deb-all-variants-cud.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / f"deb-all-variants-cud-{view}"
+    result = subprocess.run([
+        sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+        "--exe", str(peare_gui_path), "--image", str(seed),
+        "--scenario", str(scenario), "--output-dir", str(output_dir),
+        "--timeout", "900",
+    ], capture_output=True, text=True, timeout=930)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    assert report["stage"] == "complete"
+    assert len(report["operations"]) == len(operations)
+    assert all(item["passed"] for item in report["operations"])
+    memory = json.loads((output_dir / "writer-test-memory.json").read_text(
+        encoding="utf-8"))
+    assert len(memory["samples"]) >= 2
+    assert memory["peak"]
+
+    expected_data = {
+        source.name: replacement.read_bytes(),
+        "gui-cud/RENAMED.md": addition.read_bytes(),
+    }
+    for variant, archive in outputs.items():
+        control_codec, data_codec = variant.removeprefix("control-").split(
+            "+data-")
+        members = _ar_members(archive)
+        assert members["debian-binary"] == b"2.0\n"
+        assert f"control.tar{suffixes[control_codec]}" in members
+        assert f"data.tar{suffixes[data_codec]}" in members
+        data = _tar_members(_deb_tar_payload(
+            members[f"data.tar{suffixes[data_codec]}"], data_codec))
+        normalized_data = {name.removeprefix("./"): payload
+                           for name, payload in data.items()}
+        assert normalized_data == expected_data
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = {row["path"]: row for row in opener.normalized_tree()}
+        for path, payload in expected_data.items():
+            row = next(row for name, row in rows.items() if name.endswith(path))
+            assert row["sha256"] == hashlib.sha256(payload).hexdigest()
 
 
 def _rpm_header(data, offset):
@@ -6292,6 +7345,76 @@ def test_rpm_writer_payload_codecs(writer_lib, peare_lib, peare_gui_path, tmp_pa
         rows = opener.normalized_tree()
     leaf = next(row for row in rows if row["path"].endswith("usr/share/peare/README.md"))
     assert leaf["sha256"] == hashlib.sha256(expected).hexdigest()
+
+    addition = ROOT / "AGENTS.md"
+    replacement = ROOT / "LICENSE"
+    update = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(update)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(
+            update, str(output).encode()) == 0
+        assert writer_lib.peare_writer_create_directory(
+            update, b"usr/share/peare-cud") == 0
+        assert writer_lib.peare_writer_add_file(
+            update, str(addition).encode(), b"usr/share/peare-cud/added.txt") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            update, b"usr/share/peare-cud/empty.txt") == 0
+        assert writer_lib.peare_writer_replace_file(
+            update, str(replacement).encode(),
+            b"usr/share/peare/README.md") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            update, b"usr/share/peare-cud/added.txt",
+            b"usr/share/peare-cud/renamed.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            update, b"usr/share/peare-cud/empty.txt", 0) == 0
+        assert writer_lib.peare_writer_create_directory(
+            update, b"usr/share/peare-disposable") == 0
+        assert writer_lib.peare_writer_add_file(
+            update, str(addition).encode(),
+            b"usr/share/peare-disposable/remove.txt") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            update, b"usr/share/peare-disposable", 1) == 0
+        status = writer_lib.peare_writer_update_finish(update)
+        assert status == 0, writer_lib.peare_writer_last_error(update)
+    finally:
+        writer_lib.peare_writer_destroy(update)
+
+    data = output.read_bytes()
+    signature, sig_end = _rpm_header(data, 96)
+    main_offset = (sig_end + 7) & ~7
+    main_header, payload_offset = _rpm_header(data, main_offset)
+    updated_tags = _rpm_header_tags(data, main_offset)
+    updated_payload = data[payload_offset:]
+    assert updated_tags[1124] == b"cpio\0"
+    assert updated_tags[1125] == codec.encode() + b"\0"
+    if codec == "none":
+        cpio = updated_payload
+    elif codec == "gzip":
+        cpio = gzip.decompress(updated_payload)
+    elif codec == "bzip2":
+        cpio = bz2.decompress(updated_payload)
+    elif codec == "xz":
+        cpio = lzma.decompress(updated_payload, format=lzma.FORMAT_XZ)
+    elif codec == "lzma":
+        cpio = lzma.decompress(updated_payload, format=lzma.FORMAT_ALONE)
+    else:
+        with zstandard.ZstdDecompressor().stream_reader(
+                io.BytesIO(updated_payload)) as reader:
+            cpio = reader.read()
+    updated_files = _rpm_cpio_crc(cpio)
+    assert updated_files["usr/share/peare/README.md"] == replacement.read_bytes()
+    assert updated_files["usr/share/peare-cud/renamed.txt"] == addition.read_bytes()
+    assert "usr/share/peare-cud/empty.txt" not in updated_files
+    assert not any(path.startswith("usr/share/peare-disposable/")
+                   for path in updated_files)
+    with peare_lib.open_file(str(output)) as opener:
+        updated_rows = {row["path"]: row for row in opener.normalized_tree()}
+    for path, content in (("usr/share/peare/README.md", replacement.read_bytes()),
+                          ("usr/share/peare-cud/renamed.txt", addition.read_bytes())):
+        row = next(row for name, row in updated_rows.items()
+                   if name.endswith(path))
+        assert row["sha256"] == hashlib.sha256(content).hexdigest()
+
     if codec == "gzip":
         gui = subprocess.run(
             [sys.executable, str(ROOT / "tests" / "run_gui_preview_tests.py"),
@@ -6304,6 +7427,115 @@ def test_rpm_writer_payload_codecs(writer_lib, peare_lib, peare_gui_path, tmp_pa
         result = subprocess.run([seven_zip, "t", str(output)], capture_output=True,
                                 text=True, timeout=60)
         assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_rpm_gui_all_variants_complete_cud_persistent(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    source = tmp_path / "README.md"
+    addition = tmp_path / "ADDED.md"
+    replacement = tmp_path / "REPLACEMENT.md"
+    source.write_bytes(b"Initial RPM GUI payload.\n")
+    addition.write_bytes(b"Added RPM GUI payload.\n")
+    replacement.write_bytes(b"Replacement RPM GUI payload.\n")
+
+    seed = tmp_path / "seed.rpm"
+    seed_writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(seed_writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            seed_writer, b"rpm", b"none", str(seed).encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            seed_writer, str(source).encode(), b"README.md") == 0
+        assert writer_lib.peare_writer_finish(seed_writer) == 0, \
+            writer_lib.peare_writer_last_error(seed_writer)
+    finally:
+        writer_lib.peare_writer_destroy(seed_writer)
+
+    variants = []
+    for index in range(writer_lib.peare_writer_create_variant_count(b"rpm")):
+        item = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"rpm", index, C.byref(item)) == 0
+        variants.append(item.id.decode())
+    assert variants == ["none", "gzip", "bzip2", "xz", "zstd", "lzma"]
+
+    operations = []
+    outputs = {}
+    for variant in variants:
+        destination = tmp_path / f"gui-rpm-{variant}.rpm"
+        outputs[variant] = destination
+        operations.append({
+            "type": "create_container", "test_id": f"create-{variant}",
+            "format": "rpm", "variant": variant,
+            "destination": str(destination), "sources": [str(source)],
+        })
+        operations.extend([
+            {"type": "create_directory", "test_id": f"directory-{variant}",
+             "name": "gui-cud", "expect_present": "gui-cud"},
+            {"type": "add_files", "test_id": f"add-{variant}",
+             "sources": [str(addition)], "destination": "gui-cud",
+             "expect_present": "gui-cud/ADDED.md"},
+            {"type": "create_file", "test_id": f"empty-{variant}",
+             "parent": "gui-cud", "name": "empty.txt",
+             "expect_present": "gui-cud/empty.txt"},
+            {"type": "replace", "test_id": f"replace-{variant}",
+             "path": source.name, "source": str(replacement),
+             "expect_present": source.name},
+            {"type": "rename", "test_id": f"rename-{variant}",
+             "path": "gui-cud/ADDED.md", "name": "RENAMED.md",
+             "expect_present": "gui-cud/RENAMED.md",
+             "expect_absent": "gui-cud/ADDED.md"},
+            {"type": "delete", "test_id": f"delete-empty-{variant}",
+             "path": "gui-cud/empty.txt",
+             "expect_absent": "gui-cud/empty.txt"},
+            {"type": "create_directory", "test_id": f"recursive-dir-{variant}",
+             "name": "remove-me", "expect_present": "remove-me"},
+            {"type": "add_files", "test_id": f"recursive-child-{variant}",
+             "sources": [str(addition)], "destination": "remove-me",
+             "expect_present": "remove-me/ADDED.md"},
+            {"type": "delete", "test_id": f"recursive-delete-{variant}",
+             "path": "remove-me", "expect_absent": "remove-me"},
+        ])
+
+    scenario = tmp_path / "rpm-all-variants-cud.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / f"rpm-all-variants-cud-{view}"
+    result = subprocess.run([
+        sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+        "--exe", str(peare_gui_path), "--image", str(seed),
+        "--scenario", str(scenario), "--output-dir", str(output_dir),
+        "--timeout", "600",
+    ], capture_output=True, text=True, timeout=630)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    assert report["stage"] == "complete"
+    assert len(report["operations"]) == len(operations)
+    assert all(item["passed"] for item in report["operations"])
+    memory = json.loads((output_dir / "writer-test-memory.json").read_text(
+        encoding="utf-8"))
+    assert len(memory["samples"]) >= 2
+    assert memory["peak"]
+
+    expected_files = {
+        source.name: replacement.read_bytes(),
+        "gui-cud/RENAMED.md": addition.read_bytes(),
+    }
+    seven_zip = _seven_zip_executable()
+    for variant, archive in outputs.items():
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = {row["path"]: row for row in opener.normalized_tree()}
+        for path, content in expected_files.items():
+            row = next(row for name, row in rows.items() if name.endswith(path))
+            assert row["sha256"] == hashlib.sha256(content).hexdigest()
+        assert not any(name.endswith("empty.txt") or "remove-me" in name
+                       for name in rows)
+        if seven_zip and variant not in ("zstd", "lzma"):
+            check = subprocess.run([seven_zip, "t", str(archive)],
+                                   capture_output=True, text=True, timeout=60)
+            assert check.returncode == 0, check.stdout + check.stderr
 
 @pytest.mark.parametrize(("sample_name", "tar_root"), [
     ("docs.tgz", "archive.tar"), ("docs.tbz2", "writer-test-copy.tbz2"),
@@ -6605,6 +7837,117 @@ def test_tar_v7_create_from_zero_and_full_cud(writer_lib, peare_lib, tmp_path):
             replacement.read_bytes()).hexdigest()
     finally:
         opened.close()
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_tar_gui_all_variants_create_and_full_cud_persistent(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    tar_tool = _external_tool("tar.exe", "tar")
+    if not tar_tool:
+        pytest.skip("A system tar tool is required as an independent TAR oracle")
+
+    variants = []
+    for index in range(writer_lib.peare_writer_create_variant_count(b"tar")):
+        item = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"tar", index, C.byref(item)) == 0
+        variants.append(item.id.decode())
+    assert variants == ["ustar", "v7"]
+
+    initial = tmp_path / "initial.txt"
+    addition = tmp_path / "addition.txt"
+    replacement = tmp_path / "replacement.txt"
+    initial.write_bytes(b"Initial GUI TAR payload.\n")
+    addition.write_bytes(b"Added GUI TAR payload.\n")
+    replacement.write_bytes(b"Replacement GUI TAR payload.\n")
+
+    base_archive = tmp_path / "gui-tar-base.tar"
+    base_writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(base_writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            base_writer, b"tar", b"ustar", str(base_archive).encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            base_writer, str(initial).encode(), b"seed.txt") == 0
+        assert writer_lib.peare_writer_finish(base_writer) == 0, \
+            writer_lib.peare_writer_last_error(base_writer)
+    finally:
+        writer_lib.peare_writer_destroy(base_writer)
+
+    operations = []
+    outputs = []
+    for variant in variants:
+        destination = tmp_path / f"gui-created-{variant}.tar"
+        outputs.append(destination)
+        operations.append({
+            "type": "create_container", "test_id": f"create-{variant}",
+            "format": "tar", "variant": variant,
+            "destination": str(destination), "sources": [str(initial)],
+        })
+        operations.extend([
+            {"type": "create_directory", "test_id": f"directory-{variant}",
+             "name": "nested"},
+            {"type": "add_files", "test_id": f"add-{variant}",
+             "sources": [str(addition)], "destination": "nested"},
+            {"type": "create_file", "test_id": f"empty-{variant}",
+             "name": "empty.txt"},
+            {"type": "replace", "test_id": f"replace-{variant}",
+             "path": initial.name, "source": str(replacement)},
+            {"type": "rename", "test_id": f"rename-{variant}",
+             "path": "nested/addition.txt", "name": "renamed.txt"},
+            {"type": "delete", "test_id": f"delete-empty-{variant}",
+             "path": "empty.txt"},
+            {"type": "create_directory", "test_id": f"recursive-dir-{variant}",
+             "name": "remove-me"},
+            {"type": "add_files", "test_id": f"recursive-child-{variant}",
+             "sources": [str(addition)], "destination": "remove-me"},
+            {"type": "delete", "test_id": f"recursive-delete-{variant}",
+             "path": "remove-me"},
+        ])
+
+    scenario = tmp_path / "tar-all-variants-cud.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / f"tar-all-variants-cud-{view}"
+    result = subprocess.run([
+        sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+        "--exe", str(peare_gui_path), "--image", str(base_archive),
+        "--scenario", str(scenario), "--output-dir", str(output_dir),
+        "--timeout", "300",
+    ], capture_output=True, text=True, timeout=330)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    assert report["stage"] == "complete"
+    assert len(report["operations"]) == len(operations)
+    assert all(operation["passed"] for operation in report["operations"])
+    memory = json.loads((output_dir / "writer-test-memory.json").read_text(
+        encoding="utf-8"))
+    assert len(memory["samples"]) >= 2
+    assert memory["peak"]
+
+    for variant, archive in zip(variants, outputs):
+        data = archive.read_bytes()
+        if variant == "v7":
+            assert data[257:263] == bytes(6)
+        else:
+            assert data[257:262] == b"ustar"
+        listed = subprocess.run([tar_tool, "-tf", str(archive)],
+                                check=True, capture_output=True, text=True,
+                                timeout=60).stdout.splitlines()
+        assert set(listed) == {"initial.txt", "nested", "nested/renamed.txt"}
+        with tarfile.open(archive, "r:") as opened:
+            members = {member.name: member for member in opened.getmembers()}
+            assert opened.extractfile(members["initial.txt"]).read() == \
+                replacement.read_bytes()
+            assert opened.extractfile(members["nested/renamed.txt"]).read() == \
+                addition.read_bytes()
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows["initial.txt"]["sha256"] == hashlib.sha256(
+            replacement.read_bytes()).hexdigest()
+        assert rows["nested/renamed.txt"]["sha256"] == hashlib.sha256(
+            addition.read_bytes()).hexdigest()
 
 def test_tar_v7_directory_rename_limit_is_atomic(writer_lib, tmp_path):
     archive = tmp_path / "v7-rename-atomic.tar"
@@ -10872,7 +12215,8 @@ def test_rar_store_create_abi_roundtrip(writer_lib, peare_lib, tmp_path,
             check=True, capture_output=True, timeout=30)
         assert extracted_unicode.stdout == unicode_source.read_bytes()
     rar_cli = _winrar_cli_executable()
-    if rar_cli:
+    if rar_cli and (not variant.startswith("rar7-m") or
+                    _winrar_cli_supports_rar7(rar_cli)):
         subprocess.run([rar_cli, "t", str(archive)], check=True,
                        capture_output=True, timeout=30)
 
@@ -10881,11 +12225,11 @@ def test_rar_store_create_abi_roundtrip(writer_lib, peare_lib, tmp_path,
 def test_rar_create_variants_gui_persistent(
         peare_gui_path, peare_lib, tmp_path, view):
     sample_root = os.environ.get("PEARE_RAR_SAMPLE_ROOT")
-    if not sample_root:
-        pytest.skip("Set PEARE_RAR_SAMPLE_ROOT to the local RAR sample corpus.")
-    image = Path(sample_root) / "rar4-samples" / "rar4-m3.rar"
+    image = (Path(sample_root) / "rar4-samples" / "rar4-m3.rar"
+             if sample_root else ROOT / "tests" / "formats" / "rar4" /
+             "fixtures" / "rar4-explicit-directories.rar")
     if not image.is_file():
-        pytest.skip("The real RAR4 GUI entry sample is unavailable.")
+        pytest.skip(f"The RAR4 GUI entry sample is unavailable: {image}")
 
     source = tmp_path / "gui-rar-payload.txt"
     source_data = b"RAR GUI variant creation payload\n"
@@ -10917,6 +12261,9 @@ def test_rar_create_variants_gui_persistent(
              "name": "empty.txt", "expect_present": "empty.txt"},
             {"type": "create_directory", "test_id": f"directory-{variant}",
              "name": "empty-dir", "expect_present": "empty-dir"},
+            {"type": "add_files", "test_id": f"directory-child-{variant}",
+             "sources": [str(addition)], "destination": "empty-dir",
+             "expect_present": f"empty-dir/{addition.name}"},
             {"type": "add_files", "test_id": f"add-{variant}",
              "sources": [str(addition)], "destination": "",
              "expect_present": addition.name},
@@ -10953,7 +12300,8 @@ def test_rar_create_variants_gui_persistent(
             assert "empty.txt" not in entries
             assert "empty-dir" not in entries
         rar_cli = _winrar_cli_executable()
-        if rar_cli:
+        if rar_cli and (not variant.startswith("rar7-m") or
+                        _winrar_cli_supports_rar7(rar_cli)):
             subprocess.run([rar_cli, "t", str(archive)], check=True,
                            capture_output=True, timeout=30)
 
@@ -11064,7 +12412,11 @@ def test_rar_invalid_operations_and_abort_preserve_target(
     assert hashlib.sha256(archive.read_bytes()).hexdigest() == original_hash
 
 
-@pytest.mark.parametrize("variant", ["rar4-store", "rar5-store", "rar7-store"])
+@pytest.mark.parametrize("variant", [
+    "rar4-store", *(f"rar4-m{method}" for method in range(1, 6)),
+    "rar5-store", *(f"rar5-m{method}" for method in range(1, 6)),
+    "rar7-store", *(f"rar7-m{method}" for method in range(1, 6)),
+])
 def test_rar_existing_archive_cud_abi_roundtrip(
         writer_lib, peare_lib, tmp_path, variant):
     archive = tmp_path / f"existing-{variant}.rar"
@@ -11129,7 +12481,8 @@ def test_rar_existing_archive_cud_abi_roundtrip(
         assert "moved-dir" not in entries
 
     rar_cli = _winrar_cli_executable()
-    if rar_cli:
+    if rar_cli and (not variant.startswith("rar7-m") or
+                    _winrar_cli_supports_rar7(rar_cli)):
         subprocess.run([rar_cli, "t", str(archive)], check=True,
                        capture_output=True, timeout=30)
 
@@ -11575,8 +12928,6 @@ def test_rar_recovery_record_is_rebuilt_after_cud(
         try:
             assert writer_lib.peare_writer_create_begin_variant(
                 writer, b"rar", variant.encode(), str(archive).encode()) == 0
-            assert writer_lib.peare_writer_add_file(
-                writer, str(source).encode(), source.name.encode()) == 0
             assert writer_lib.peare_writer_finish(writer) == 0
         finally:
             writer_lib.peare_writer_destroy(writer)
@@ -11637,6 +12988,9 @@ def test_rar_recovery_record_is_rebuilt_after_cud(
         assert writer_lib.peare_writer_add_files_begin(
             writer, str(archive).encode()) == 0, \
             writer_lib.peare_writer_last_error(writer)
+        if variant.startswith("rar7"):
+            assert writer_lib.peare_writer_add_file(
+                writer, str(source).encode(), source.name.encode()) == 0
         assert writer_lib.peare_writer_add_file(
             writer, str(addition).encode(), b"recovery-added.txt") == 0
         assert writer_lib.peare_writer_create_empty_file(
@@ -12046,6 +13400,110 @@ def test_cpio_create_roundtrip(writer_lib, peare_lib, tmp_path, variant, magic):
     assert _cpio_extract(tar, batch_archive, "batch/payload.txt") == payload.read_bytes()
     if variant == "crc":
         _assert_cpio_crc_checksums(batch_archive)
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_cpio_gui_all_variants_create_and_full_cud_persistent(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    variants = []
+    for index in range(writer_lib.peare_writer_create_variant_count(b"cpio")):
+        item = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"cpio", index, C.byref(item)) == 0
+        variants.append(item.id.decode())
+    assert variants == [
+        "newc", "crc", "odc", "afio-large", "binary-le", "binary-be"]
+
+    seed = ROOT / "README.md"
+    addition = ROOT / "AGENTS.md"
+    replacement = ROOT / "docs" / "ABI" / "API_WRITER.md"
+    base_archive = tmp_path / "gui-cpio-base.cpio"
+    base_writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(base_writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            base_writer, b"cpio", b"newc", str(base_archive).encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            base_writer, str(seed).encode(), seed.name.encode()) == 0
+        assert writer_lib.peare_writer_finish(base_writer) == 0, \
+            writer_lib.peare_writer_last_error(base_writer)
+    finally:
+        writer_lib.peare_writer_destroy(base_writer)
+    operations = []
+    outputs = []
+    for variant in variants:
+        destination = tmp_path / f"gui-created-{variant}.cpio"
+        outputs.append(destination)
+        operations.append({
+            "type": "create_container", "test_id": f"create-{variant}",
+            "format": "cpio", "variant": variant,
+            "destination": str(destination), "sources": [str(seed)],
+        })
+        operations.extend([
+            {"type": "create_file", "test_id": f"empty-{variant}",
+             "name": "empty.bin", "expect_present": "empty.bin"},
+            {"type": "create_directory", "test_id": f"directory-{variant}",
+             "name": "writer-dir", "expect_present": "writer-dir"},
+            {"type": "add_files", "test_id": f"add-{variant}",
+             "sources": [str(addition)], "destination": "writer-dir",
+             "expect_present": f"writer-dir/{addition.name}"},
+            {"type": "replace", "test_id": f"replace-{variant}",
+             "path": seed.name, "source": str(replacement),
+             "expect_present": seed.name},
+            {"type": "rename", "test_id": f"rename-{variant}",
+             "path": seed.name, "name": "renamed.txt",
+             "expect_present": "renamed.txt", "expect_absent": seed.name},
+            {"type": "delete", "test_id": f"delete-empty-{variant}",
+             "path": "empty.bin", "expect_absent": "empty.bin"},
+            {"type": "create_directory", "test_id": f"recursive-dir-{variant}",
+             "name": "remove-tree", "expect_present": "remove-tree"},
+            {"type": "add_files", "test_id": f"recursive-child-{variant}",
+             "sources": [str(addition)], "destination": "remove-tree",
+             "expect_present": f"remove-tree/{addition.name}"},
+            {"type": "delete", "test_id": f"delete-directory-{variant}",
+             "path": "remove-tree", "expect_absent": "remove-tree"},
+        ])
+
+    scenario = tmp_path / "cpio-all-variants-cud.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / f"cpio-all-variants-cud-{view}"
+    result = subprocess.run([
+        sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+        "--exe", str(peare_gui_path), "--image", str(base_archive),
+        "--scenario", str(scenario), "--output-dir", str(output_dir),
+        "--timeout", "240",
+    ], capture_output=True, text=True, timeout=270)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    assert report["stage"] == "complete"
+    assert len(report["operations"]) == len(operations)
+    assert all(operation["passed"] for operation in report["operations"])
+    memory = json.loads((output_dir / "writer-test-memory.json").read_text(
+        encoding="utf-8"))
+    assert len(memory["samples"]) >= 2
+    assert memory["peak"]
+
+    seed_hash = hashlib.sha256(replacement.read_bytes()).hexdigest()
+    added_hash = hashlib.sha256(addition.read_bytes()).hexdigest()
+    for variant, archive in zip(variants, outputs):
+        data = archive.read_bytes()
+        expected_magic = {
+            "newc": b"070701", "crc": b"070702", "odc": b"070707",
+            "afio-large": b"070727", "binary-le": b"\xc7\x71",
+            "binary-be": b"\x71\xc7",
+        }[variant]
+        assert data.startswith(expected_magic)
+        if variant == "crc":
+            _assert_cpio_crc_checksums(archive)
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows["renamed.txt"]["sha256"] == seed_hash
+        assert rows[f"writer-dir/{addition.name}"]["sha256"] == added_hash
+        assert "empty.bin" not in rows
+        assert not any(path == "remove-tree" or
+                       path.startswith("remove-tree/") for path in rows)
 
 
 @pytest.mark.parametrize(("sample_name", "replace_name", "magic"), [
@@ -16381,6 +17839,106 @@ def test_ar_gui_flat_cud_offscreen(writer_lib, peare_lib, peare_gui_path,
                            capture_output=True).stdout.decode("utf-8").splitlines()
     assert names == ["renamed.txt", "added.txt"]
 
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_ar_gui_all_variants_create_and_full_cud_persistent(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    ar = _external_tool("ar.exe", "ar")
+    if not ar:
+        pytest.skip("GNU ar is required as an independent archive oracle")
+
+    variants = []
+    for index in range(writer_lib.peare_writer_create_variant_count(b"ar")):
+        item = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"ar", index, C.byref(item)) == 0
+        variants.append(item.id.decode())
+    assert variants == ["gnu", "bsd"]
+
+    seed = tmp_path / "seed.txt"
+    addition = tmp_path / "addition.txt"
+    replacement = tmp_path / "replacement.txt"
+    seed.write_bytes(b"Initial GUI ar payload.\n")
+    addition.write_bytes(b"Added GUI ar payload.\n")
+    replacement.write_bytes(b"Replacement GUI ar payload.\n")
+
+    base_archive = tmp_path / "gui-ar-base.a"
+    base_writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(base_writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            base_writer, b"ar", b"gnu", str(base_archive).encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            base_writer, str(seed).encode(), b"seed.txt") == 0
+        assert writer_lib.peare_writer_finish(base_writer) == 0, \
+            writer_lib.peare_writer_last_error(base_writer)
+    finally:
+        writer_lib.peare_writer_destroy(base_writer)
+
+    operations = []
+    outputs = []
+    for variant in variants:
+        destination = tmp_path / f"gui-created-{variant}.a"
+        outputs.append(destination)
+        operations.append({
+            "type": "create_container", "test_id": f"create-{variant}",
+            "format": "ar", "variant": variant,
+            "destination": str(destination), "sources": [str(seed)],
+        })
+        operations.extend([
+            {"type": "create_file", "test_id": f"empty-{variant}",
+             "name": "empty.bin", "expect_present": "empty.bin"},
+            {"type": "add_files", "test_id": f"add-{variant}",
+             "sources": [str(addition)], "destination": "",
+             "expect_present": addition.name},
+            {"type": "replace", "test_id": f"replace-{variant}",
+             "path": seed.name, "source": str(replacement),
+             "expect_present": seed.name},
+            {"type": "rename", "test_id": f"rename-{variant}",
+             "path": seed.name, "name": "renamed.txt",
+             "expect_present": "renamed.txt", "expect_absent": seed.name},
+            {"type": "delete", "test_id": f"delete-empty-{variant}",
+             "path": "empty.bin", "expect_absent": "empty.bin"},
+        ])
+
+    scenario = tmp_path / "ar-all-variants-cud.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / f"ar-all-variants-cud-{view}"
+    result = subprocess.run([
+        sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+        "--exe", str(peare_gui_path), "--image", str(base_archive),
+        "--scenario", str(scenario), "--output-dir", str(output_dir),
+        "--timeout", "240",
+    ], capture_output=True, text=True, timeout=270)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    assert report["stage"] == "complete"
+    assert len(report["operations"]) == len(operations)
+    assert all(operation["passed"] for operation in report["operations"])
+    memory = json.loads((output_dir / "writer-test-memory.json").read_text(
+        encoding="utf-8"))
+    assert len(memory["samples"]) >= 2
+    assert memory["peak"]
+
+    for variant, archive in zip(variants, outputs):
+        listed = subprocess.run([ar, "t", str(archive)], check=True,
+                                capture_output=True, text=True).stdout.splitlines()
+        assert listed == ["renamed.txt", "addition.txt"]
+        extracted = tmp_path / f"extract-{variant}"
+        extracted.mkdir()
+        subprocess.run([ar, "x", str(archive)], cwd=extracted,
+                       check=True, capture_output=True)
+        assert (extracted / "renamed.txt").read_bytes() == replacement.read_bytes()
+        assert (extracted / "addition.txt").read_bytes() == addition.read_bytes()
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows["renamed.txt"]["sha256"] == hashlib.sha256(
+            replacement.read_bytes()).hexdigest()
+        assert rows["addition.txt"]["sha256"] == hashlib.sha256(
+            addition.read_bytes()).hexdigest()
+
 @pytest.mark.parametrize("view", ["tree", "details"])
 @pytest.mark.parametrize(("compression", "expected_method"), [
     ("store", zipfile.ZIP_STORED),
@@ -17100,6 +18658,32 @@ def _wad_lumps(path):
     return data[:4], lumps
 
 
+def _quake_wad_lumps(path):
+    data = Path(path).read_bytes()
+    assert data[:4] in (b"WAD2", b"WAD3")
+    count, directory = struct.unpack_from("<II", data, 4)
+    assert directory >= 12 and directory + count * 32 <= len(data)
+    lumps = []
+    for index in range(count):
+        record = data[directory + index * 32:directory + (index + 1) * 32]
+        offset, stored_size, unpacked_size = struct.unpack_from("<III", record)
+        lump_type, compression = record[12:14]
+        assert record[14:16] == b"\0\0"
+        raw_name = record[16:32]
+        assert offset + stored_size <= len(data)
+        assert compression in (0, 1)
+        if compression == 0:
+            assert unpacked_size == stored_size
+        lumps.append({
+            "name": raw_name.split(b"\0", 1)[0].decode("ascii"),
+            "data": data[offset:offset + stored_size],
+            "unpacked_size": unpacked_size,
+            "type": lump_type,
+            "compression": compression,
+        })
+    return data[:4], lumps
+
+
 def _create_test_wad(writer_lib, path, variant, members):
     writer = _HANDLE()
     assert writer_lib.peare_writer_create(C.byref(writer)) == 0
@@ -17144,6 +18728,386 @@ def test_wad_create_roundtrip(writer_lib, peare_lib, tmp_path, variant, signatur
     finally:
         writer_lib.peare_writer_destroy(writer)
     assert _wad_lumps(batch_archive) == (signature, [("BATCH", b"batch payload")])
+
+
+@pytest.mark.parametrize(("variant", "signature"), [
+    (b"wad2", b"WAD2"), (b"wad3", b"WAD3")])
+def test_quake_wad_create_and_complete_cud(writer_lib, peare_lib, tmp_path,
+                                           variant, signature):
+    assert writer_lib.peare_writer_create_variant_count(b"wad") == 4
+    variants = []
+    for index in range(4):
+        item = _WriterVariant()
+        assert writer_lib.peare_writer_get_create_variant(
+            b"wad", index, C.byref(item)) == 0
+        variants.append(item.id)
+    assert variants == [b"iwad", b"pwad", b"wad2", b"wad3"]
+
+    archive = tmp_path / f"created-{variant.decode()}.wad"
+    first = tmp_path / "quake-first.bin"
+    second = tmp_path / "quake-second.bin"
+    replacement = tmp_path / "quake-replacement.bin"
+    addition = tmp_path / "quake-addition.bin"
+    first.write_bytes(b"first Quake lump payload")
+    second.write_bytes(b"second Quake lump payload")
+    replacement.write_bytes(b"replacement payload")
+    addition.write_bytes(b"added payload")
+    _create_test_wad(writer_lib, archive, variant, [
+        (b"ABCDEFGHIJKLMNOP", first.read_bytes()),
+        (b"SECOND", second.read_bytes()),
+        (b"REMOVE", b"remove me"),
+    ])
+    signature_read, lumps = _quake_wad_lumps(archive)
+    assert signature_read == signature
+    assert [entry["name"] for entry in lumps] == [
+        "ABCDEFGHIJKLMNOP", "SECOND", "REMOVE"]
+    assert all(entry["type"] == 0 and entry["compression"] == 0
+               for entry in lumps)
+
+    capabilities = C.c_uint32()
+    assert writer_lib.peare_writer_get_update_capabilities(
+        str(archive).encode(), 0, C.byref(capabilities)) == 0
+    assert capabilities.value == 0x3B
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(
+            writer, str(archive).encode()) == 0
+        assert writer_lib.peare_writer_add_file(
+            writer, str(addition).encode(), b"0123456789ABCDEF") == 0
+        assert writer_lib.peare_writer_create_empty_file(
+            writer, b"EMPTY") == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"ABCDEFGHIJKLMNOP", b"QRSTUVWXYZABCDEF") == 0
+        assert writer_lib.peare_writer_replace_file(
+            writer, str(replacement).encode(), b"SECOND") == 0
+        assert writer_lib.peare_writer_delete_entry(
+            writer, b"REMOVE", 0) == 0
+        assert writer_lib.peare_writer_create_directory(
+            writer, b"not-applicable") == 10
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    final_signature, final_lumps = _quake_wad_lumps(archive)
+    assert final_signature == signature
+    assert [(entry["name"], entry["data"]) for entry in final_lumps] == [
+        ("QRSTUVWXYZABCDEF", first.read_bytes()),
+        ("SECOND", replacement.read_bytes()),
+        ("0123456789ABCDEF", addition.read_bytes()),
+        ("EMPTY", b""),
+    ]
+    assert all(entry["compression"] == 0 and
+               entry["unpacked_size"] == len(entry["data"])
+               for entry in final_lumps)
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows["QRSTUVWXYZABCDEF"]["sha256"] == hashlib.sha256(
+            first.read_bytes()).hexdigest()
+        assert rows["SECOND"]["sha256"] == hashlib.sha256(
+            replacement.read_bytes()).hexdigest()
+        assert rows["0123456789ABCDEF"]["sha256"] == hashlib.sha256(
+            addition.read_bytes()).hexdigest()
+        assert rows["EMPTY"]["size"] == 0
+
+
+@pytest.mark.parametrize(("variant", "signature"), [
+    (b"wad2", b"WAD2"), (b"wad3", b"WAD3")])
+def test_quake_wad_create_empty_and_reject_long_name(
+        writer_lib, peare_lib, tmp_path, variant, signature):
+    archive = tmp_path / f"empty-{variant.decode()}.wad"
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            writer, b"wad", variant, str(archive).encode()) == 0
+        source = tmp_path / "payload.bin"
+        source.write_bytes(b"payload")
+        assert writer_lib.peare_writer_create_file(
+            writer, str(source).encode(), b"SIXTEEN_CHAR_NAME") == 6
+        assert writer_lib.peare_writer_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    actual_signature, lumps = _quake_wad_lumps(archive)
+    assert actual_signature == signature
+    assert lumps == []
+    with peare_lib.open_file(str(archive)) as opener:
+        assert opener.container_format() == "WAD"
+        assert opener.normalized_tree() == []
+
+
+@pytest.mark.parametrize(("variant", "signature"), [
+    (b"wad2", b"WAD2"), (b"wad3", b"WAD3")])
+def test_quake_wad_duplicate_lumps_use_entry_ids(
+        writer_lib, peare_lib, tmp_path, variant, signature):
+    archive = tmp_path / f"duplicates-{variant.decode()}.wad"
+    payload = tmp_path / "id-replacement.bin"
+    payload.write_bytes(b"replace first duplicate")
+    _create_test_wad(writer_lib, archive, variant, [
+        (b"DUPLICATE", b"first"), (b"DUPLICATE", b"second"),
+        (b"DELETE_ME", b"third")])
+
+    writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert writer_lib.peare_writer_update_begin(
+            writer, str(archive).encode()) == 0
+        assert writer_lib.peare_writer_rename_entry(
+            writer, b"DUPLICATE", b"AMBIGUOUS") == 1
+        assert writer_lib.peare_writer_rename_entry_by_id(
+            writer, b"DUPLICATE", b"RENAMED", 1) == 0
+        assert writer_lib.peare_writer_replace_entry_by_id(
+            writer, str(payload).encode(), b"DUPLICATE", 0) == 0
+        assert writer_lib.peare_writer_delete_entry_by_id(
+            writer, b"DELETE_ME", 0, 2) == 0
+        assert writer_lib.peare_writer_update_finish(writer) == 0, \
+            writer_lib.peare_writer_last_error(writer)
+    finally:
+        writer_lib.peare_writer_destroy(writer)
+
+    actual_signature, lumps = _quake_wad_lumps(archive)
+    assert actual_signature == signature
+    assert [(entry["name"], entry["data"]) for entry in lumps] == [
+        ("DUPLICATE", payload.read_bytes()), ("RENAMED", b"second")]
+    with peare_lib.open_file(str(archive)) as opener:
+        rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows["DUPLICATE"]["sha256"] == hashlib.sha256(
+            payload.read_bytes()).hexdigest()
+        assert rows["RENAMED"]["sha256"] == hashlib.sha256(
+            b"second").hexdigest()
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_quake_wad_gui_create_variants_and_cud_persistent(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    sample = ROOT / "tests" / "formats" / "wad" / "fixtures" / "e1m4.wad"
+    source = tmp_path / "GUI_SOURCE.txt"
+    addition = tmp_path / "GUI_ADDED.txt"
+    replacement = tmp_path / "gui-replacement.txt"
+    source.write_bytes(b"Initial GUI Quake WAD lump.\n")
+    addition.write_bytes(b"Added GUI Quake WAD lump.\n")
+    replacement.write_bytes(b"Replaced GUI Quake WAD lump.\n")
+    variants = ("wad2", "wad3")
+    operations = []
+    outputs = {}
+    for variant in variants:
+        destination = tmp_path / f"gui-created-{variant}.wad"
+        outputs[variant] = destination
+        operations.append({
+            "type": "create_container", "test_id": f"create-{variant}",
+            "format": "wad", "variant": variant,
+            "destination": str(destination), "sources": [str(source)],
+            "expect_present": source.name,
+        })
+        operations.extend([
+            {"type": "create_file", "test_id": f"empty-{variant}",
+             "name": "EMPTY", "expect_present": "EMPTY"},
+            {"type": "add_files", "test_id": f"add-{variant}",
+             "sources": [str(addition)], "destination": "",
+             "expect_present": addition.name},
+            {"type": "replace", "test_id": f"replace-{variant}",
+             "path": source.name, "source": str(replacement),
+             "expect_present": source.name},
+            {"type": "rename", "test_id": f"rename-{variant}",
+             "path": source.name, "name": "QRSTUVWXYZABCDEF",
+             "expect_present": "QRSTUVWXYZABCDEF",
+             "expect_absent": source.name},
+            {"type": "delete", "test_id": f"delete-empty-{variant}",
+             "path": "EMPTY", "expect_absent": "EMPTY"},
+            {"type": "delete", "test_id": f"delete-added-{variant}",
+             "path": addition.name, "expect_absent": addition.name},
+        ])
+
+    scenario = tmp_path / "quake-wad-create-cud.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / f"quake-wad-create-cud-{view}"
+    result = subprocess.run([
+        sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+        "--exe", str(peare_gui_path), "--image", str(sample),
+        "--scenario", str(scenario), "--output-dir", str(output_dir),
+        "--timeout", "180",
+    ], capture_output=True, text=True, timeout=210)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    assert report["stage"] == "complete"
+    assert len(report["operations"]) == len(operations)
+    assert all(operation["passed"] for operation in report["operations"])
+    memory = json.loads((output_dir / "writer-test-memory.json").read_text(
+        encoding="utf-8"))
+    assert len(memory["samples"]) >= 2
+    assert memory["peak"]
+    for variant, archive in outputs.items():
+        signature, lumps = _quake_wad_lumps(archive)
+        assert signature == variant.upper().encode("ascii")
+        assert [(item["name"], item["data"]) for item in lumps] == [
+            ("QRSTUVWXYZABCDEF", replacement.read_bytes())]
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = {row["path"]: row for row in opener.normalized_tree()}
+            assert rows["QRSTUVWXYZABCDEF"]["sha256"] == hashlib.sha256(
+                replacement.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_doom_wad_gui_create_variants_and_cud_persistent(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    sample = ROOT / "tests" / "formats" / "wad" / "fixtures" / "e1m4.wad"
+    source = tmp_path / "SOURCE"
+    addition = tmp_path / "ADDED"
+    replacement = tmp_path / "replacement.bin"
+    source.write_bytes(b"Initial Doom lump.\n")
+    addition.write_bytes(b"Added Doom lump.\n")
+    replacement.write_bytes(b"Replaced Doom lump.\n")
+    variants = ("iwad", "pwad")
+    operations = []
+    outputs = {}
+    for variant in variants:
+        destination = tmp_path / f"gui-created-{variant}.wad"
+        outputs[variant] = destination
+        operations.append({
+            "type": "create_container", "test_id": f"create-{variant}",
+            "format": "wad", "variant": variant,
+            "destination": str(destination), "sources": [str(source)],
+            "expect_present": source.name,
+        })
+        operations.extend([
+            {"type": "create_file", "test_id": f"empty-{variant}",
+             "name": "EMPTY", "expect_present": "EMPTY"},
+            {"type": "add_files", "test_id": f"add-{variant}",
+             "sources": [str(addition)], "destination": "",
+             "expect_present": addition.name},
+            {"type": "replace", "test_id": f"replace-{variant}",
+             "path": source.name, "source": str(replacement),
+             "expect_present": source.name},
+            {"type": "rename", "test_id": f"rename-{variant}",
+             "path": source.name, "name": "RENAMED",
+             "expect_present": "RENAMED", "expect_absent": source.name},
+            {"type": "delete", "test_id": f"delete-empty-{variant}",
+             "path": "EMPTY", "expect_absent": "EMPTY"},
+            {"type": "delete", "test_id": f"delete-added-{variant}",
+             "path": addition.name, "expect_absent": addition.name},
+        ])
+
+    scenario = tmp_path / "doom-wad-create-cud.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / f"doom-wad-create-cud-{view}"
+    result = subprocess.run([
+        sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+        "--exe", str(peare_gui_path), "--image", str(sample),
+        "--scenario", str(scenario), "--output-dir", str(output_dir),
+        "--timeout", "180",
+    ], capture_output=True, text=True, timeout=210)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    assert report["stage"] == "complete"
+    assert len(report["operations"]) == len(operations)
+    assert all(operation["passed"] for operation in report["operations"])
+    memory = json.loads((output_dir / "writer-test-memory.json").read_text(
+        encoding="utf-8"))
+    assert len(memory["samples"]) >= 2
+    assert memory["peak"]
+    for variant, archive in outputs.items():
+        signature, lumps = _wad_lumps(archive)
+        assert signature == variant.upper().encode("ascii")
+        assert lumps == [("RENAMED", replacement.read_bytes())]
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = {row["path"]: row for row in opener.normalized_tree()}
+            assert rows["RENAMED"]["sha256"] == hashlib.sha256(
+                replacement.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("view", ["tree", "details"])
+def test_iso_gui_create_variants_and_full_cud_persistent(
+        writer_lib, peare_lib, peare_gui_path, tmp_path, view):
+    source = tmp_path / "README.md"
+    addition = tmp_path / "ADDED.TXT"
+    replacement = tmp_path / "REPLACEMENT.TXT"
+    source.write_bytes(b"Initial ISO payload.\n")
+    addition.write_bytes(b"Added ISO payload.\n")
+    replacement.write_bytes(b"Replacement ISO payload.\n")
+    seed = tmp_path / "seed.iso"
+    seed_writer = _HANDLE()
+    assert writer_lib.peare_writer_create(C.byref(seed_writer)) == 0
+    try:
+        assert writer_lib.peare_writer_create_begin_variant(
+            seed_writer, b"iso", b"joliet", str(seed).encode()) == 0
+        assert writer_lib.peare_writer_create_file(
+            seed_writer, str(source).encode(), b"SEED.TXT") == 0
+        assert writer_lib.peare_writer_finish(seed_writer) == 0
+    finally:
+        writer_lib.peare_writer_destroy(seed_writer)
+
+    operations = []
+    outputs = {}
+    for variant in ("joliet", "iso9660-level-1"):
+        destination = tmp_path / f"gui-created-{variant}.iso"
+        outputs[variant] = destination
+        source_name = "README.md" if variant == "joliet" else "README.MD"
+        operations.append({
+            "type": "create_container", "test_id": f"create-{variant}",
+            "format": "iso", "variant": variant,
+            "destination": str(destination), "sources": [str(source)],
+            "expect_present": source_name,
+        })
+        operations.extend([
+            {"type": "create_file", "test_id": f"empty-{variant}",
+             "name": "EMPTY.DAT", "expect_present": "EMPTY.DAT"},
+            {"type": "create_directory", "test_id": f"directory-{variant}",
+             "name": "GUIDIR", "expect_present": "GUIDIR"},
+            {"type": "add_files", "test_id": f"add-{variant}",
+             "sources": [str(addition)], "destination": "GUIDIR",
+             "expect_present": "GUIDIR/ADDED.TXT"},
+            {"type": "replace", "test_id": f"replace-{variant}",
+             "path": source_name, "source": str(replacement),
+             "expect_present": source_name},
+            {"type": "rename", "test_id": f"rename-{variant}",
+             "path": source_name, "name": "RENAMED.TXT",
+             "expect_present": "RENAMED.TXT", "expect_absent": source_name},
+            {"type": "delete", "test_id": f"delete-empty-{variant}",
+             "path": "EMPTY.DAT", "expect_absent": "EMPTY.DAT"},
+            {"type": "delete", "test_id": f"delete-added-{variant}",
+             "path": "GUIDIR/ADDED.TXT", "expect_absent": "GUIDIR/ADDED.TXT"},
+            {"type": "delete", "test_id": f"delete-dir-{variant}",
+             "path": "GUIDIR", "expect_absent": "GUIDIR"},
+        ])
+
+    scenario = tmp_path / f"iso-create-cud-{view}.json"
+    scenario.write_text(json.dumps({"view": view, "operations": operations}),
+                        encoding="utf-8")
+    output_dir = tmp_path / f"iso-create-cud-{view}"
+    result = subprocess.run([
+        sys.executable, str(ROOT / "tests" / "run_gui_writer_tests.py"),
+        "--exe", str(peare_gui_path), "--image", str(seed),
+        "--scenario", str(scenario), "--output-dir", str(output_dir),
+        "--timeout", "240",
+    ], capture_output=True, text=True, timeout=270)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((output_dir / "writer-test-report.json").read_text(
+        encoding="utf-8"))
+    assert report["stage"] == "complete"
+    assert len(report["operations"]) == len(operations)
+    assert all(item["passed"] for item in report["operations"])
+    for variant, archive in outputs.items():
+        image = archive.read_bytes()
+        pvd = image[16 * 2048:17 * 2048]
+        assert pvd[0] == 1 and pvd[1:6] == b"CD001"
+        second_descriptor = image[17 * 2048:18 * 2048]
+        if variant == "joliet":
+            assert second_descriptor[0] == 2
+            assert second_descriptor[88:91] == b"%/E"
+        else:
+            assert second_descriptor[0] == 255
+        with peare_lib.open_file(str(archive)) as opener:
+            rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert set(rows) == {"RENAMED.TXT"}
+        assert rows["RENAMED.TXT"]["sha256"] == hashlib.sha256(
+            replacement.read_bytes()).hexdigest()
 
 
 def test_wad_cud_by_entry_id_on_real_and_duplicate_lumps(

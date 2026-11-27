@@ -114,7 +114,10 @@ The gate uses Python 3.12 and disables third-party command-line oracles, as CI
 does. It also checks that the Linux and Windows CI test steps retain their
 required library paths and headless Qt settings, and runs the Windows tests
 with the Decoder DLL and offscreen platform configured. Run third-party
-comparisons separately on the local machine.
+comparisons separately on the local machine. It also checks that the Linux CI
+job still targets Ubuntu 22.04, Qt 5.15.2 with GCC, C++11, and the expected
+build artifacts. This is a workflow-configuration check only; it does not run
+or emulate a Linux build on Windows.
 
 Run the gate manually with:
 

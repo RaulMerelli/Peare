@@ -14,6 +14,10 @@ from external_tools import find
 ROOT = Path(__file__).resolve().parents[1]
 
 
+class _WriterVariant(C.Structure):
+    _fields_ = [("id", C.c_char_p), ("display_name", C.c_char_p)]
+
+
 def _writer_path():
     configured = os.environ.get("PEARE_WRITER_LIB")
     if configured and Path(configured).is_file():
@@ -40,6 +44,9 @@ def iso_writer():
     library.peare_writer_destroy.argtypes = [handle]
     library.peare_writer_create_variant_count.argtypes = [C.c_char_p]
     library.peare_writer_create_variant_count.restype = C.c_size_t
+    library.peare_writer_get_create_variant.argtypes = [
+        C.c_char_p, C.c_size_t, C.POINTER(_WriterVariant)]
+    library.peare_writer_get_create_variant.restype = C.c_int
     library.peare_writer_create_begin_variant.argtypes = [
         handle, C.c_char_p, C.c_char_p, C.c_char_p]
     library.peare_writer_create_begin_variant.restype = C.c_int
@@ -162,6 +169,75 @@ def _parse_joliet_tree(image):
         primary_identifiers
 
 
+def _parse_primary_tree(image):
+    sector_size = 2048
+    assert len(image) % sector_size == 0
+    pvd = image[16 * sector_size:17 * sector_size]
+    terminator = image[17 * sector_size:18 * sector_size]
+    assert pvd[0] == 1 and pvd[1:6] == b"CD001" and pvd[6] == 1
+    assert terminator[0] == 255 and terminator[1:6] == b"CD001"
+    assert b"%/" not in image[16 * sector_size:32 * sector_size]
+    sectors = struct.unpack_from("<I", pvd, 80)[0]
+    assert struct.unpack_from(">I", pvd, 84)[0] == sectors
+    assert sectors == len(image) // sector_size
+    path_size = struct.unpack_from("<I", pvd, 132)[0]
+    path_l = struct.unpack_from("<I", pvd, 140)[0]
+    path_m = struct.unpack_from(">I", pvd, 148)[0]
+    assert path_size > 0 and path_l == 18 and path_m == path_l + 1
+    tables = []
+    for extent, endian in ((path_l, "<"), (path_m, ">")):
+        table = image[extent * sector_size:extent * sector_size + path_size]
+        rows = []
+        offset = 0
+        while offset < len(table):
+            name_length = table[offset]
+            record_size = 8 + name_length + (1 if name_length & 1 else 0)
+            rows.append((
+                struct.unpack_from(endian + "I", table, offset + 2)[0],
+                struct.unpack_from(endian + "H", table, offset + 6)[0],
+                table[offset + 8:offset + 8 + name_length]))
+            offset += record_size
+        tables.append(rows)
+    assert tables[0] == tables[1]
+    assert tables[0][0][1:] == (1, b"\0")
+    root_record = pvd[156:190]
+    root_extent = struct.unpack_from("<I", root_record, 2)[0]
+    root_size = struct.unpack_from("<I", root_record, 10)[0]
+    files = {}
+    directories = set()
+
+    def walk(path, extent, length):
+        data = image[extent * sector_size:extent * sector_size + length]
+        assert len(data) == length
+        offset = 0
+        while offset < len(data):
+            record_length = data[offset]
+            if not record_length:
+                offset = ((offset // sector_size) + 1) * sector_size
+                continue
+            record = data[offset:offset + record_length]
+            assert len(record) == record_length and record_length >= 34
+            name_length = record[32]
+            identifier = record[33:33 + name_length].decode("ascii")
+            if identifier not in ("\0", "\1"):
+                name = identifier[:-2] if identifier.endswith(";1") else identifier
+                child_path = f"{path}/{name}".strip("/")
+                child_extent = struct.unpack_from("<I", record, 2)[0]
+                child_size = struct.unpack_from("<I", record, 10)[0]
+                if record[25] & 2:
+                    directories.add(child_path)
+                    walk(child_path, child_extent, child_size)
+                else:
+                    files[child_path] = image[
+                        child_extent * sector_size:
+                        child_extent * sector_size + child_size]
+                    assert len(files[child_path]) == child_size
+            offset += record_length
+
+    walk("", root_extent, root_size)
+    return files, directories
+
+
 def test_iso_joliet_writer_round_trip(iso_writer, peare_lib, peare_gui_path, tmp_path):
     source = ROOT / "README.md"
     payload = source.read_bytes()
@@ -169,7 +245,14 @@ def test_iso_joliet_writer_round_trip(iso_writer, peare_lib, peare_gui_path, tmp
     writer = C.c_void_p()
     assert iso_writer.peare_writer_create(C.byref(writer)) == 0
     try:
-        assert iso_writer.peare_writer_create_variant_count(b"iso") == 1
+        assert iso_writer.peare_writer_create_variant_count(b"iso") == 2
+        variants = []
+        for index in range(2):
+            variant = _WriterVariant()
+            assert iso_writer.peare_writer_get_create_variant(
+                b"iso", index, C.byref(variant)) == 0
+            variants.append(variant.id)
+        assert variants == [b"joliet", b"iso9660-level-1"]
         status = iso_writer.peare_writer_create_begin_variant(
             writer, b"iso", b"joliet", str(output).encode())
         assert status == 0, iso_writer.peare_writer_last_error(writer).decode()
@@ -341,6 +424,139 @@ def test_iso_joliet_writer_round_trip(iso_writer, peare_lib, peare_gui_path, tmp
          str(output), "docs/renamed/README.md", "--output-dir",
          str(tmp_path / "gui")], capture_output=True, text=True, timeout=120)
     assert preview.returncode == 0, preview.stdout + preview.stderr
+
+
+def test_iso9660_level_one_writer_full_cud(
+        iso_writer, peare_lib, tmp_path):
+    initial = tmp_path / "initial.txt"
+    added = tmp_path / "added.txt"
+    replacement = tmp_path / "replacement.txt"
+    initial.write_bytes(b"initial payload\n")
+    added.write_bytes(b"added payload\n")
+    replacement.write_bytes(b"replacement payload\n")
+    output = tmp_path / "standard.iso"
+    writer = C.c_void_p()
+    assert iso_writer.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert iso_writer.peare_writer_create_begin_variant(
+            writer, b"iso", b"iso9660-level-1", str(output).encode()) == 0
+        assert iso_writer.peare_writer_create_file(
+            writer, str(initial).encode(), b"README.md") == 0
+        assert iso_writer.peare_writer_create_directory(writer, b"DATA") == 0
+        assert iso_writer.peare_writer_create_file(
+            writer, str(initial).encode(), b"DATA/INNER.TXT") == 0
+        assert iso_writer.peare_writer_create_empty_file(
+            writer, b"EMPTY.DAT") == 0
+        status = iso_writer.peare_writer_finish(writer)
+        assert status == 0, iso_writer.peare_writer_last_error(writer).decode()
+    finally:
+        iso_writer.peare_writer_destroy(writer)
+
+    files, directories = _parse_primary_tree(output.read_bytes())
+    assert files == {
+        "README.MD": initial.read_bytes(),
+        "DATA/INNER.TXT": initial.read_bytes(),
+        "EMPTY.DAT": b"",
+    }
+    assert directories == {"DATA"}
+    with peare_lib.open_file(str(output)) as opener:
+        visible = {row["path"] for row in opener.normalized_tree()}
+    assert {"README.MD", "DATA", "DATA/INNER.TXT", "EMPTY.DAT"} <= visible
+
+    image = str(output).encode()
+    assert iso_writer.peare_writer_can_add_files(image) == 1
+    capabilities = C.c_uint32()
+    assert iso_writer.peare_writer_get_update_capabilities(
+        image, 0, C.byref(capabilities)) == 0
+    assert capabilities.value == 0x3F
+    updater = C.c_void_p()
+    assert iso_writer.peare_writer_create(C.byref(updater)) == 0
+    try:
+        assert iso_writer.peare_writer_update_begin(updater, image) == 0
+        assert iso_writer.peare_writer_add_file(
+            updater, str(added).encode(), b"DATA/ADDED.TXT") == 0
+        assert iso_writer.peare_writer_replace_file(
+            updater, str(replacement).encode(), b"README.MD") == 0
+        assert iso_writer.peare_writer_create_directory(updater, b"NEW") == 0
+        assert iso_writer.peare_writer_create_empty_file(
+            updater, b"NEW/ZERO.DAT") == 0
+        assert iso_writer.peare_writer_rename_entry(
+            updater, b"DATA/INNER.TXT", b"DATA/RENAMED.TXT") == 0
+        assert iso_writer.peare_writer_delete_entry(updater, b"EMPTY.DAT", 0) == 0
+        assert iso_writer.peare_writer_delete_entry(updater, b"DATA/ADDED.TXT", 0) == 0
+        status = iso_writer.peare_writer_update_finish(updater)
+        assert status == 0, iso_writer.peare_writer_last_error(updater).decode()
+    finally:
+        iso_writer.peare_writer_destroy(updater)
+
+    files, directories = _parse_primary_tree(output.read_bytes())
+    assert files == {
+        "README.MD": replacement.read_bytes(),
+        "DATA/RENAMED.TXT": initial.read_bytes(),
+        "NEW/ZERO.DAT": b"",
+    }
+    assert directories == {"DATA", "NEW"}
+    with peare_lib.open_file(str(output)) as opener:
+        rows = {row["path"]: row for row in opener.normalized_tree()}
+        assert rows["README.MD"]["sha256"] == hashlib.sha256(
+            replacement.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("entry_name", [b"LONGFILENAME.TXT", "caf\u00e9.txt".encode()])
+def test_iso9660_level_one_rejects_names_outside_standard(
+        iso_writer, tmp_path, entry_name):
+    source = tmp_path / "payload.txt"
+    source.write_bytes(b"payload\n")
+    output = tmp_path / "invalid-standard.iso"
+    writer = C.c_void_p()
+    assert iso_writer.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert iso_writer.peare_writer_create_begin_variant(
+            writer, b"iso", b"iso9660-level-1", str(output).encode()) == 0
+        assert iso_writer.peare_writer_create_file(
+            writer, str(source).encode(), entry_name) == 0
+        status = iso_writer.peare_writer_finish(writer)
+        assert status != 0
+        assert b"ISO 9660 Level 1" in iso_writer.peare_writer_last_error(writer)
+        assert not output.exists()
+    finally:
+        iso_writer.peare_writer_destroy(writer)
+
+
+@pytest.mark.parametrize(("variant", "valid_name", "invalid_name"), [
+    (b"joliet", b"valid.txt", b"A" * 63),
+    (b"iso9660-level-1", b"VALID.TXT", b"LONGFILENAME.TXT"),
+])
+def test_iso_failed_update_preserves_original(
+        iso_writer, tmp_path, variant, valid_name, invalid_name):
+    source = tmp_path / "payload.txt"
+    source.write_bytes(b"ISO transactional update payload\n")
+    image = tmp_path / "transaction.iso"
+    writer = C.c_void_p()
+    assert iso_writer.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert iso_writer.peare_writer_create_begin_variant(
+            writer, b"iso", variant, str(image).encode()) == 0
+        assert iso_writer.peare_writer_create_file(
+            writer, str(source).encode(), valid_name) == 0
+        assert iso_writer.peare_writer_finish(writer) == 0
+    finally:
+        iso_writer.peare_writer_destroy(writer)
+
+    original = image.read_bytes()
+    writer = C.c_void_p()
+    assert iso_writer.peare_writer_create(C.byref(writer)) == 0
+    try:
+        assert iso_writer.peare_writer_update_begin(writer, str(image).encode()) == 0
+        status = iso_writer.peare_writer_create_file(
+            writer, str(source).encode(), invalid_name)
+        if status == 0:
+            status = iso_writer.peare_writer_update_finish(writer)
+        assert status != 0
+        iso_writer.peare_writer_abort(writer)
+    finally:
+        iso_writer.peare_writer_destroy(writer)
+    assert image.read_bytes() == original
 
 
 def test_iso_real_sample_cud(iso_writer, peare_lib, peare_gui_path, tmp_path):

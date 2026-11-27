@@ -55,11 +55,19 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer);
 The create backends include ZIP, GZIP, BZIP2, XZ, Zstandard, TAR, CPIO, ar,
 WAD, UUencode, Intel HEX, standalone FAT, floppy images, disk images, Debian
 packages, RPM packages, and XAR archives. They also include Unix compress,
-LZMA-alone, Lzip, ISO 9660 with Joliet, TAR.GZ, TAR.BZ2, TAR.ZST, TAR.Z,
+LZMA-alone, Lzip, ISO 9660 Joliet and Level 1, TAR.GZ, TAR.BZ2, TAR.ZST, TAR.Z,
 TAR.XZ, and TAR.LZMA.
 The CPIO backend supports `newc`, CRC, `odc`, afio large ASCII, and binary
 little- and big-endian variants. The ar backend supports GNU and BSD variants.
-The WAD backend supports IWAD and PWAD variants.
+The WAD backend supports IWAD, PWAD, WAD2, and WAD3 variants. Doom lump names
+are limited to eight printable ASCII characters; Quake WAD2 and Half-Life WAD3
+lump names accept up to sixteen. WAD2/WAD3 updates preserve each untouched
+lump's type and compression metadata. New and replaced lumps are stored without
+compression, with type 0 for newly created lumps and the original type retained
+for replacements. These are flat lump collections, so directory creation is
+not applicable; file addition, empty lumps, replacement, rename, and deletion
+are supported. WAD3 creation writes raw, untyped lumps; it does not encode or
+validate GoldSrc miptex, palette, font, or decal payloads.
 
 Format descriptors and their strings remain valid for the process lifetime.
 Floppy images support the 12 geometries in the Writer variant list. Raw disks
@@ -97,15 +105,16 @@ links. File data uses Store, zlib, or BZIP2. The Writer writes a SHA-1
 table-of-contents checksum and SHA-256 member checksums. Updates do not preserve
 Apple package signatures or extended attributes.
 
-ISO creation writes a new 2048-byte-sector image with a primary volume
-descriptor and a Joliet supplementary descriptor. ISO updates support file and
-directory creation, file addition and replacement, rename, and recursive delete.
-Updates preserve unchanged file data by copying source extents. Joliet names use
-BMP Unicode and can contain up to 62 UTF-16 code units for file names and 64 for
-directory names. The primary tree uses generated short aliases. Each file must
-fit in one 32-bit ISO extent. The Writer updates Joliet images that use a
-single-extent directory layout; it does not update multi-extent files or raw
-Mode 2 images.
+ISO creation supports 2048-byte-sector Joliet and ISO 9660 Level 1 images. Both
+variants support file and directory creation, file addition and replacement,
+rename, and recursive delete. Updates preserve unchanged file data by copying
+source extents and preserve the source image's Joliet or standard layout.
+Joliet names use BMP Unicode and can contain up to 62 UTF-16 code units for
+file names and 64 for directory names; its primary tree uses generated short
+aliases. ISO 9660 Level 1 accepts ASCII 8.3 names, stores them uppercase, and
+allows up to eight directory levels. Names outside these limits are rejected
+rather than silently changed. Each file must fit in one 32-bit ISO extent. The
+Writer does not update multi-extent files or raw Mode 2 images.
 
 GZIP creation writes one RFC 1952 member per selected input file. The GZIP
 stream is not an archive with independently editable entries.

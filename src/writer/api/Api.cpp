@@ -61,6 +61,7 @@ const quint32 kDataDescriptorSignature = 0x08074b50u;
 const quint32 kTarBlockSize = 512u;
 const quint32 kCpioBlockSize = 4u;
 const quint32 kWadDirectoryEntrySize = 16u;
+const quint32 kQuakeWadDirectoryEntrySize = 32u;
 const quint64 kZip32Max = 0xfffffffeull;
 const size_t kMaxZipEntries = 1000000u;
 const size_t kChunkSize = 1024 * 1024;
@@ -169,6 +170,9 @@ struct WadEntry {
     QByteArray name;
     quint64 size = 0;
     qint64 dataOffset = 0;
+    quint32 unpackedSize = 0;
+    quint8 type = 0;
+    quint8 compression = 0;
 
     WadEntry() = default;
     WadEntry(QByteArray entryName, quint64 entrySize, qint64 entryOffset)
@@ -264,7 +268,7 @@ struct CpioEntry {
 
 enum class CpioFormat { Newc, Crc, Odc, AfioLarge, BinaryLe, BinaryBe };
 enum class ArFormat { Gnu, Bsd };
-enum class WadFormat { Iwad, Pwad };
+enum class WadFormat { Iwad, Pwad, Wad2, Wad3 };
 
 } // namespace
 
@@ -317,6 +321,7 @@ struct peare_writer_handle_s {
     std::vector<QByteArray> rpmOldFilePaths;
     std::vector<XarEntry> xarEntries;
     std::vector<IsoEntry> isoEntries;
+    bool isoJoliet = true;
     std::vector<QByteArray> debDirectories;
     CpioFormat cpioFormat = CpioFormat::Newc;
     ArFormat arFormat = ArFormat::Gnu;
@@ -969,6 +974,13 @@ peare_writer_status loadExistingTarOrBzip2(peare_writer_handle_s* writer, QFile*
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("The BZIP2 stream does not contain a supported TAR archive."),
                     false);
+    char header[4] = {};
+    if (!input->seek(0) || input->read(header, sizeof(header)) != qint64(sizeof(header)) ||
+        header[0] != 'B' || header[1] != 'Z' || header[2] != 'h' ||
+        header[3] < '1' || header[3] > '9')
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("The TAR.BZ2 compression level is invalid."), false);
+    writer->bzip2Level = header[3] - '0';
     *bzip2Wrapped = true;
     writer->error.clear();
     writer->errorUtf8.clear();
@@ -1112,6 +1124,17 @@ peare_writer_status loadExistingTarOrUnixCompress(peare_writer_handle_s* writer,
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("The Unix compress stream does not contain a supported TAR archive."),
                     false);
+    char header[3] = {};
+    if (!input->seek(0) || input->read(header, sizeof(header)) != qint64(sizeof(header)))
+        return fail(writer, PEARE_WRITER_IO_ERROR,
+                    QStringLiteral("Could not read the TAR.Z parameters."), false);
+    const quint8 flags = quint8(header[2]);
+    const int maxBits = flags & 0x1f;
+    if (maxBits < 9 || maxBits > 16 || (flags & 0x60) != 0)
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("The TAR.Z parameters are invalid."), false);
+    writer->unixCompressMaxBits = maxBits;
+    writer->unixCompressBlockMode = (flags & 0x80) != 0;
     *wrapped = true;
     writer->error.clear();
     writer->errorUtf8.clear();
@@ -1241,6 +1264,17 @@ peare_writer_status loadExistingTarOrXz(peare_writer_handle_s* writer,
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("The XZ stream does not contain a supported TAR archive."),
                     false);
+    char header[8] = {};
+    if (!input->seek(0) || input->read(header, sizeof(header)) != qint64(sizeof(header)) ||
+        std::memcmp(header, "\xfd" "7zXZ\0", 6) != 0)
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("The TAR.XZ stream header is invalid."), false);
+    const unsigned checkId = quint8(header[7]) & 0x0f;
+    if (checkId != XZ_CHECK_NO && checkId != XZ_CHECK_CRC32 &&
+        checkId != XZ_CHECK_CRC64 && checkId != XZ_CHECK_SHA256)
+        return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                    QStringLiteral("The TAR.XZ integrity check is unsupported."), false);
+    writer->xzCheckId = checkId;
     *wrapped = true;
     writer->error.clear();
     writer->errorUtf8.clear();
@@ -1526,14 +1560,14 @@ peare_writer_status loadExistingAr(peare_writer_handle_s* writer, QFile* input) 
     return PEARE_WRITER_OK;
 }
 
-bool wadName(const char* utf8, QByteArray* name) {
+bool wadName(const char* utf8, bool quakeWad, QByteArray* name) {
     if (!utf8 || !*utf8 || !name) return false;
     const QByteArray source(utf8);
-    if (source.size() > 8) return false;
+    if (source.size() > (quakeWad ? 16 : 8)) return false;
     for (unsigned char c : source) {
         if (c < 0x21 || c > 0x7e || c == '/' || c == '\\') return false;
     }
-    *name = source.toUpper();
+    *name = quakeWad ? source : source.toUpper();
     return true;
 }
 
@@ -1541,17 +1575,24 @@ peare_writer_status loadExistingWad(peare_writer_handle_s* writer, QFile* input)
     if (!input || input->size() < 12) return PEARE_WRITER_INVALID_ARGUMENT;
     QByteArray header;
     if (!readAt(input, 0, 12, &header)) return PEARE_WRITER_INVALID_ARGUMENT;
-    if (header.left(4) != "IWAD" && header.left(4) != "PWAD")
+    const QByteArray signature = header.left(4);
+    if (signature != "IWAD" && signature != "PWAD" &&
+        signature != "WAD2" && signature != "WAD3")
         return PEARE_WRITER_INVALID_ARGUMENT;
+    const bool quakeWad = signature == "WAD2" || signature == "WAD3";
     const quint32 count = read32(header.constData() + 4);
     const quint32 directory = read32(header.constData() + 8);
-    const quint64 directoryBytes = quint64(count) * kWadDirectoryEntrySize;
+    const quint32 recordSize = quakeWad ? kQuakeWadDirectoryEntrySize
+                                        : kWadDirectoryEntrySize;
+    const quint64 directoryBytes = quint64(count) * recordSize;
     if (directory < 12 || count > kMaxZipEntries || directory > quint64(input->size()) ||
         directoryBytes > quint64(input->size()) - directory)
         return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                     QStringLiteral("The WAD directory is invalid."), false);
     writer->wadEntries.clear();
-    writer->wadFormat = header.left(4) == "IWAD" ? WadFormat::Iwad : WadFormat::Pwad;
+    writer->wadFormat = signature == "IWAD" ? WadFormat::Iwad :
+                        signature == "PWAD" ? WadFormat::Pwad :
+                        signature == "WAD2" ? WadFormat::Wad2 : WadFormat::Wad3;
     writer->wadStage.reset(new (std::nothrow) QTemporaryFile);
     if (!writer->wadStage || !writer->wadStage->open())
         return fail(writer, PEARE_WRITER_IO_ERROR,
@@ -1559,7 +1600,8 @@ peare_writer_status loadExistingWad(peare_writer_handle_s* writer, QFile* input)
                                      : QStringLiteral("Could not allocate WAD staging."), false);
     QByteArray record;
     for (quint32 index = 0; index < count; ++index) {
-        if (!readAt(input, qint64(directory) + qint64(index) * 16, 16, &record))
+        if (!readAt(input, qint64(directory) + qint64(index) * recordSize,
+                    recordSize, &record))
             return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                         QStringLiteral("The WAD directory is truncated."), false);
         const quint32 offset = read32(record.constData());
@@ -1568,9 +1610,19 @@ peare_writer_status loadExistingWad(peare_writer_handle_s* writer, QFile* input)
             return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                         QStringLiteral("A WAD lump is out of range."), false);
         WadEntry entry;
-        entry.name = record.mid(8, 8);
+        entry.name = record.mid(quakeWad ? 16 : 8, quakeWad ? 16 : 8);
         while (entry.name.endsWith('\0')) entry.name.chop(1);
         entry.size = size;
+        if (quakeWad) {
+            entry.unpackedSize = read32(record.constData() + 8);
+            entry.type = quint8(record.at(12));
+            entry.compression = quint8(record.at(13));
+            if (entry.compression > 1 ||
+                (entry.compression == 0 && entry.unpackedSize != size))
+                return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
+                            QStringLiteral("A Quake WAD lump has invalid compression metadata."),
+                            false);
+        }
         entry.dataOffset = writer->wadStage->size();
         if (size) {
             if (!input->seek(offset))
@@ -1595,9 +1647,13 @@ peare_writer_status appendWadFile(peare_writer_handle_s* writer,
                                   const char* sourcePathUtf8,
                                   const char* entryNameUtf8) {
     QByteArray name;
-    if (!wadName(entryNameUtf8, &name))
+    const bool quakeWad = writer->wadFormat == WadFormat::Wad2 ||
+                          writer->wadFormat == WadFormat::Wad3;
+    if (!wadName(entryNameUtf8, quakeWad, &name))
         return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
-                    QStringLiteral("WAD lump names must contain 1 to 8 printable ASCII characters."),
+                    quakeWad
+                        ? QStringLiteral("Quake WAD lump names must contain 1 to 16 printable ASCII characters.")
+                        : QStringLiteral("WAD lump names must contain 1 to 8 printable ASCII characters."),
                     false);
     QFile source(QString::fromUtf8(sourcePathUtf8));
     if (!source.open(QIODevice::ReadOnly) || source.size() < 0)
@@ -1621,7 +1677,9 @@ peare_writer_status appendWadFile(peare_writer_handle_s* writer,
     if (copied != quint64(source.size()))
         return fail(writer, PEARE_WRITER_IO_ERROR,
                     QStringLiteral("The source file changed while it was being added."), false);
-    writer->wadEntries.push_back({name, copied, offset});
+    WadEntry entry(name, copied, offset);
+    if (quakeWad) entry.unpackedSize = quint32(copied);
+    writer->wadEntries.push_back(std::move(entry));
     writer->archiveDirty = true;
     return PEARE_WRITER_OK;
 }
@@ -1673,6 +1731,11 @@ peare_writer_status replaceWadEntry(peare_writer_handle_s* writer, qint64 index,
                     QStringLiteral("The source file changed while it was being read."), false);
     writer->wadEntries[size_t(index)].dataOffset = offset;
     writer->wadEntries[size_t(index)].size = copied;
+    if (writer->wadFormat == WadFormat::Wad2 ||
+        writer->wadFormat == WadFormat::Wad3) {
+        writer->wadEntries[size_t(index)].unpackedSize = quint32(copied);
+        writer->wadEntries[size_t(index)].compression = 0;
+    }
     writer->archiveDirty = true;
     return PEARE_WRITER_OK;
 }
@@ -1691,9 +1754,22 @@ peare_writer_status finishWad(peare_writer_handle_s* writer) {
                         writer->output ? writer->output->errorString()
                                        : QStringLiteral("Could not allocate WAD output."));
     }
-    const quint32 directoryOffset = quint32(12 + writer->wadStage->size());
+    const bool quakeWad = writer->wadFormat == WadFormat::Wad2 ||
+                          writer->wadFormat == WadFormat::Wad3;
+    const quint32 recordSize = quakeWad ? kQuakeWadDirectoryEntrySize
+                                        : kWadDirectoryEntrySize;
+    const quint64 directoryOffset64 = 12 + quint64(writer->wadStage->size());
+    const quint64 directoryEnd = directoryOffset64 +
+                                 quint64(writer->wadEntries.size()) * recordSize;
+    if (directoryEnd > 0xffffffffull)
+        return fail(writer, PEARE_WRITER_UNSUPPORTED_LIMIT,
+                    QStringLiteral("The WAD directory exceeds its 32-bit offset limit."));
+    const quint32 directoryOffset = quint32(directoryOffset64);
     QByteArray header;
-    header.append(writer->wadFormat == WadFormat::Iwad ? "IWAD" : "PWAD", 4);
+    const char* signature = writer->wadFormat == WadFormat::Iwad ? "IWAD" :
+                            writer->wadFormat == WadFormat::Pwad ? "PWAD" :
+                            writer->wadFormat == WadFormat::Wad2 ? "WAD2" : "WAD3";
+    header.append(signature, 4);
     append32(&header, quint32(writer->wadEntries.size()));
     append32(&header, directoryOffset);
     if (!writeAll(writer->output.get(), header.constData(), header.size()) ||
@@ -1708,14 +1784,24 @@ peare_writer_status finishWad(peare_writer_handle_s* writer) {
     }
     for (const WadEntry& entry : writer->wadEntries) {
         const quint64 offset = 12 + quint64(entry.dataOffset);
-        if (offset > 0xffffffffull || entry.size > 0xffffffffull || entry.name.size() > 8)
+        if (offset > 0xffffffffull || entry.size > 0xffffffffull ||
+            entry.name.size() > (quakeWad ? 16 : 8))
             return fail(writer, PEARE_WRITER_UNSUPPORTED_LIMIT,
                         QStringLiteral("A WAD lump exceeds the format limits."));
         QByteArray record;
         append32(&record, quint32(offset));
         append32(&record, quint32(entry.size));
-        record.append(entry.name);
-        record.append(QByteArray(8 - entry.name.size(), '\0'));
+        if (quakeWad) {
+            append32(&record, entry.unpackedSize);
+            record.append(char(entry.type));
+            record.append(char(entry.compression));
+            record.append("\0\0", 2);
+            record.append(entry.name);
+            record.append(QByteArray(16 - entry.name.size(), '\0'));
+        } else {
+            record.append(entry.name);
+            record.append(QByteArray(8 - entry.name.size(), '\0'));
+        }
         if (!writeAll(writer->output.get(), record.constData(), record.size()))
             return fail(writer, PEARE_WRITER_IO_ERROR, writer->output->errorString());
     }
@@ -6478,8 +6564,10 @@ bool isoPathConflict(const std::vector<IsoEntry>& entries, QByteArray name,
 }
 
 bool loadIsoUpdateEntries(const QString& path,
-                          std::vector<peare::writer::IsoImageEntry>* entries) {
-    if (!peare::writer::IsoImageWriter::readEntries(path, entries, nullptr)) return false;
+                          std::vector<peare::writer::IsoImageEntry>* entries,
+                          bool* hasJoliet = nullptr) {
+    if (!peare::writer::IsoImageWriter::readEntries(
+            path, entries, nullptr, hasJoliet)) return false;
     for (const peare::writer::IsoImageEntry& entry : *entries) {
         QByteArray encoded;
         if (!normalizedEntryName(entry.path.toUtf8().constData(), entry.directory,
@@ -7386,7 +7474,7 @@ size_t peare_writer_create_variant_count(const char* formatIdUtf8) {
     if (std::strcmp(formatIdUtf8, "deb") == 0) return 24;
     if (std::strcmp(formatIdUtf8, "rpm") == 0) return 6;
     if (std::strcmp(formatIdUtf8, "xar") == 0) return 3;
-    if (std::strcmp(formatIdUtf8, "iso") == 0) return 1;
+    if (std::strcmp(formatIdUtf8, "iso") == 0) return 2;
     if (std::strcmp(formatIdUtf8, "unix-compress") == 0) return 16;
     if (std::strcmp(formatIdUtf8, "tar") == 0) return 2;
     if (std::strcmp(formatIdUtf8, "tar-gzip") == 0) return 1;
@@ -7397,7 +7485,7 @@ size_t peare_writer_create_variant_count(const char* formatIdUtf8) {
     if (std::strcmp(formatIdUtf8, "tar-lzma") == 0) return 9;
     if (std::strcmp(formatIdUtf8, "cpio") == 0) return 6;
     if (std::strcmp(formatIdUtf8, "ar") == 0) return 2;
-    if (std::strcmp(formatIdUtf8, "wad") == 0) return 2;
+    if (std::strcmp(formatIdUtf8, "wad") == 0) return 4;
     if (std::strcmp(formatIdUtf8, "fat") == 0) return 3;
     if (std::strcmp(formatIdUtf8, "floppy") == 0) return 13;
     if (std::strcmp(formatIdUtf8, "raw-disk") == 0) return 2;
@@ -7502,7 +7590,8 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
         {"store", "Store"}, {"gzip", "Zlib/Deflate"}, {"bzip2", "BZip2"}
     };
     static const peare_writer_variant isoVariants[] = {
-        {"joliet", "ISO 9660 with Joliet names"}
+        {"joliet", "ISO 9660 with Joliet names"},
+        {"iso9660-level-1", "ISO 9660 Level 1"}
     };
     static const peare_writer_variant gzipVariants[] = {
         {"deflate", "Deflate"}
@@ -7622,7 +7711,9 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
     };
     static const peare_writer_variant wadVariants[] = {
         {"iwad", "Doom internal WAD (IWAD)"},
-        {"pwad", "Doom patch WAD (PWAD)"}
+        {"pwad", "Doom patch WAD (PWAD)"},
+        {"wad2", "Quake WAD2"},
+        {"wad3", "Half-Life WAD3"}
     };
     static const peare_writer_variant fatVariants[] = {
         {"fat12", "FAT12 (1.44 MiB)"},
@@ -7730,7 +7821,7 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
         *outVariant = xarVariants[index];
         return PEARE_WRITER_OK;
     }
-    if (std::strcmp(formatIdUtf8, "iso") == 0 && index == 0) {
+    if (std::strcmp(formatIdUtf8, "iso") == 0 && index < 2) {
         *outVariant = isoVariants[index];
         return PEARE_WRITER_OK;
     }
@@ -7771,7 +7862,7 @@ peare_writer_status peare_writer_get_create_variant(const char* formatIdUtf8,
         *outVariant = arVariants[index];
         return PEARE_WRITER_OK;
     }
-    if (std::strcmp(formatIdUtf8, "wad") == 0 && index < 2) {
+    if (std::strcmp(formatIdUtf8, "wad") == 0 && index < 4) {
         *outVariant = wadVariants[index];
         return PEARE_WRITER_OK;
     }
@@ -8364,7 +8455,8 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
         });
     }
     if (std::strcmp(formatIdUtf8, "iso") == 0) {
-        if (variant && std::strcmp(variant, "joliet") != 0)
+        const bool joliet = !variant || std::strcmp(variant, "joliet") == 0;
+        if (variant && !joliet && std::strcmp(variant, "iso9660-level-1") != 0)
             return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                         QStringLiteral("The requested ISO variant is invalid."), false);
         return cBoundary(writer, [&]() -> peare_writer_status {
@@ -8381,6 +8473,7 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
             }
             writer->isoEntries.clear();
             writer->names.clear();
+            writer->isoJoliet = joliet;
             writer->createPath = QString::fromUtf8(outputPathUtf8);
             writer->active = true;
             writer->updateMode = false;
@@ -8511,6 +8604,8 @@ peare_writer_status peare_writer_create_begin_variant(peare_writer_handle writer
     if (std::strcmp(formatIdUtf8, "wad") == 0) {
         WadFormat format = WadFormat::Pwad;
         if (variant && std::strcmp(variant, "iwad") == 0) format = WadFormat::Iwad;
+        else if (variant && std::strcmp(variant, "wad2") == 0) format = WadFormat::Wad2;
+        else if (variant && std::strcmp(variant, "wad3") == 0) format = WadFormat::Wad3;
         else if (variant && std::strcmp(variant, "pwad") != 0)
             return fail(writer, PEARE_WRITER_INVALID_ARGUMENT,
                         QStringLiteral("The requested WAD variant is not supported."), false);
@@ -9246,7 +9341,10 @@ peare_writer_status peare_writer_add_files_begin(peare_writer_handle writer,
         writer->lzmaWrappedTar = false;
         writer->tarV7 = false;
         std::vector<peare::writer::IsoImageEntry> isoEntries;
-        if (loadIsoUpdateEntries(QString::fromUtf8(containerPathUtf8), &isoEntries)) {
+        bool isoJoliet = true;
+        if (loadIsoUpdateEntries(QString::fromUtf8(containerPathUtf8), &isoEntries,
+                                 &isoJoliet)) {
+            writer->isoJoliet = isoJoliet;
             writer->isoEntries.clear();
             writer->names.clear();
             writer->isoStage.reset(new (std::nothrow) QTemporaryDir);
@@ -10698,9 +10796,13 @@ peare_writer_status peare_writer_rename_entry(peare_writer_handle writer,
                         index == -2 ? QStringLiteral("The WAD lump name is ambiguous; use its entry ID.")
                                     : QStringLiteral("The WAD lump was not found."), false);
         QByteArray name;
-        if (!wadName(newEntryNameUtf8, &name))
+        const bool quakeWad = writer->wadFormat == WadFormat::Wad2 ||
+                              writer->wadFormat == WadFormat::Wad3;
+        if (!wadName(newEntryNameUtf8, quakeWad, &name))
             return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
-                        QStringLiteral("WAD lump names must contain 1 to 8 printable ASCII characters."),
+                        quakeWad
+                            ? QStringLiteral("Quake WAD lump names must contain 1 to 16 printable ASCII characters.")
+                            : QStringLiteral("WAD lump names must contain 1 to 8 printable ASCII characters."),
                         false);
         writer->wadEntries[size_t(index)].name = name;
         writer->archiveDirty = true;
@@ -10952,9 +11054,13 @@ peare_writer_status peare_writer_rename_entry_by_id(peare_writer_handle writer,
             return fail(writer, PEARE_WRITER_ENTRY_NOT_FOUND,
                         QStringLiteral("The WAD lump ID was not found."), false);
         QByteArray name;
-        if (!wadName(newEntryNameUtf8, &name))
+        const bool quakeWad = writer->wadFormat == WadFormat::Wad2 ||
+                              writer->wadFormat == WadFormat::Wad3;
+        if (!wadName(newEntryNameUtf8, quakeWad, &name))
             return fail(writer, PEARE_WRITER_INVALID_ENTRY_NAME,
-                        QStringLiteral("WAD lump names must contain 1 to 8 printable ASCII characters."),
+                        quakeWad
+                            ? QStringLiteral("Quake WAD lump names must contain 1 to 16 printable ASCII characters.")
+                            : QStringLiteral("WAD lump names must contain 1 to 8 printable ASCII characters."),
                         false);
         writer->wadEntries[size_t(entryId)].name = name;
         writer->archiveDirty = true;
@@ -11546,7 +11652,8 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
                 entries.push_back(std::move(imageEntry));
             }
             QString error;
-            if (!peare::writer::IsoImageWriter::write(writer->updatePath, entries, &error))
+            if (!peare::writer::IsoImageWriter::write(writer->updatePath, entries,
+                                                       writer->isoJoliet, &error))
                 return fail(writer, PEARE_WRITER_IO_ERROR, error);
             writer->isoStage.reset();
             writer->isoEntries.clear();
@@ -11572,7 +11679,8 @@ peare_writer_status peare_writer_finish(peare_writer_handle writer) {
                 entries.push_back(std::move(imageEntry));
             }
             QString error;
-            if (!peare::writer::IsoImageWriter::write(writer->createPath, entries, &error))
+            if (!peare::writer::IsoImageWriter::write(writer->createPath, entries,
+                                                       writer->isoJoliet, &error))
                 return fail(writer, PEARE_WRITER_IO_ERROR, error);
             writer->isoStage.reset();
             writer->isoEntries.clear();
