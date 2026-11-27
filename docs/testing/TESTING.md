@@ -65,7 +65,7 @@ sample evidence.
 | `tests/test_android_package.py` | Checks the ELF architecture of native libraries in a built Android APK. It does not run the APK on a device. |
 | `tests/run_tests.py` | Runs pytest and stores pytest files and Python bytecode in `tmp/test-output`. |
 | `tests/run_gui_preview_tests.py` | Runs offscreen GUI previews for arbitrary source files and full resource-tree paths. |
-| `tests/run_gui_writer_tests.py` | Runs a manifest-driven CUD scenario through the GUI on a disposable image copy. |
+| `tests/run_gui_writer_tests.py` | Runs a manifest-driven CUD scenario through the GUI on a disposable image copy. It holds the test process briefly before and after the scenario so the external monitor can capture baseline and final memory samples, including on fast CI runners. |
 
 The writer tests require `pytest` and `zstandard` from PyPI. The Zstandard
 package acts as an independent decoder for Zstandard Writer output.

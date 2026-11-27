@@ -32,6 +32,7 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QTimer>
+#include <QThread>
 
 #include <cstdio>
 
@@ -554,6 +555,7 @@ int main(int argc, char* argv[])
     }
     if (writerTestMode) {
         QString error;
+        QThread::msleep(250);
         if (!window.runOffscreenWriterScenario(
                 app.arguments().at(2), app.arguments().at(3), app.arguments().at(4),
                 app.arguments().at(5), &error)) {
@@ -561,6 +563,7 @@ int main(int argc, char* argv[])
                          error.toUtf8().constData());
             return 3;
         }
+        QThread::msleep(250);
         std::printf("GUI writer scenario passed.\n");
         return 0;
     }
